@@ -1,0 +1,36 @@
+# 知识系统配置文件模板
+# 生产环境请修改以下配置:
+#   1. database.password
+#   2. security.jwt_secret
+#   3. enc.key_path (生产环境使用外部密钥管理)
+
+database:
+  addr: "ws://surrealdb:8000"
+  namespace: "knowledge"
+  database: "knowledge"
+  user: "root"
+  password: "root_password_change_me_in_production"
+
+server:
+  host: "0.0.0.0"
+  port: 3000
+
+security:
+  jwt_secret: "change_this_secret_in_production_min_32_chars"
+  jwt_expiry_hours: 24
+  argon2_memory_cost: 65536
+  argon2_iterations: 3
+  argon2_parallelism: 4
+
+parser:
+  max_file_size: 1073741824  # 1GB
+  max_concurrent: 4
+  embedding_dim: 1536
+
+logging:
+  level: "info"
+  format: "json"
+  output: "stdout"
+
+enc:
+  key_path: "./data/key.aes"

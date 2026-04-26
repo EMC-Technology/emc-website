@@ -1,0 +1,126 @@
+[package]
+name = "error-core"
+description = "Unified error handling core library with four-dimensional classification, global error code registry, type-state Builder, and deterministic recovery — error-driven development infrastructure"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords = ["error-handling", "error-driven", "no-std", "recovery", "circuit-breaker"]
+categories = ["rust-patterns", "development-tools"]
+
+[dependencies]
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true, optional = true }
+chrono = { workspace = true, optional = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+regex = { workspace = true }
+tokio = { workspace = true, optional = true }
+surrealdb = { version = "1.3", optional = true, default-features = false }
+jsonwebtoken = { workspace = true, optional = true }
+
+[features]
+default = ["std"]
+std = []
+serde = ["dep:serde"]
+uuid = ["dep:uuid"]
+chrono = ["dep:chrono"]
+async = ["dep:tokio"]
+wasm = ["serde", "uuid"]
+db = ["dep:surrealdb"]
+serde-json = []
+jsonwebtoken = ["dep:jsonwebtoken"]
+kani = []
+fuzz = []
+testing = []
+full = ["serde", "uuid", "chrono", "async", "db", "serde-json", "jsonwebtoken"]
+
+[dev-dependencies]
+proptest = "1.4"
+criterion = { version = "0.5", default-features = false }
+
+[[bench]]
+name = "error_core_bench"
+harness = false
+
+[[test]]
+name = "integration_kani_test"
+required-features = ["kani"]
+
+[[test]]
+name = "utils_kani_test"
+required-features = ["kani"]
+
+[[test]]
+name = "user_prompt_kani_test"
+required-features = ["kani"]
+
+[[test]]
+name = "recovery_kani_test"
+required-features = ["kani", "testing"]
+
+[[test]]
+name = "propagation_kani_test"
+required-features = ["kani"]
+
+[[test]]
+name = "logging_kani_test"
+required-features = ["kani"]
+
+[[test]]
+name = "error_capture_kani_test"
+required-features = ["kani"]
+
+[[test]]
+name = "error_object_kani_test"
+required-features = ["kani"]
+
+[[test]]
+name = "error_code_kani_test"
+required-features = ["kani"]
+
+[[test]]
+name = "classification_kani_test"
+required-features = ["kani"]
+
+[[test]]
+name = "utils_fuzz_test"
+required-features = ["fuzz"]
+
+[[test]]
+name = "user_prompt_fuzz_test"
+required-features = ["fuzz"]
+
+[[test]]
+name = "recovery_fuzz_test"
+required-features = ["fuzz"]
+
+[[test]]
+name = "propagation_fuzz_test"
+required-features = ["fuzz"]
+
+[[test]]
+name = "logging_fuzz_test"
+required-features = ["fuzz"]
+
+[[test]]
+name = "error_capture_fuzz_test"
+required-features = ["fuzz"]
+
+[[test]]
+name = "error_object_fuzz_test"
+required-features = ["fuzz"]
+
+[[test]]
+name = "error_code_fuzz_test"
+required-features = ["fuzz"]
+
+[[test]]
+name = "classification_fuzz_test"
+required-features = ["fuzz"]

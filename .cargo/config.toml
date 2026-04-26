@@ -1,0 +1,7 @@
+[build]
+
+[target.'cfg(target_arch = "wasm32")']
+runner = "wasm-server-runner"
+
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", "getrandom_backend=\"wasm_js\""]

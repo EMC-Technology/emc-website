@@ -1,0 +1,61 @@
+[workspace]
+members = [
+    "crates/error-core",
+    "crates/knowledge-core",
+    "crates/knowledge-parser",
+    "crates/knowledge-api",
+    "crates/knowledge-frontend",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["武汉质能科技有限公司（EMC）"]
+description = "纯 Rust 全结构化知识库引擎 — 0 随机性，0 黑盒推断"
+homepage = "https://github.com/EMC-Technology/emc-website"
+repository = "https://github.com/EMC-Technology/emc-website"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+# 通用依赖
+tokio = { version = "1.36", features = ["full"] }
+async-trait = "0.1.77"
+tracing = "0.1.40"
+tracing-subscriber = "0.3.18"
+thiserror = "1.0.56"
+anyhow = "1.0.79"
+serde = { version = "1.0.197", features = ["derive"] }
+serde_json = "1.0.114"
+toml = "0.8.10"
+
+# 安全相关
+tokio-rustls = "0.24.1"
+rustls-pemfile = "2.1.0"
+aes-gcm = "0.10.2"
+rand = "0.8.5"
+
+# 数据库
+surrealdb = "1.3.0"
+
+# 向量检索
+hnswlib-rs = "0.8.0"
+ndarray = "0.15.6"
+
+# 网络
+axum = "0.7.5"
+reqwest = "0.11.24"
+tower-http = { version = "0.5.2", features = ["cors"] }
+websocket = "0.27.0"
+
+# 前端
+dioxus = { version = "0.5.4", features = ["web"] }
+dioxus-router = "0.5.1"
+
+# 测试
+tokio-test = "0.4.4"
+proptest = "1.4.0"
+kani = "0.36.0"
+
+# 基准测试
+criterion = "0.5.1"

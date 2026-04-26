@@ -1,0 +1,19 @@
+本目录下的知识内容采用 Creative Commons Attribution-ShareAlike 4.0 International (CC-BY-SA 4.0) 许可证。
+
+适用范围：
+- 架构设计文档（spec/ 目录下的 .md 文件）
+- 知识图谱结构定义和本体文件
+- ADR（架构决策记录）
+- 任何非软件代码的知识性内容
+
+CC-BY-SA 4.0 许可证要求：
+- BY（署名）：使用时需标注原作者和许可证链接
+- SA（相同方式共享）：衍生作品必须以相同许可发布
+
+完整许可证文本请参阅：
+https://creativecommons.org/licenses/by-sa/4.0/legalcode
+
+---
+
+本项目软件代码（src/、tests/、benches/、crates/ 目录）采用 MIT OR Apache-2.0 双许可，
+详见项目根目录的 LICENSE-MIT 和 LICENSE-APACHE 文件。
