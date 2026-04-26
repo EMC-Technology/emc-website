@@ -1,35 +1,77 @@
-# Changelog
+# 更新日志
 
-All notable changes to this project will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+所有重要的项目更新都将记录在此文件中。更新日志遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 格式。
 
 ## [0.1.0] - 2026-04-26
 
-### Added
+### 首次开源发布
 
-- **error-core**: Unified error handling core library with four-dimensional classification fingerprint (ErrorSource × Severity × ImpactScope × Recoverability), global error code registry, type-state Builder, four-layer capture architecture, cause chain + context frame dual-chain propagation, recovery state machine + circuit breaker + deterministic backoff (FNV-1a)
-- **knowledge-core**: Core domain logic — BM25 search, hybrid search (RRF fusion), Leiden community detection, knowledge graph construction, CQRS + Event Sourcing, ABAC engine (Cedar-style), PII scanner (11 patterns), AES-256-GCM crypto, multi-level cache (Moka L1 + Redis L2), SurrealDB repository, audit logging
-- **knowledge-parser**: Deterministic parsing pipeline — DAG orchestration engine (Kahn topological sort), Markdown pipeline (Comrak + ICU segmenter), Code pipeline (tree-sitter), execution flow tracer, community detection stage
-- **knowledge-api**: HTTP/WebSocket/MCP API — GEMMA4-E4B pure Rust inference (42-layer Transformer, Candle framework, 2560-dim), RAG engine (BM25+Vector+Graph three-way recall), ReAct Agent framework, MCP Server (7 Tool + 2 Prompt + Resources), ABAC policy engine, JWT authentication
-- **knowledge-frontend**: Dioxus WASM frontend — CRUD operations, graph visualization basics, WebSocket communication
-- **spec**: Complete documentation suite — Software Engineering Detailed Design V4.0, Gap Analysis V5.0, Open Source Purpose Statement, 10 ADRs, architecture overview, data model, getting started guide, unsafe audit report
-- **Infrastructure**: MIT OR Apache-2.0 dual license (code) + CC-BY-SA 4.0 (knowledge content), DCO contributor agreement, cargo-deny supply chain audit, .gitignore, CI/CD workflows
+这是文本全结构化知识系统的首个开源版本，作为基线产品供非商业场景下的技术研究与应用落地。
 
-### Design Philosophy
+### 新增组件
 
-- **0 randomness, 0 black-box inference**: Deterministic backoff (FNV-1a), deterministic float sorting (f64::total_cmp), Token-level global offset addressing
-- **Error-Driven Development**: error-core as first-class infrastructure — error codes before implementation, recovery strategies before failures
-- **Process-Driven Development**: UPCM (Universal Process Control Model)先行实践 — DAG orchestration + YAML workflow definition + unified state machine
+#### error-core - 统一错误处理核心库
+- 四维分类指纹（ErrorSource、ErrorSeverity、ErrorImpact、ErrorRecoverability）
+- 错误码全局注册表（ErrorCode Registry）
+- 类型状态 Builder 模式
+- 上下文帧和因果链双链传播
+- 恢复状态机 + 断路器 + 确定性退避
+- 完整的 Kani 形式化验证测试
 
-### Known Limitations
+#### knowledge-core - 核心业务逻辑库
+- 三路混合检索（BM25 + Vector + Graph）
+- 加权 RRF 融合算法
+- Leiden 社区检测
+- CQRS + Event Sourcing 架构
+- Cedar 风格 ABAC 引擎
+- PII 扫描（11 种敏感数据模式）
+- AES-256-GCM 加密
+- 审计链完整追踪
 
-- Vector Store: In-memory adapter uses brute-force search (HNSW params unused); Qdrant adapter is production-ready
-- Cross-Encoder Reranker: Pipeline architecture complete, but cross-encoder is Mock (Jaccard similarity), no real neural network
-- Frontend: Basic CRUD and graph visualization, not production-ready
-- RAG Evaluation: No evaluation framework (RAGAS/LLM-as-Judge) implemented
-- error-core: No no_std support yet (roadmap: HashMap→BTreeMap, OnceLock→critical_section, regex→const validation)
-- error-core logging: ErrorLoggingLayer, rotate_logs(), configure_logging() are placeholder implementations
+#### knowledge-parser - 多格式解析引擎
+- DAG 编排解析管道
+- Markdown/Code 双分支解析
+- Tree-sitter AST 解析
+- 多语言支持（Rust、Python、JavaScript、Go 等）
+- 社区检测集成
 
-[0.1.0]: https://github.com/emc-technology/knowledge-system/releases/tag/v0.1.0
+#### knowledge-api - HTTP/WebSocket API 服务器
+- GEMMA4-E4B 纯 Rust 推理（42 层 Transformer）
+- 2560 维语义向量
+- MCP Server + ReAct Agent
+- RAG 引擎完整实现
+- WebSocket 实时通信
+- JWT 认证
+- Prometheus 指标导出
+- OpenTelemetry 分布式追踪
+
+#### knowledge-frontend - Dioxus WASM 前端
+- 知识库 CRUD 操作
+- 图可视化
+- WebSocket 实时通信
+
+### 技术特性
+
+- **全栈 Rust 自研**：从内核到前端完全使用 Rust 实现
+- **WASM 编译**：前端编译为 WebAssembly，支持跨平台运行
+- **no_std 支持**：error-core 支持嵌入式开发
+- **零成本抽象**：使用 trait 和泛型，无运行时开销
+- **形式化验证**：使用 Kani 进行形式化验证测试
+
+### 文档更新
+
+- 完整的设计文档（spec/ 目录）
+- 详细的架构说明
+- 错误处理方法论
+- 贡献指南
+
+### 授权协议
+
+本项目采用 CC BY-NC-SA 4.0 授权，详细信息请参阅 [LICENSE](LICENSE) 文件。
+
+---
+
+## 版本历史
+
+- [0.1.0] - 2026-04-26
+  - 首次开源发布

@@ -1,4 +1,13 @@
+<div align="center">
+
+![Rust](https://img.shields.io/badge/Rust-1.75+-orange.svg)
+![License](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-blue.svg)
+![CI](https://github.com/EMC-Technology/emc-website/workflows/CI/badge.svg)
+![deps](https://img.shields.io/badge/Status-WASM%20Ready-green.svg)
+
 # 武汉质能科技有限公司（EMC）核心技术开放套件
+
+</div>
 
 ## 项目简介
 
@@ -64,3 +73,9 @@
 ## 版权归属
 
 © 2026 武汉质能科技有限公司（EMC）保留所有权利。
+
+## 其他资源
+
+- [更新日志](CHANGELOG.md) - 版本历史和更新记录
+- [贡献指南](CONTRIBUTING.md) - 如何参与本项目贡献
+- [详细授权说明](LICENSE-COMMERCIAL.md) - 各组件授权详情
