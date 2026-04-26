@@ -1,0 +1,11 @@
+# 禁用过于严格的 lint 规则（经评估确认为误报或与项目设计模式冲突时使用）
+avoid-breaking-exported-api = true
+allow-expect-in-tests = true
+allow-unwrap-in-tests = true
+
+# 复杂度阈值
+too-many-arguments-threshold = 7
+type-complexity-threshold = 250
+
+# 文档要求（与项目规范一致：所有公开项必须包含 /// 文档注释）
+missing-docs-in-crate-items = true

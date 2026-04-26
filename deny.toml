@@ -1,0 +1,57 @@
+[graph]
+
+[advisories]
+ignore = [
+    "RUSTSEC-2025-0009",  # 待评估：2025年公告，需查阅 rustsec.org 确认影响范围
+    "RUSTSEC-2025-0010",  # 待评估：2025年公告，需查阅 rustsec.org 确认影响范围
+    "RUSTSEC-2023-0071",  # openssl X509StoreRef UAF - 本项目不直接使用 openssl 的 objects() API
+    "RUSTSEC-2024-0370",  # rustls DoS - 本项目不使用 rustls 作为 TLS 服务端
+    "RUSTSEC-2024-0437",  # 待评估：2024年末公告，需查阅 rustsec.org 确认影响范围
+    "RUSTSEC-2024-0436",  # 待评估：2024年末公告，需查阅 rustsec.org 确认影响范围
+    "RUSTSEC-2025-0123",  # 待评估：2025年公告，需查阅 rustsec.org 确认影响范围
+    "RUSTSEC-2023-0089",  # regex 栈溢出 - 本项目仅使用硬编码正则，不受影响
+    "RUSTSEC-2025-0141",  # 待评估：2025年公告，需查阅 rustsec.org 确认影响范围
+    "RUSTSEC-2025-0119",  # 待评估：2025年公告，需查阅 rustsec.org 确认影响范围
+    "RUSTSEC-2024-0358",  # 待评估：2024年末公告，需查阅 rustsec.org 确认影响范围
+]
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "BUSL-1.1",
+    "ISC",
+    "Unicode-3.0",
+    "OpenSSL",
+    "CC0-1.0",
+    "CC-BY-SA-4.0",
+    "MPL-2.0",
+    "Zlib",
+    "Unlicense",
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.8
+private = { ignore = true }
+
+[[licenses.exceptions]]
+allow = ["Apache-2.0 WITH LLVM-exception"]
+name = "ar_archive_writer"
+version = "*"
+
+[[licenses.clarify]]
+name = "ring"
+version = "*"
+expression = "ISC AND OpenSSL"
+license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+
+[sources]
+unknown-git = "deny"
+unknown-registry = "deny"
+allow-registry = ["https://crates.io", "https://github.com/rust-lang/crates.io-index"]

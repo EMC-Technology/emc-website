@@ -1,0 +1,128 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/knowledge-core",
+    "crates/knowledge-parser",
+    "crates/knowledge-api",
+    "crates/knowledge-frontend",
+    "crates/error-core",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+authors = ["Wuhan Zhineng Technology Co., Ltd."]
+repository = "https://github.com/emc-technology/knowledge-system"
+homepage = "https://emc-technology.github.io/emc-website"
+readme = "README.md"
+keywords = ["knowledge-graph", "rag", "vector-search", "nlp", "candle"]
+categories = ["database", "text-processing", "web-programming"]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
+codegen-units = 1
+
+[workspace.dependencies]
+# HTTP / Web 框架
+axum = { version = "0.7", default-features = false, features = ["ws", "macros", "json", "query", "multipart", "tokio", "http1", "http2"] }
+
+# 异步运行时
+tokio = { version = "1.35", default-features = false, features = ["full"] }
+
+# 数据库
+surrealdb = { version = "1.3", default-features = false, features = ["kv-rocksdb"] }
+
+# 文本处理
+comrak = { version = "0.22", default-features = false }
+text-splitter = { version = "0.7", default-features = false }
+icu_segmenter = { version = "1.4", default-features = true }
+
+# 语法分析
+tree-sitter = { version = "0.25", default-features = false, features = ["std"] }
+
+# 数据并行
+rayon = { version = "1.10", default-features = false }
+
+# 前端框架 (WASM)
+dioxus = { version = "0.5", default-features = false, features = ["web"] }
+
+# 序列化
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+serde_json = { version = "1.0", default-features = false, features = ["std"] }
+
+# 加密与哈希
+aes-gcm = { version = "0.10", default-features = false }
+blake3 = { version = "1.5", default-features = false }
+jsonwebtoken = { version = "9.3", default-features = false }
+
+# 错误处理
+thiserror = { version = "1.0", default-features = false }
+error-core = { path = "crates/error-core", default-features = false }
+
+# error-core 依赖
+uuid = { version = "1.0", default-features = false, features = ["v4", "serde"] }
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+regex = { version = "1.0", default-features = false, features = ["std", "unicode"] }
+rand = { version = "0.9", default-features = false, features = ["std", "std_rng", "thread_rng"] }
+
+# 日志 / 可观测性
+tracing = { version = "0.1", default-features = false }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "json"] }
+
+# OpenTelemetry 可观测性
+opentelemetry = { version = "0.23", default-features = false, features = ["trace"] }
+opentelemetry_sdk = { version = "0.23", default-features = false, features = ["rt-tokio", "tokio"] }
+opentelemetry-jaeger = { version = "0.22", features = ["collector_client", "rt-tokio"] }
+tracing-opentelemetry = "0.24"
+metrics = "0.23"
+metrics-exporter-prometheus = { version = "0.15", features = ["tokio"] }
+prometheus = "0.13"
+once_cell = "1.19"
+
+# 异步 trait
+async-trait = { version = "0.1", default-features = false }
+
+# MCP SDK
+rmcp = { version = "0.7", default-features = false, features = ["server", "macros", "base64", "transport-io"] }
+schemars = { version = "1.0", default-features = false }
+
+# 缓存
+moka = { version = "0.12", default-features = false, features = ["future"] }
+redis = { version = "0.25", default-features = false, features = ["tokio-comp", "connection-manager"] }
+bincode = { version = "1.3", default-features = false }
+
+# DAG 图算法（Agent 工作流编排）
+petgraph = { version = "0.6", default-features = false }
+
+# 并发数据结构
+dashmap = { version = "5.5", default-features = false }
+lru = { version = "0.12", default-features = false }
+
+# 向量数据库（RAG 引擎）
+qdrant-client = { version = "1.7", default-features = false, features = ["serde"] }
+
+# 异步流处理
+futures = { version = "0.3", default-features = false, features = ["std"] }
+
+# KMS / 密钥管理
+ring = { version = "0.17", default-features = false }
+hmac = { version = "0.12", default-features = false, features = ["std"] }
+sha2 = { version = "0.10", default-features = false }
+base64 = { version = "0.22", default-features = false, features = ["std"] }
+hex = { version = "0.4", default-features = false, features = ["alloc"] }
+
+# AWS SDK (可选 - 在各 crate 的 [dependencies] 中按需引入)
+aws-config = { version = "1.1", default-features = false, features = ["behavior-version-latest"] }
+aws-sdk-kms = { version = "1.12", default-features = false, features = ["behavior-version-latest"] }
+aws-smithy-runtime = { version = "1.1", default-features = false, features = ["client"] }
+aws-sdk-sts = { version = "1.11", default-features = false, features = ["behavior-version-latest"] }
+
+# HashiCorp Vault (可选)
+vaultrs = { version = "0.7", default-features = false, features = ["native-tls"] }
+
+# PII 脱敏
+fancy-regex = { version = "0.13", default-features = false }
