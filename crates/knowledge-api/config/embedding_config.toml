@@ -1,0 +1,26 @@
+[knowledge_vm]
+embedding_dim = 2560
+max_seq_length = 512
+
+[knowledge_vm.embedding]
+model_type = "gemma-4-e4b"
+backend = "candle"
+model_id = "google/gemma-4-e4b-it"
+device = { type = "cpu" }
+use_gpu = false
+quantization = "fp16"
+batch_size = 32
+cache_dir = "D:\\WorkSpace\\1文本全结构化知识系统.md\\crates\\knowledge-api\\data\\models"
+
+[knowledge_vm.embedding.candle]
+num_threads = 4
+
+[knowledge_vm.embedding.advanced]
+pooling_strategy = "eos"
+warmup_on_startup = true
+warmup_query = "Hello, world!"
+
+[knowledge_vm.embedding.fallback]
+enable_fallback = true
+fallback_dim = 2560
+log_fallback_warning = true

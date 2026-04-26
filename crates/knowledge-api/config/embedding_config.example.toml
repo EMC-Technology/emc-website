@@ -1,0 +1,108 @@
+# Knowledge-API 嵌入模型配置
+#
+# 本配置文件控制嵌入模型的行为，支持多种后端切换。
+#
+# 使用方式:
+#   1. 将此文件复制为 config.toml 并放置在程序运行目录
+#   2. 或通过环境变量 KNOWLEDGE_API_CONFIG 指定路径
+#
+# 快速开始（GEMMA 4.0 E4B + CPU）:
+#   cargo run --package knowledge-api --features default
+
+[knowledge_vm]
+# 嵌入维度（必须与模型输出一致）
+embedding_dim = 2560
+# 最大序列长度（超过此长度将被截断）
+max_seq_length = 512
+
+# ========== 嵌入模型配置 ==========
+[knowledge_vm.embedding]
+# 模型类型: "hash" | "gemma-4-e4b" | "llama-3.2-3b"
+model_type = "gemma-4-e4b"
+
+# 推理后端选择 (重要!)
+#
+# 可选值:
+#   - "candle": HuggingFace Candle (推荐, 纯Rust)
+#   - "mistral-rs": Mistral.rs (高性能优化)
+#   - "onnx-runtime": ONNX Runtime (跨平台)
+#   - "llama-cpp": llama.cpp (量化优化)
+backend = "candle"
+
+# 模型标识符
+# 格式: "org/model-name" 或本地路径 "/path/to/model"
+# 示例:
+#   - "google/gemma-4-e4b-it" (自动从HuggingFace下载)
+#   - "./models/gemma-4-e4b-it" (使用本地已下载的模型)
+model_id = "google/gemma-4-e4b-it"
+
+# 计算设备
+# 可选值:
+#   - { type = "cpu" } (默认, 安全稳定)
+#   - { type = "cuda", device_id = 0 } (需要CUDA GPU)
+#   - { type = "metal" } (Apple Silicon Mac)
+device = { type = "cpu" }
+
+# 量化精度 (影响性能和精度权衡)
+# 可选值: "fp32" | "fp16" (推荐) | "int8" | "int4"
+quantization = "fp16"
+
+# 批处理大小 (影响吞吐量和内存占用)
+batch_size = 32
+
+# 是否使用GPU加速
+use_gpu = false
+# GPU设备ID (当 use_gpu = true 时生效)
+# gpu_device_id = 0
+
+# 模型缓存目录 (HuggingFace Hub下载的模型将存储在此处)
+# 默认: 系统临时目录/knowledge-api/models/
+cache_dir = "./data/models"
+
+# ========== Candle 后端特定配置 ==========
+[knowledge_vm.embedding.candle]
+# Flash Attention优化 (显著提升长文本性能, 需要编译时启用flash-attn feature)
+# use_flash_attention = false
+
+# 线程数 (CPU并行计算线程数)
+num_threads = 4
+
+# ========== 日志和监控 ==========
+[logging]
+# 推理日志级别: "trace" | "debug" | "info" | "warn" | "error"
+inference_log_level = "info"
+
+# 是否记录每次推理的详细信息 (token数、延迟等)
+log_inference_details = true
+
+# 性能指标收集 (Prometheus格式)
+enable_metrics = true
+
+# ========== 高级选项 ==========
+[knowledge_vm.embedding.advanced]
+# 池化策略: "eos" | "mean" | "max" | "cls"
+# - "eos": [EOS] token位置 (GEMMA推荐)
+# - "mean": 平均池化所有位置
+# - "max": 最大池化
+# - "cls": [CLS] token位置 (BERT风格)
+pooling_strategy = "eos"
+
+# 模型预热 (启动时预加载到内存)
+warmup_on_startup = true
+
+# 预热查询文本 (用于验证模型是否正常工作)
+warmup_query = "Hello, world!"
+
+# 内存限制 (MB), 超过此限制将卸载模型释放内存
+max_memory_mb = 8192
+
+# ========== 故障降级策略 ==========
+[knowledge_vm.embedding.fallback]
+# 当真实模型加载失败时是否回退到HashEmbedding
+enable_fallback = true
+
+# HashEmbedding作为fallback时的维度 (应与主模型一致)
+fallback_dim = 2560
+
+# 回退时记录警告日志
+log_fallback_warning = true
