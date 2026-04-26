@@ -1,0 +1,47 @@
+[package]
+name = "knowledge-frontend"
+description = "Dioxus WASM frontend for fully-structured knowledge system — CRUD operations, graph visualization, WebSocket communication"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords = ["wasm", "dioxus", "knowledge-graph", "frontend"]
+categories = ["web-programming", "wasm"]
+
+[dependencies]
+dioxus = { workspace = true, features = ["router", "web", "macro", "html", "hooks"] }
+dioxus-router = { version = "0.5", default-features = false }
+dioxus-signals = { version = "0.5", default-features = false }
+getrandom = { version = "0.3", default-features = false, features = ["wasm_js"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+wasm-bindgen = { version = "0.2", default-features = false }
+wasm-bindgen-futures = { version = "0.4", default-features = false }
+gloo-net = { version = "0.5", default-features = false, features = ["http", "json"] }
+futures = { version = "0.3", default-features = false, features = ["alloc"] }
+web-sys = { version = "0.3", default-features = false, features = [
+    "console",
+    "Window",
+    "Location",
+    "WebSocket",
+    "HtmlInputElement",
+    "File",
+    "FileReader",
+    "Event",
+    "EventTarget",
+    "InputEvent",
+] }
+js-sys = { version = "0.3", default-features = false }
+
+knowledge-core = { path = "../knowledge-core", default-features = false }
+error-core = { path = "../error-core", default-features = false, features = ["wasm"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom_v02 = { package = "getrandom", version = "0.2", features = ["js"] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = { version = "0.3", default-features = false }

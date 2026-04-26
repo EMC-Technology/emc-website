@@ -1,0 +1,244 @@
+# 知识图谱构建流水线
+#
+# 这是一个完整的知识图谱构建工作流示例，
+# 展示了如何使用 DAG 编排器协调多个 Agent 协同工作。
+#
+# 工作流程：
+# 1. 文档导入（Coordinator）- 接收用户输入，准备文档
+# 2. 文档解析（Researcher）- 提取文本内容和结构信息
+# 3. 实体抽取（Analyst）- 识别命名实体、概念和关系
+# 4. 关系建立（Analyst）- 构建实体间的语义关系
+# 5. 质量审查（Reviewer）- 验证数据质量并生成报告
+
+id: "knowledge_graph_builder"
+name: "知识图谱构建流水线"
+description: "自动化知识图谱构建的端到端工作流"
+
+global_config:
+  max_duration: 1800  # 30 分钟超时
+  fail_fast: true     # 任一节点失败则停止
+  max_concurrency: 3  # 最多并行执行 3 个节点
+
+nodes:
+  # ========== 阶段 1: 文档导入 ==========
+  - id: "ingest"
+    name: "文档导入与预处理"
+    agent_type: "Coordinator"
+    task:
+      description: |
+        接收用户上传的文档，进行格式验证、编码检测和初步清洗。
+        支持的格式：Markdown, TXT, PDF (通过 OCR), DOCX
+      goal: "将原始文档转换为标准化的文本格式，提取元数据"
+      context:
+        available_tools:
+          - "file_upload"
+          - "format_detect"
+          - "text_extract"
+    dependencies: []
+    retry_config:
+      max_retries: 2
+      retry_delay_ms: 1000
+      exponential_backoff: true
+    timeout: 120s
+
+  # ========== 阶段 2: 文档解析 ==========
+  - id: "parse"
+    name: "文档结构解析"
+    agent_type: "Researcher"
+    task:
+      description: |
+        对预处理后的文档进行深度解析：
+        - 识别标题层级结构
+        - 提取代码块及其语言类型
+        - 识别列表、表格等结构化元素
+        - 检测交叉引用和链接关系
+      goal: "生成结构化的 AST 表示，保留所有语义信息"
+      context:
+        available_tools:
+          - "parse_markdown"
+          - "code_block_extract"
+          - "structure_analyze"
+    dependencies: ["ingest"]
+    retry_config:
+      max_retries: 3
+      retry_delay_ms: 2000
+      exponential_backoff: true
+    timeout: 300s
+
+  # ========== 阶段 3a: 实体抽取（并行分支 A） ==========
+  - id: "extract_entities"
+    name: "实体抽取"
+    agent_type: "Analyst"
+    task:
+      description: |
+        从解析后的内容中识别和分类所有实体：
+        - 命名实体：人名、组织名、地点、产品名
+        - 技术术语：函数名、类名、API 端点、配置项
+        - 概念：抽象概念、业务规则、设计模式
+        - 为每个实体分配唯一 ID 和类型标签
+      goal: "构建完整的实体库，每个实体包含名称、类型、描述和属性"
+      context:
+        available_tools:
+          - "ner_extract"           # 命名实体识别
+          - "code_symbol_parse"     # 代码符号解析
+          - "taxonomy_classify"     # 分类法映射
+          - "entity_link"           # 实体链接/消歧
+    dependencies: ["parse"]
+    retry_config:
+      max_retries: 3
+      retry_delay_ms: 2000
+      exponential_backoff: true
+    timeout: 600s
+
+  # ========== 阶段 3b: 关系抽取（并行分支 B） ==========
+  - id: "extract_relations"
+    name: "关系抽取"
+    agent_type: "Analyst"
+    task:
+      description: |
+        分析实体之间的语义关系：
+        - 层次关系：继承、包含、组成
+        - 引用关系：调用、导入、依赖
+        - 关联关系：相关、相似、对比
+        - 时序关系：前置条件、后续步骤
+        - 为每条关系标注置信度和来源位置
+      goal: "构建完整的关系网络图，支持多跳查询"
+      context:
+        available_tools:
+          - "relation_extract"      # 关系抽取模型
+          - "dependency_analyze"    # 依赖分析
+          - "reference_resolve"     # 引用解析
+          - "confidence_score"      # 置信度评估
+    dependencies: ["parse"]
+    retry_config:
+      max_retries: 3
+      retry_delay_ms: 2000
+      exponential_backoff: true
+    timeout: 600s
+
+  # ========== 阶段 4: 图谱整合 ==========
+  - id: "merge"
+    name: "图谱整合与去重"
+    agent_type: "Coordinator"
+    task:
+      description: |
+        合并实体和关系结果，执行以下操作：
+        - 实体消歧和合并（同一实体的不同表述）
+        - 关系冲突解决（矛盾关系的处理）
+        - 图谱一致性检查
+        - 生成全局唯一的标识符体系
+        - 计算图的统计指标（密度、直径、聚类系数）
+      goal: "生成一致、无冗余的知识图谱"
+      context:
+        available_tools:
+          - "entity_merge"          # 实体合并算法
+          - "conflict_resolver"     # 冲突解决策略
+          - "graph_validator"       # 图一致性验证
+          - "graph_metrics"         # 图指标计算
+    dependencies: ["extract_entities", "extract_relations"]
+    retry_config:
+      max_retries: 2
+      retry_delay_ms: 3000
+      exponential_backoff: true
+    timeout: 300s
+
+  # ========== 阶段 5: 质量审查 ==========
+  - id: "validate"
+    name: "质量审查与报告生成"
+    agent_type: "Reviewer"
+    task:
+      description: |
+        对生成的知识图谱进行全面质量评估：
+        - 完整性检查：是否遗漏重要实体或关系
+        - 准确性抽样：人工可审核的样本集
+        - 一致性验证：逻辑约束违反检测
+        - 覆盖度分析：与源文档的覆盖比例
+        - 生成质量报告和改进建议
+      goal: "输出质量评分、问题清单和优化建议"
+      context:
+        available_tools:
+          - "completeness_check"    # 完整性检查
+          - "accuracy_sample"       # 准确性抽样
+          - "constraint_validate"   # 约束验证
+          - "coverage_analyze"      # 覆盖度分析
+          - "report_generate"       # 报告生成
+    dependencies: ["merge"]
+    retry_config:
+      max_retries: 1
+      retry_delay_ms: 5000
+      exponential_backoff: false
+    timeout: 600s
+
+edges:
+  # 主流程边
+  - from: "ingest"
+    to: "parse"
+  
+  - from: "parse"
+    to: "extract_entities"
+  
+  - from: "parse"
+    to: "extract_relations"
+  
+  - from: "extract_entities"
+    to: "merge"
+  
+  - from: "extract_relations"
+    to: "merge"
+  
+  - from: "merge"
+    to: "validate"
+
+---
+# 示例 2: 智能问答工作流
+#
+# 展示如何使用 Agent 进行复杂的多步推理任务
+
+id: "intelligent_qa_pipeline"
+name: "智能问答流水线"
+description: "基于知识图谱的多轮问答系统"
+
+nodes:
+  - id: "understand_question"
+    name: "意图理解与问题分析"
+    agent_type: "Researcher"
+    task:
+      description: "分析用户问题的意图，识别关键实体和查询类型"
+      goal: "将自然语言问题转化为结构化查询"
+    dependencies: []
+
+  - id: "retrieve_knowledge"
+    name: "知识检索"
+    agent_type: "Researcher"
+    task:
+      description: "从知识图谱中检索相关信息片段"
+      goal: "获取与问题相关的所有知识条目"
+    dependencies: ["understand_question"]
+
+  - id: "synthesize_answer"
+    name: "答案综合"
+    agent_type: "Writer"
+    task:
+      description: "基于检索到的知识生成连贯、准确的答案"
+      goal: "生成包含引用来源的结构化答案"
+    dependencies: ["retrieve_knowledge"]
+
+  - id: "verify_answer"
+    name: "答案验证"
+    agent_type: "Reviewer"
+    task:
+      description: "验证答案的事实准确性和完整性"
+      goal: "确保答案无误且全面"
+    dependencies: ["synthesize_answer"]
+
+edges:
+  - from: "understand_question"
+    to: "retrieve_knowledge"
+  - from: "retrieve_knowledge"
+    to: "synthesize_answer"
+  - from: "synthesize_answer"
+    to: "verify_answer"
+
+global_config:
+  fail_fast: false  # 允许部分失败，返回最佳可用答案
+  max_concurrency: 2

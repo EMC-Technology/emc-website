@@ -1,0 +1,119 @@
+[package]
+name = "knowledge-parser"
+description = "Deterministic parsing pipeline for fully-structured knowledge system — DAG orchestration, Markdown/Code dual-branch, tree-sitter AST, community detection"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords = ["parser", "dag", "markdown", "tree-sitter", "nlp"]
+categories = ["text-processing", "parser-implementations"]
+
+[dependencies]
+tokio = { workspace = true }
+comrak = { workspace = true }
+text-splitter = { workspace = true }
+icu_segmenter = { workspace = true }
+tree-sitter = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+blake3 = { workspace = true }
+surrealdb = { workspace = true }
+rand = { workspace = true }
+rayon = { workspace = true, optional = true }
+error-core = { workspace = true, features = ["serde", "uuid", "chrono"] }
+
+# 内部依赖：引用 knowledge-core 的数据模型与错误类型
+knowledge-core = { path = "../knowledge-core", default-features = false }
+
+# ============================================================================
+# tree-sitter 语言 Grammar（通过 feature flag 按需启用）
+# ============================================================================
+# 每个 lang-* feature 对应一种编程语言的 tree-sitter grammar。
+# 仅启用需要的语言以减小编译体积（每个 grammar 约 1-3 MB）。
+#
+# 常用组合：
+# - "lang-rust,lang-python"  → Rust + Python 支持
+# - "lang-full"              → 启用所有语言
+# ============================================================================
+
+# --- 系统编程语言 ---
+tree-sitter-rust   = { version = ">=0.20", default-features = false, optional = true }
+tree-sitter-c      = { version = ">=0.20", default-features = false, optional = true }
+tree-sitter-cpp    = { version = ">=0.20", default-features = false, optional = true }
+tree-sitter-go     = { version = ">=0.20", default-features = false, optional = true }
+tree-sitter-zig    = { version = ">=1", default-features = false, optional = true }
+tree-sitter-swift  = { version = ">=0.7", default-features = false, optional = true }
+
+# --- 脚本/动态语言 ---
+tree-sitter-python     = { version = ">=0.20", default-features = false, optional = true }
+tree-sitter-javascript = { version = ">=0.20", default-features = false, optional = true }
+tree-sitter-typescript = { version = ">=0.20", default-features = false, optional = true }
+tree-sitter-ruby       = { version = ">=0.20", default-features = false, optional = true }
+
+# --- JVM 语言 ---
+tree-sitter-java   = { version = ">=0.20", default-features = false, optional = true }
+tree-sitter-kotlin = { version = ">=0.3", default-features = false, optional = true }
+
+# --- 数据/配置格式 ---
+tree-sitter-toml  = { version = ">=0.20", default-features = false, optional = true }
+tree-sitter-yaml  = { version = ">=0.7", default-features = false, optional = true }
+tree-sitter-json  = { version = ">=0.20", default-features = false, optional = true }
+
+[features]
+default = ["db", "lang-rust", "lang-python"]
+
+parallel = ["dep:rayon"]
+
+db = ["knowledge-core/db"]
+
+event-driven = ["knowledge-core/event-driven"]
+
+# 单语言 feature flags
+lang-rust       = ["dep:tree-sitter-rust"]
+lang-python     = ["dep:tree-sitter-python"]
+lang-javascript = ["dep:tree-sitter-javascript"]
+lang-typescript = ["dep:tree-sitter-typescript"]
+lang-go         = ["dep:tree-sitter-go"]
+lang-c          = ["dep:tree-sitter-c"]
+lang-cpp        = ["dep:tree-sitter-cpp"]
+lang-java       = ["dep:tree-sitter-java"]
+lang-ruby       = ["dep:tree-sitter-ruby"]
+lang-kotlin     = ["dep:tree-sitter-kotlin"]
+lang-swift      = ["dep:tree-sitter-swift"]
+lang-zig        = ["dep:tree-sitter-zig"]
+lang-toml       = ["dep:tree-sitter-toml"]
+lang-yaml       = ["dep:tree-sitter-yaml"]
+lang-json       = ["dep:tree-sitter-json"]
+
+# 便捷组合 feature：启用所有支持的语言
+lang-full = [
+    "lang-rust",
+    "lang-python",
+    "lang-javascript",
+    "lang-typescript",
+    "lang-go",
+    "lang-c",
+    "lang-cpp",
+    "lang-java",
+    "lang-ruby",
+    "lang-kotlin",
+    "lang-swift",
+    "lang-zig",
+    "lang-toml",
+    "lang-yaml",
+    "lang-json",
+]
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false }
+proptest = { version = "1.4", default-features = false, features = ["std"] }
+serde_json = { workspace = true }
+
+[[bench]]
+name = "parser_bench"
+harness = false
