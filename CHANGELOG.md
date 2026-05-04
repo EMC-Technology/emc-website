@@ -67,7 +67,7 @@
 
 ### 授权协议
 
-本项目采用 CC BY-NC-SA 4.0 授权，详细信息请参阅 [LICENSE](LICENSE) 文件。
+本项目软件代码采用 MIT OR Apache-2.0 双许可，知识内容采用 CC-BY-SA 4.0 许可。详细信息请参阅 [LICENSE](LICENSE) 和 [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) 文件。
 
 ---
 

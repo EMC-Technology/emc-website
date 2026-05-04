@@ -23,13 +23,17 @@ COPY crates/knowledge-core/Cargo.toml crates/knowledge-core/Cargo.toml
 COPY crates/knowledge-parser/Cargo.toml crates/knowledge-parser/Cargo.toml
 COPY crates/knowledge-api/Cargo.toml crates/knowledge-api/Cargo.toml
 COPY crates/knowledge-frontend/Cargo.toml crates/knowledge-frontend/Cargo.toml
+COPY crates/knowledge-extractor/Cargo.toml crates/knowledge-extractor/Cargo.toml
+COPY crates/knowledge-evaluator/Cargo.toml crates/knowledge-evaluator/Cargo.toml
 
 # 创建 dummy 源文件以缓存依赖编译
 RUN mkdir -p crates/error-core/src && echo "" > crates/error-core/src/lib.rs && \
     mkdir -p crates/knowledge-core/src && echo "" > crates/knowledge-core/src/lib.rs && \
     mkdir -p crates/knowledge-parser/src && echo "" > crates/knowledge-parser/src/lib.rs && \
     mkdir -p crates/knowledge-api/src && echo "" > crates/knowledge-api/src/lib.rs && \
-    mkdir -p crates/knowledge-frontend/src && echo "" > crates/knowledge-frontend/src/lib.rs
+    mkdir -p crates/knowledge-frontend/src && echo "" > crates/knowledge-frontend/src/lib.rs && \
+    mkdir -p crates/knowledge-extractor/src && echo "" > crates/knowledge-extractor/src/lib.rs && \
+    mkdir -p crates/knowledge-evaluator/src && echo "" > crates/knowledge-evaluator/src/lib.rs
 
 # 构建依赖（此层会被 Docker 缓存，仅当 Cargo.toml/Cargo.lock 变化时重建）
 RUN cargo build --release --locked --workspace 2>/dev/null || true

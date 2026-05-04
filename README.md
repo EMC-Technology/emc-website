@@ -2,7 +2,7 @@
 
 ![Rust](https://img.shields.io/badge/Rust-1.85+-orange.svg)
 ![License](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)
-![CI](https://github.com/EMC-Technology/emc-website/workflows/CI/badge.svg)
+![CI](https://github.com/EMC-Technology/emc-website/actions/workflows/ci.yml/badge.svg)
 ![deps](https://img.shields.io/badge/Status-WASM%20Ready-green.svg)
 
 # 文本全结构化知识系统 — 纯 Rust 全结构化知识库引擎
@@ -28,6 +28,50 @@
 软件代码双许可与 Rust 语言自身及 crates.io 生态一致，是企业采用的黄金标准。
 
 **详细授权说明**：请参阅 [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) 文件。
+
+## 快速上手
+
+### 前置条件
+
+| 工具 | 版本 | 安装 |
+|------|------|------|
+| Rust | ≥ 1.85 | [rustup.rs](https://rustup.rs/) |
+| SurrealDB | ≥ 1.3 | `curl -sSf https://install.surrealdb.com \| sh` |
+| just | 最新 | `cargo install just` |
+
+### 构建与运行
+
+```bash
+# 克隆仓库
+git clone https://github.com/EMC-Technology/emc-website.git
+cd emc-website
+
+# 构建
+just build
+
+# 启动 SurrealDB（新终端）
+surreal start --bind 0.0.0.0:8000 --user root --pass root memory
+
+# 运行 API 服务器
+just dev-run
+
+# 运行测试
+just test
+
+# 完整 lint 检查
+just lint
+```
+
+### Docker 一键启动
+
+```bash
+just docker-build
+just docker-up
+# API: http://localhost:3000
+# 健康检查: http://localhost:3000/health
+```
+
+> 更多详情请参阅 [快速开始指南](spec/.docs/getting-started.md)
 
 ## 核心特性
 

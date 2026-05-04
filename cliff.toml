@@ -1,0 +1,47 @@
+[changelog]
+header = """
+# 更新日志\n
+所有重要的项目更新都将记录在此文件中。更新日志遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 格式。\n
+"""
+body = """
+{% if version %}\
+    ## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+    ## [Unreleased]
+{% endif %}\
+{% for group, commits in commits | group_by(attribute="group") %}
+    ### {{ group | striptags | trim | upper_first }}
+    {% for commit in commits %}
+        - {% if commit.scope %}**{{ commit.scope }}**: {% endif %}\
+            {{ commit.message | upper_first }}\
+    {% endfor %}
+{% endfor %}\n
+"""
+trim = true
+footer = """
+---
+{% if previous.version %}\
+    [{{ previous.version | trim_start_matches(pat="v") }}]: https://github.com/EMC-Technology/emc-website/compare/{{ previous.version }}...{{ version }}
+{% endif %}\
+"""
+
+[git]
+conventional_commits = true
+filter_unconventional = true
+split_commits = false
+commit_parsers = [
+    { message = "^feat", group = "<!-- 0 -->🚀 新增功能" },
+    { message = "^fix", group = "<!-- 1 -->🐛 错误修复" },
+    { message = "^doc", group = "<!-- 2 -->📚 文档更新" },
+    { message = "^perf", group = "<!-- 3 -->⚡ 性能优化" },
+    { message = "^refactor", group = "<!-- 4 -->🔨 代码重构" },
+    { message = "^style", group = "<!-- 5 -->🎨 代码格式" },
+    { message = "^test", group = "<!-- 6 -->🧪 测试相关" },
+    { message = "^chore\\(release\\)", skip = true },
+    { message = "^chore", group = "<!-- 7 -->📦 构建工具" },
+    { body = ".*security", group = "<!-- 8 -->🔒 安全更新" },
+]
+protect_breaking_commits = false
+filter_commits = false
+tag_pattern = "v[0-9].*"
+sort_commits = "oldest"

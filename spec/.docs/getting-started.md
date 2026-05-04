@@ -96,14 +96,13 @@ cd 文本全结构化知识系统.md
 ### 方式二：一键环境搭建（推荐）
 
 ```bash
-# 使用 Makefile 自动安装所有开发工具和依赖
-make dev-setup
+# 使用 Justfile 自动安装所有开发工具和依赖
+just dev-setup
 ```
 
 这会自动执行：
 1. 安装 `cargo-watch`, `cargo-nextest`, `cargo-llvm-cov`, `cargo-audit`, `cargo-deny`
-2. 创建数据目录 `data/db/`
-3. 输出环境就绪确认
+2. 输出环境就绪确认
 
 ### 编译项目
 
@@ -203,10 +202,10 @@ surreal sql --file crates/knowledge-core/schema.surql \
 cargo watch -x "run --bin knowledge-api"
 ```
 
-或使用 Makefile：
+或使用 Justfile：
 
 ```bash
-make dev-run
+just dev-run
 ```
 
 #### 直接运行
@@ -313,7 +312,7 @@ cargo audit
 cargo deny check
 
 # 一键全部质量检查
-make dev-lint
+just lint
 ```
 
 ---
@@ -374,7 +373,7 @@ make dev-lint
 ├── docker-compose.yml         # Docker 编排
 ├── Dockerfile                 # 容器镜像定义
 ├── CONTRIBUTING.md            # 贡献指南
-└── Makefile                   # 开发命令快捷方式
+└── justfile                   # 开发命令快捷方式
 ```
 
 ---
