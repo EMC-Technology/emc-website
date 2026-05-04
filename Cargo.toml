@@ -128,7 +128,7 @@ aws-smithy-runtime = { version = "1.1", default-features = false, features = ["c
 aws-sdk-sts = { version = "1.11", default-features = false, features = ["behavior-version-latest"] }
 
 # HashiCorp Vault (可选)
-vaultrs = { version = "0.7", default-features = false, features = ["native-tls"] }
+vaultrs = { version = "0.8", default-features = false, features = ["rustls"] }
 
 # PII 脱敏
 fancy-regex = { version = "0.13", default-features = false }
