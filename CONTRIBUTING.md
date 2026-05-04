@@ -24,7 +24,7 @@
 
 ### 环境要求
 
-- Rust 1.85 或更高版本
+- Rust 1.88 或更高版本
 - SurrealDB（用于本地测试）
 - just（任务运行器，`cargo install just`）
 
