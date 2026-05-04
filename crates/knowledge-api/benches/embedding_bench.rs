@@ -1,21 +1,26 @@
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use knowledge_api::embedding_service::{EmbeddingModel, EmbeddingService};
 use knowledge_core::model::Block;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 
 const EMBEDDING_DIM: usize = 1536;
 
-fn create_test_block(_id: &str, content: &str) -> Block {
-    Block {
+fn create_test_block(_id: &str, content: &str) -> (Block, String) {
+    let block = Block {
         id: None,
         doc_id: "document:embed_bench".parse().expect("RecordId 解析失败"),
         block_type: knowledge_core::model::BlockType::Paragraph,
         start_line: 0,
         end_line: 10,
         embedding: None,
-        idempotency_key: Some(content.to_string()),
-    }
+        idempotency_key: None,
+    };
+    (block, content.to_string())
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+fn blake3_to_u64(data: &[u8]) -> u64 {
+    let hash = blake3::hash(data);
+    u64::from_le_bytes(hash.as_bytes()[..8].try_into().expect("blake3 输出至少 8 字节"))
 }
 
 #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
@@ -40,13 +45,8 @@ fn simhash_embedding(text: &str, dimension: usize) -> Vec<f32> {
     }
 
     for token in &tokens {
-        let mut hasher = DefaultHasher::new();
-        token.hash(&mut hasher);
-        let h1 = hasher.finish();
-
-        hasher = DefaultHasher::new();
-        format!("{token}:salt2").hash(&mut hasher);
-        let h2 = hasher.finish();
+        let h1 = blake3_to_u64(token.as_bytes());
+        let h2 = blake3_to_u64(format!("{token}:salt2").as_bytes());
 
         for (i, vec_item) in v.iter_mut().enumerate().take(dimension) {
             let bit_pos = (h1.wrapping_add((i as u64).wrapping_mul(h2))) % 64;
@@ -194,10 +194,9 @@ fn bench_cosine_similarity(c: &mut Criterion) {
 }
 
 #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
-fn rand_random_f32(seed: u32, _extra: u32) -> f32 {
-    let mut hasher = DefaultHasher::new();
-    seed.hash(&mut hasher);
-    let h = hasher.finish();
+fn deterministic_f32(seed: u32, extra: u32) -> f32 {
+    let hash = blake3::hash(format!("{seed}:{extra}").as_bytes());
+    let h = u64::from_le_bytes(hash.as_bytes()[..8].try_into().expect("blake3 输出至少 8 字节"));
     ((h % 10000) as f32 / 10000.0).mul_add(2.0, -1.0)
 }
 
@@ -208,7 +207,7 @@ fn bench_vector_operations(c: &mut Criterion) {
         .map(|i| (i as f32).mul_add(0.001, 0.5).sin())
         .collect();
     let large_vecs: Vec<Vec<f32>> = (0..1000u32)
-        .map(|i| (0..EMBEDDING_DIM).map(|j| rand_random_f32(i, j as u32)).collect())
+        .map(|i| (0..EMBEDDING_DIM).map(|j| deterministic_f32(i, j as u32)).collect())
         .collect();
 
     let mut group = c.benchmark_group("embedding_vector_ops");
@@ -251,7 +250,7 @@ fn bench_vector_operations(c: &mut Criterion) {
                             (i, sim)
                         })
                         .collect();
-                    scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+                    scores.sort_by(|a, b| b.1.total_cmp(&a.1));
                     let top_k: Vec<(usize, f32)> = scores.into_iter().take(*k).collect();
                     black_box(top_k);
                 });
@@ -270,7 +269,7 @@ fn bench_embedding_service_async(c: &mut Criterion) {
     let service =
         EmbeddingService::new(EmbeddingModel::LocalBgeLarge, EMBEDDING_DIM, 16, 256).unwrap();
 
-    let block = create_test_block(
+    let (block, content) = create_test_block(
         "bench_1",
         "This is a test block for async embedding benchmark.",
     );
@@ -278,13 +277,13 @@ fn bench_embedding_service_async(c: &mut Criterion) {
     group.bench_function("single_embed_async", |b| {
         b.iter(|| {
             rt.block_on(async {
-                let result = service.embed_block(black_box(&block)).await.unwrap();
+                let result = service.embed_block(black_box(&block), black_box(&content)).await.unwrap();
                 black_box(result.embedding);
             });
         });
     });
 
-    let blocks: Vec<Block> = (0..50u32)
+    let blocks_and_contents: Vec<(Block, String)> = (0..50u32)
         .map(|i| {
             create_test_block(
                 &format!("bench_{i}"),
@@ -293,15 +292,20 @@ fn bench_embedding_service_async(c: &mut Criterion) {
         })
         .collect();
 
+    let blocks: Vec<Block> = blocks_and_contents.iter().map(|(b, _)| b.clone()).collect();
+    let contents: Vec<String> = blocks_and_contents.iter().map(|(_, c)| c.clone()).collect();
+
     for batch_size in [1usize, 10, 25, 50] {
         group.throughput(Throughput::Elements(batch_size as u64));
+        let batch_blocks = blocks[..batch_size].to_vec();
+        let batch_contents = contents[..batch_size].to_vec();
         group.bench_with_input(
             BenchmarkId::new("batch_embed_async", format!("n{batch_size}")),
-            &blocks[..batch_size],
-            |b, batch| {
+            &(batch_blocks, batch_contents),
+            |b, (blocks, contents)| {
                 b.iter(|| {
                     rt.block_on(async {
-                        let results = service.embed_batch(black_box(batch)).await.unwrap();
+                        let results = service.embed_batch(black_box(blocks), black_box(contents)).await.unwrap();
                         black_box(results);
                     });
                 });

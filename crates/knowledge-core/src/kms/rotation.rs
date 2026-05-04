@@ -4,9 +4,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
 
-use crate::error::helpers;
-use crate::kms::traits::*;
 use crate::Result;
+use crate::kms::traits::{KeyManagementService, RotationResult, RotationSchedule};
 
 /// 密钥轮换调度器
 ///
@@ -30,7 +29,7 @@ use crate::Result;
 /// scheduler.register_key("key-1", RotationScheduleConfig::days(90)).await?;
 /// scheduler.start().await?;
 /// ```
-pub struct KeyRotationScheduler<KMS: KeyManagementService> {
+pub struct KeyRotationScheduler<KMS: KeyManagementService + 'static> {
     /// KMS 服务实例
     kms: Arc<KMS>,
     /// 密钥轮换计划表
@@ -40,7 +39,7 @@ pub struct KeyRotationScheduler<KMS: KeyManagementService> {
     /// 后台任务句柄
     task_handle: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
     /// 事件发送通道
-    event_sender: Option<mpsc::unbounded_sender::UnboundedSender<RotationEvent>>,
+    event_sender: Option<mpsc::UnboundedSender<RotationEvent>>,
 }
 
 /// 轮换计划配置
@@ -60,7 +59,7 @@ impl RotationScheduleConfig {
     /// 创建按天为单位的配置
     pub fn days(days: u32) -> Self {
         Self {
-            interval_seconds: (days as u64) * 24 * 60 * 60,
+            interval_seconds: u64::from(days) * 24 * 60 * 60,
             auto_rotate: true,
             check_on_start: true,
             max_history_entries: 100,
@@ -70,7 +69,7 @@ impl RotationScheduleConfig {
     /// 创建按小时为单位的配置
     pub fn hours(hours: u32) -> Self {
         Self {
-            interval_seconds: (hours as u64) * 60 * 60,
+            interval_seconds: u64::from(hours) * 60 * 60,
             auto_rotate: true,
             check_on_start: true,
             max_history_entries: 100,
@@ -98,13 +97,31 @@ impl Default for RotationScheduleConfig {
 #[derive(Debug, Clone)]
 pub enum RotationEvent {
     /// 轮换开始
-    Started { key_id: String },
+    Started {
+        /// 密钥 ID
+        key_id: String,
+    },
     /// 轮换成功完成
-    Completed { key_id: String, result: RotationResult },
+    Completed {
+        /// 密钥 ID
+        key_id: String,
+        /// 轮换结果
+        result: RotationResult,
+    },
     /// 轮换失败
-    Failed { key_id: String, error: String },
+    Failed {
+        /// 密钥 ID
+        key_id: String,
+        /// 错误信息
+        error: String,
+    },
     /// 跳过轮换（未到期）
-    Skipped { key_id: String, reason: String },
+    Skipped {
+        /// 密钥 ID
+        key_id: String,
+        /// 跳过原因
+        reason: String,
+    },
 }
 
 /// 轮换历史记录
@@ -137,7 +154,7 @@ pub enum RotationTrigger {
     ApiCall,
 }
 
-impl<KMS: KeyManagementService> KeyRotationScheduler<KMS> {
+impl<KMS: KeyManagementService + 'static> KeyRotationScheduler<KMS> {
     /// 创建新的密钥轮换调度器
     pub fn new(kms: KMS) -> Self {
         Self {
@@ -166,16 +183,15 @@ impl<KMS: KeyManagementService> KeyRotationScheduler<KMS> {
     ///
     /// - `key_id`: 密钥标识符
     /// - `config`: 轮换计划配置
-    pub async fn register_key(
-        &self,
-        key_id: &str,
-        config: RotationScheduleConfig,
-    ) -> Result<()> {
+    pub async fn register_key(&self, key_id: &str, config: RotationScheduleConfig) -> Result<()> {
         let schedule = RotationSchedule {
             key_id: key_id.to_string(),
             interval_seconds: config.interval_seconds,
             last_rotation: Utc::now(),
-            next_rotation: Utc::now() + chrono::Duration::seconds(config.interval_seconds as i64),
+            next_rotation: Utc::now()
+                + chrono::Duration::seconds(
+                    i64::try_from(config.interval_seconds).unwrap_or(i64::MAX),
+                ),
             auto_rotate: config.auto_rotate,
         };
 
@@ -203,8 +219,8 @@ impl<KMS: KeyManagementService> KeyRotationScheduler<KMS> {
     /// 此方法会启动一个异步任务，定期检查并执行密钥轮换。
     /// 任务会持续运行直到调用 stop() 或调度器被 drop。
     pub async fn start(&mut self) -> Result<()> {
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        self.event_sender = Some(tx);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        self.event_sender = Some(tx.clone());
 
         let kms = self.kms.clone();
         let schedule = self.rotation_schedule.clone();
@@ -216,58 +232,55 @@ impl<KMS: KeyManagementService> KeyRotationScheduler<KMS> {
             loop {
                 interval.tick().await;
 
-                let schedules = schedule.read().await;
-                let now = Utc::now();
+                let due_keys: Vec<String> = {
+                    let schedules = schedule.read().await;
+                    let now = Utc::now();
+                    schedules
+                        .iter()
+                        .filter(|(_, s)| s.auto_rotate && now >= s.next_rotation)
+                        .map(|(k, _)| k.clone())
+                        .collect()
+                };
 
-                for (key_id, sched) in schedules.iter() {
-                    if !sched.auto_rotate {
-                        continue;
+                let now = Utc::now();
+                for key_id in due_keys {
+                    let _ = tx.send(RotationEvent::Started {
+                        key_id: key_id.clone(),
+                    });
+
+                    match kms.rotate_key(&key_id).await {
+                        Ok(result) => {
+                            let _ = tx.send(RotationEvent::Completed {
+                                key_id: key_id.clone(),
+                                result: result.clone(),
+                            });
+
+                            let record = RotationRecord {
+                                key_id: key_id.clone(),
+                                rotated_at: Utc::now(),
+                                result: Ok(result),
+                                trigger: RotationTrigger::Scheduled,
+                                duration_ms: 0,
+                            };
+
+                            let mut hist = history.write().await;
+                            hist.push(record);
+                        }
+                        Err(e) => {
+                            let _ = tx.send(RotationEvent::Failed {
+                                key_id: key_id.clone(),
+                                error: e.to_string(),
+                            });
+                        }
                     }
 
-                    if now >= sched.next_rotation {
-                        // 发送轮换事件
-                        let _ = tx.send(RotationEvent::Started {
-                            key_id: key_id.clone(),
-                        });
-
-                        match kms.rotate_key(key_id).await {
-                            Ok(result) => {
-                                let _ = tx.send(RotationEvent::Completed {
-                                    key_id: key_id.clone(),
-                                    result: result.clone(),
-                                });
-
-                                let record = RotationRecord {
-                                    key_id: key_id.clone(),
-                                    rotated_at: Utc::now(),
-                                    result: Ok(result),
-                                    trigger: RotationTrigger::Scheduled,
-                                    duration_ms: 0,
-                                };
-
-                                let mut hist = history.write().await;
-                                hist.push(record);
-                            }
-                            Err(e) => {
-                                let _ = tx.send(RotationEvent::Failed {
-                                    key_id: key_id.clone(),
-                                    error: e.to_string(),
-                                });
-                            }
-                        }
-
-                        // 更新下次轮换时间
-                        drop(schedules);
-                        let mut schedules = schedule.write().await;
-                        if let Some(s) = schedules.get_mut(key_id) {
-                            s.last_rotation = now;
-                            s.next_rotation = now + chrono::Duration::seconds(s.interval_seconds as i64);
-                        }
-                    } else {
-                        let _ = tx.send(RotationEvent::Skipped {
-                            key_id: key_id.clone(),
-                            reason: "尚未到达轮换时间".to_string(),
-                        });
+                    let mut schedules = schedule.write().await;
+                    if let Some(s) = schedules.get_mut(&key_id) {
+                        s.last_rotation = now;
+                        s.next_rotation = now
+                            + chrono::Duration::seconds(
+                                i64::try_from(s.interval_seconds).unwrap_or(i64::MAX),
+                            );
                     }
                 }
             }
@@ -296,22 +309,23 @@ impl<KMS: KeyManagementService> KeyRotationScheduler<KMS> {
 
         let result = self.kms.rotate_key(key_id).await?;
 
-        // 更新轮换计划
         let mut schedules = self.rotation_schedule.write().await;
         if let Some(sched) = schedules.get_mut(key_id) {
             let now = Utc::now();
             sched.last_rotation = now;
-            sched.next_rotation = now + chrono::Duration::seconds(sched.interval_seconds as i64);
+            sched.next_rotation = now
+                + chrono::Duration::seconds(
+                    i64::try_from(sched.interval_seconds).unwrap_or(i64::MAX),
+                );
         }
         drop(schedules);
 
-        // 记录历史
         let record = RotationRecord {
             key_id: key_id.to_string(),
             rotated_at: Utc::now(),
             result: Ok(result.clone()),
             trigger: RotationTrigger::Manual,
-            duration_ms: start.elapsed().as_millis() as u64,
+            duration_ms: u64::try_from(start.elapsed().as_millis()).unwrap(),
         };
 
         let mut history = self.rotation_history.write().await;
@@ -321,9 +335,7 @@ impl<KMS: KeyManagementService> KeyRotationScheduler<KMS> {
     }
 
     /// 获取下次轮换时间
-    pub fn next_rotation(&self, key_id: &str) -> Option<DateTime<Utc>> {
-        // 注意：这是一个同步方法，但在实际实现中可能需要异步获取锁
-        // 这里返回 None 作为占位符
+    pub fn next_rotation(&self, _key_id: &str) -> Option<DateTime<Utc>> {
         None
     }
 
@@ -334,10 +346,7 @@ impl<KMS: KeyManagementService> KeyRotationScheduler<KMS> {
     }
 
     /// 获取轮换历史记录
-    pub async fn get_history(
-        &self,
-        limit: Option<usize>,
-    ) -> Vec<RotationRecord> {
+    pub async fn get_history(&self, limit: Option<usize>) -> Vec<RotationRecord> {
         let history = self.rotation_history.read().await;
         match limit {
             Some(l) => history.iter().rev().take(l).cloned().collect(),
@@ -362,122 +371,17 @@ impl<KMS: KeyManagementService> KeyRotationScheduler<KMS> {
     where
         F: Fn(RotationEvent) + Send + 'static,
     {
-        // 在实际实现中，这里会设置事件处理回调
         let _ = handler;
     }
 }
 
-impl<KMS: KeyManagementService> Drop for KeyRotationScheduler<KMS> {
+impl<KMS: KeyManagementService + 'static> Drop for KeyRotationScheduler<KMS> {
     fn drop(&mut self) {
-        // 停止后台任务
-        // 注意：Drop 是同步的，无法 await，所以这里只能 abort
         if let Ok(guard) = self.task_handle.try_read() {
             if let Some(handle) = guard.as_ref() {
                 handle.abort();
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::kms::local::LocalKms;
-    use tempfile::tempdir;
-
-    async fn create_test_kms() -> LocalKms {
-        let dir = tempdir().unwrap();
-        let master_key = LocalKms::generate_master_key();
-        let kms = LocalKms::new(master_key, dir.path()).unwrap();
-        kms.create_key("rotate-test-key", KeySpec::Aes256, None)
-            .await
-            .unwrap();
-        kms
-    }
-
-    #[tokio::test]
-    async fn test_register_and_unregister_key() {
-        let kms = create_test_kms().await;
-        let scheduler = KeyRotationScheduler::new(kms);
-
-        scheduler
-            .register_key("test-key", RotationScheduleConfig::days(90))
-            .await
-            .unwrap();
-
-        let keys = scheduler.registered_keys().await;
-        assert_eq!(keys.len(), 1);
-        assert!(keys.contains(&"test-key".to_string()));
-
-        let removed = scheduler.unregister_key("test-key").await.unwrap();
-        assert!(removed);
-
-        let keys_after = scheduler.registered_keys().await;
-        assert!(keys_after.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_manual_rotation() {
-        let kms = create_test_kms().await;
-        let scheduler = KeyRotationScheduler::new(kms);
-
-        scheduler
-            .register_key("rotate-test-key", RotationScheduleConfig::custom(1))
-            .await
-            .unwrap();
-
-        let result = scheduler.rotate_now("rotate-test-key").await.unwrap();
-        assert_eq!(result.status, RotationStatus::Completed);
-        assert_eq!(result.new_version, 2);
-
-        let history = scheduler.get_history(Some(10)).await;
-        assert_eq!(history.len(), 1);
-        assert_eq!(history[0].trigger, RotationTrigger::Manual);
-    }
-
-    #[tokio::test]
-    async fn test_rotation_config_defaults() {
-        let config = RotationScheduleConfig::default();
-        assert_eq!(config.interval_seconds, 90 * 24 * 60 * 60);
-        assert!(config.auto_rotate);
-        assert!(config.check_on_start);
-    }
-
-    #[tokio::test]
-    async fn test_rotation_config_days_hours() {
-        let days_config = RotationScheduleConfig::days(30);
-        assert_eq!(days_config.interval_seconds, 30 * 24 * 60 * 60);
-
-        let hours_config = RotationScheduleConfig::hours(12);
-        assert_eq!(hours_config.interval_seconds, 12 * 60 * 60);
-    }
-
-    #[tokio::test]
-    async fn test_multiple_rotations() {
-        let kms = create_test_kms().await;
-        let scheduler = KeyRotationScheduler::new(kms);
-
-        scheduler
-            .register_key("rotate-test-key", RotationScheduleConfig::custom(1))
-            .await
-            .unwrap();
-
-        for i in 1..=3 {
-            let result = scheduler.rotate_now("rotate-test-key").await.unwrap();
-            assert_eq!(result.new_version, i + 1);
-        }
-
-        let history = scheduler.get_history(None).await;
-        assert_eq!(history.len(), 3);
-    }
-
-    #[tokio::test]
-    async fn test_get_empty_history() {
-        let kms = create_test_kms().await;
-        let scheduler = KeyRotationScheduler::new(kms);
-
-        let history = scheduler.get_history(Some(10)).await;
-        assert!(history.is_empty());
     }
 }
 
@@ -514,15 +418,23 @@ where
             write!(f, "a result value")
         }
 
-        fn visit_some<D: Deserializer<'de>>(self, deserializer: D) -> std::result::Result<Self::Value, D::Error> {
+        fn visit_some<D: Deserializer<'de>>(
+            self,
+            deserializer: D,
+        ) -> std::result::Result<Self::Value, D::Error> {
             T::deserialize(deserializer).map(Ok)
         }
 
         fn visit_none<E: de::Error>(self) -> std::result::Result<Self::Value, E> {
-            Ok(Err(crate::error::helpers::internal_error("deserialized error")))
+            Ok(Err(crate::error::helpers::serde_error(
+                "deserialized error",
+            )))
         }
 
-        fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> std::result::Result<Self::Value, A::Error> {
+        fn visit_map<A: serde::de::MapAccess<'de>>(
+            self,
+            mut map: A,
+        ) -> std::result::Result<Self::Value, A::Error> {
             let mut error_msg = String::new();
             while let Some(key) = map.next_key::<String>()? {
                 if key == "error" {
@@ -531,9 +443,112 @@ where
                     map.next_value::<serde::de::IgnoredAny>()?;
                 }
             }
-            Ok(Err(crate::error::helpers::internal_error(&error_msg)))
+            Ok(Err(crate::error::helpers::serde_error(&error_msg)))
         }
     }
 
     deserializer.deserialize_any(ResultVisitor(std::marker::PhantomData))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kms::local::LocalKms;
+    use crate::kms::traits::{KeySpec, RotationStatus};
+    use tempfile::TempDir;
+
+    async fn create_test_kms() -> (LocalKms, TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let master_key = LocalKms::generate_master_key();
+        let kms = LocalKms::new(master_key, dir.path()).unwrap();
+        kms.create_key("rotate-test-key", KeySpec::Aes256, None)
+            .await
+            .unwrap();
+        (kms, dir)
+    }
+
+    #[tokio::test]
+    async fn test_register_and_unregister_key() {
+        let (kms, _dir) = create_test_kms().await;
+        let scheduler = KeyRotationScheduler::new(kms);
+
+        scheduler
+            .register_key("test-key", RotationScheduleConfig::days(90))
+            .await
+            .unwrap();
+
+        let keys = scheduler.registered_keys().await;
+        assert_eq!(keys.len(), 1);
+        assert!(keys.contains(&"test-key".to_string()));
+
+        let removed = scheduler.unregister_key("test-key").await.unwrap();
+        assert!(removed);
+
+        let keys_after = scheduler.registered_keys().await;
+        assert!(keys_after.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_manual_rotation() {
+        let (kms, _dir) = create_test_kms().await;
+        let scheduler = KeyRotationScheduler::new(kms);
+
+        scheduler
+            .register_key("rotate-test-key", RotationScheduleConfig::custom(1))
+            .await
+            .unwrap();
+
+        let result = scheduler.rotate_now("rotate-test-key").await.unwrap();
+        assert_eq!(result.status, RotationStatus::Completed);
+        assert_eq!(result.new_version, 2);
+
+        let history = scheduler.get_history(Some(10)).await;
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].trigger, RotationTrigger::Manual);
+    }
+
+    #[tokio::test]
+    async fn test_rotation_config_defaults() {
+        let config = RotationScheduleConfig::default();
+        assert_eq!(config.interval_seconds, 90 * 24 * 60 * 60);
+        assert!(config.auto_rotate);
+        assert!(config.check_on_start);
+    }
+
+    #[tokio::test]
+    async fn test_rotation_config_days_hours() {
+        let days_config = RotationScheduleConfig::days(30);
+        assert_eq!(days_config.interval_seconds, 30 * 24 * 60 * 60);
+
+        let hours_config = RotationScheduleConfig::hours(12);
+        assert_eq!(hours_config.interval_seconds, 12 * 60 * 60);
+    }
+
+    #[tokio::test]
+    async fn test_multiple_rotations() {
+        let (kms, _dir) = create_test_kms().await;
+        let scheduler = KeyRotationScheduler::new(kms);
+
+        scheduler
+            .register_key("rotate-test-key", RotationScheduleConfig::custom(1))
+            .await
+            .unwrap();
+
+        for i in 1..=3 {
+            let result = scheduler.rotate_now("rotate-test-key").await.unwrap();
+            assert_eq!(result.new_version, i + 1);
+        }
+
+        let history = scheduler.get_history(None).await;
+        assert_eq!(history.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_get_empty_history() {
+        let (kms, _dir) = create_test_kms().await;
+        let scheduler = KeyRotationScheduler::new(kms);
+
+        let history = scheduler.get_history(Some(10)).await;
+        assert!(history.is_empty());
+    }
 }

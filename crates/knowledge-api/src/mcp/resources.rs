@@ -178,11 +178,11 @@ pub fn read_resource(
     uri: &str,
     vm: &crate::KnowledgeVM,
 ) -> crate::Result<Vec<ResourceContents>> {
-    let parsed = parse_resource_uri(uri).map_err(|e| error_core::helpers::internal_error(&e))?;
+    let parsed = parse_resource_uri(uri).map_err(|e| error_core::helpers::not_found("Resource", &e))?;
 
     match parsed {
         ResourceUri::Repos => {
-            Err(error_core::helpers::internal_error(
+            Err(error_core::helpers::not_found("Resource",
                 "多仓库注册表尚未实现，当前仅支持单仓库模式",
             ))
         }
@@ -206,7 +206,7 @@ fn count_documents(vm: &crate::KnowledgeVM) -> crate::Result<usize> {
             "SELECT count() AS total FROM document GROUP ALL",
             &serde_json::json!({}),
         )
-        .map_err(|e| error_core::helpers::internal_error(&e.to_string()))?;
+        .map_err(|e| error_core::helpers::not_found("Resource",&e.to_string()))?;
     #[allow(clippy::cast_possible_truncation)]
     let total = response
         .into_iter()
@@ -223,7 +223,7 @@ fn count_blocks(vm: &crate::KnowledgeVM) -> crate::Result<usize> {
             "SELECT count() AS total FROM block GROUP ALL",
             &serde_json::json!({}),
         )
-        .map_err(|e| error_core::helpers::internal_error(&e.to_string()))?;
+        .map_err(|e| error_core::helpers::not_found("Resource",&e.to_string()))?;
     #[allow(clippy::cast_possible_truncation)]
     let total = response
         .into_iter()
@@ -239,7 +239,7 @@ fn count_references(vm: &crate::KnowledgeVM) -> crate::Result<usize> {
             "SELECT count() AS total FROM reference GROUP ALL",
             &serde_json::json!({}),
         )
-        .map_err(|e| error_core::helpers::internal_error(&e.to_string()))?;
+        .map_err(|e| error_core::helpers::not_found("Resource",&e.to_string()))?;
     #[allow(clippy::cast_possible_truncation)]
     let total = response
         .into_iter()

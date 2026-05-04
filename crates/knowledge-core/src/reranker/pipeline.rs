@@ -8,19 +8,16 @@
 use crate::reranker::cross_encoder::{CrossEncoderModel, ScoredDocument, Document};
 use error_core::Result;
 use serde::{Deserialize, Serialize};
+use std::future::Future;
 use std::sync::Arc;
 use tracing::{debug, info};
 
 /// 混合检索器 trait
 ///
 /// 抽象检索阶段，支持 BM25、向量检索或混合检索等不同实现。
-#[async_trait::async_trait]
 pub trait HybridRetriever: Send + Sync {
     /// 检索候选文档
-    ///
-    /// # Errors
-    /// 检索后端连接失败时返回错误
-    async fn retrieve(&self, query: &str, top_k: usize) -> Result<Vec<Document>>;
+    fn retrieve(&self, query: &str, top_k: usize) -> impl Future<Output = Result<Vec<Document>>> + Send;
 }
 
 /// LLM 判决器 trait
@@ -149,9 +146,12 @@ impl MockRetriever {
     pub const fn new(docs: Vec<Document>) -> Self { Self { docs } }
 }
 
-#[async_trait::async_trait]
+#[allow(clippy::manual_async_fn)]
 impl HybridRetriever for MockRetriever {
-    async fn retrieve(&self, _query: &str, top_k: usize) -> Result<Vec<Document>> { Ok(self.docs.iter().take(top_k).cloned().collect()) }
+    #[allow(clippy::manual_async_fn)]
+    fn retrieve(&self, _query: &str, top_k: usize) -> impl Future<Output = Result<Vec<Document>>> + Send {
+        async move { Ok(self.docs.iter().take(top_k).cloned().collect()) }
+    }
 }
 
 /// Mock LLM 判定器，用于测试

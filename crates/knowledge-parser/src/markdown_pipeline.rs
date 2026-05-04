@@ -25,14 +25,6 @@ use crate::text_splitter::TextSplitterBlocker;
 use error_core::helpers;
 use knowledge_core::model::{Block, BlockType, Document, SourceType, Token};
 
-/// 默认最大分块大小（字符数）（预留：配置化分块参数尚未集成）
-#[allow(dead_code)]
-const DEFAULT_MAX_CHUNK_SIZE: usize = 1000;
-
-/// 默认分块重叠大小（字符数）（预留：配置化分块参数尚未集成）
-#[allow(dead_code)]
-const DEFAULT_CHUNK_OVERLAP: usize = 200;
-
 /// Markdown/Plain 解析流水线
 ///
 /// 组合 `ComrakAstParser`、`TextSplitterBlocker`、`IcuTokenizer` 三个组件，
@@ -203,7 +195,7 @@ impl MarkdownPipeline {
     /// - `Code` → 返回错误（应使用 `CodePipeline`）
     fn create_blocks(&self, content: &str, source_type: &SourceType) -> Result<Vec<Block>> {
         match source_type {
-            SourceType::Markdown | SourceType::Plain => self.splitter.split_to_blocks(content),
+            SourceType::Markdown | SourceType::Plain => self.splitter.split_to_blocks(content, "markdown"),
             SourceType::Code => Err(helpers::unsupported_format(
                 "Code 类型应使用 CodePipeline 处理",
             )),
@@ -347,12 +339,12 @@ mod tests {
 
         assert_eq!(
             pipeline.splitter.max_chunk_size(),
-            DEFAULT_MAX_CHUNK_SIZE,
+            1000,
             "默认 max_chunk_size 应为 1000"
         );
         assert_eq!(
             pipeline.splitter.chunk_overlap(),
-            DEFAULT_CHUNK_OVERLAP,
+            200,
             "默认 chunk_overlap 应为 200"
         );
     }

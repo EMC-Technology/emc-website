@@ -4,6 +4,76 @@
 /// 本模块仅提供向后兼容的重导出。
 pub use error_core::helpers;
 
+use error_core::ErrorObject;
+
+#[cfg(feature = "db")]
+use crate::cqrs::AggregateError;
+#[cfg(feature = "db")]
+use crate::cache::l2_cache::L2CacheError;
+#[cfg(feature = "db")]
+use crate::cache::cache_manager::CacheManagerError;
+#[cfg(feature = "event-driven")]
+use crate::event::event_handler::HandleError;
+#[cfg(feature = "event-driven")]
+use crate::event::event_bus::EventError;
+
+#[cfg(feature = "db")]
+impl From<AggregateError> for ErrorObject {
+    fn from(err: AggregateError) -> Self {
+        match err {
+            AggregateError::InvalidState(msg) => helpers::aggregate_invalid_state(&msg),
+            AggregateError::BusinessRuleViolation(msg) => helpers::aggregate_business_rule(&msg),
+            AggregateError::NotFound(msg) => helpers::aggregate_not_found(&msg),
+            AggregateError::VersionConflict { expected, actual } => helpers::aggregate_version_conflict(expected, actual),
+            AggregateError::SerializationError(msg) => helpers::aggregate_serialization_error(&msg),
+        }
+    }
+}
+
+#[cfg(feature = "db")]
+impl From<L2CacheError> for ErrorObject {
+    fn from(err: L2CacheError) -> Self {
+        match err {
+            L2CacheError::Connection(msg) => helpers::cache_l2_connection_error(&msg),
+            L2CacheError::Serialization(msg) => helpers::cache_l2_serialization_error(&msg),
+            L2CacheError::Deserialization(msg) => helpers::cache_l2_deserialization_error(&msg),
+            L2CacheError::Operation(msg) => helpers::cache_l2_operation_error(&msg),
+        }
+    }
+}
+
+#[cfg(feature = "db")]
+impl From<CacheManagerError> for ErrorObject {
+    fn from(err: CacheManagerError) -> Self {
+        match err {
+            CacheManagerError::L2Error(msg) => helpers::cache_manager_l2_error(&msg),
+            CacheManagerError::SerializationError(msg) => helpers::cache_manager_serialization_error(&msg),
+        }
+    }
+}
+
+#[cfg(feature = "event-driven")]
+impl From<HandleError> for ErrorObject {
+    fn from(err: HandleError) -> Self {
+        match err {
+            HandleError::TypeMismatch => helpers::event_type_mismatch(),
+            HandleError::ProcessingFailed(msg) => helpers::event_processing_failed(&msg),
+            HandleError::Other(msg) => helpers::event_processing_failed(&msg),
+        }
+    }
+}
+
+#[cfg(feature = "event-driven")]
+impl From<EventError> for ErrorObject {
+    fn from(err: EventError) -> Self {
+        match err {
+            EventError::NoSubscribers { event_id } => helpers::event_no_subscribers(&event_id),
+            EventError::Shutdown => helpers::event_bus_shutdown(),
+            EventError::PublishTimeout { elapsed_ms } => helpers::event_publish_timeout(elapsed_ms),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::helpers;

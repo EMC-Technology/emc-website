@@ -12,7 +12,7 @@
 //! let vm = KnowledgeVm::new(config).await?;
 //! ```
 
-use crate::EmbeddingError;
+use crate::embedding_model::EmbeddingError;
 use crate::embedding_model::{
     EmbeddingConfig, EmbeddingModel as EmbeddingModelTrait, EmbeddingModelType,
 };
@@ -20,6 +20,7 @@ use crate::gemma_embedding::GemmaEmbedding;
 use error_core::helpers;
 use knowledge_core::model::{Block, Document, RefType, Reference, Token};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// 影响分析风险等级
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -205,7 +206,7 @@ impl KnowledgeVm {
     /// - `EmbeddingError::ModelNotLoaded`：嵌入模型未加载
     /// - `EmbeddingError::EmptyInput`：输入文本为空
     /// - `EmbeddingError::InferenceFailed`：推理失败
-    pub fn embed(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
+    pub async fn embed(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
         let embedding = self
             .embedding
             .as_ref()
@@ -217,8 +218,8 @@ impl KnowledgeVm {
             ));
         }
 
-        let result = EmbeddingModelTrait::embed(embedding, text)?;
-        Ok(result.vector)
+        let result = EmbeddingModelTrait::embed(embedding, text).await?;
+        Ok(Arc::try_unwrap(result.vector).unwrap_or_else(|arc| (*arc).clone()))
     }
 
     /// 执行影响分析

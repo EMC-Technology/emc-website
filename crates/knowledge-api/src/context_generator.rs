@@ -214,12 +214,12 @@ impl ContextGenerator {
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
-                .map_err(|e| helpers::internal_error(&format!("创建目录失败: {e}")))?;
+                .map_err(|e| helpers::io_error(&format!("创建目录失败: {e}")))?;
         }
 
         tokio::fs::write(path, content)
             .await
-            .map_err(|e| helpers::internal_error(&format!("写入文件失败: {e}")))?;
+            .map_err(|e| helpers::io_error(&format!("写入文件失败: {e}")))?;
 
         Ok(())
     }

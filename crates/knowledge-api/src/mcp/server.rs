@@ -73,7 +73,7 @@ impl McpServer {
         let (stdin, stdout) = rmcp::transport::io::stdio();
         rmcp::serve_server(service, (stdin, stdout))
             .await
-            .map_err(|e| error_core::helpers::internal_error(&format!("MCP 服务启动失败: {e}")))?;
+            .map_err(|e| error_core::helpers::io_error(&format!("MCP 服务启动失败: {e}")))?;
         Ok(())
     }
 }
@@ -112,7 +112,7 @@ pub async fn run_mcp_server() -> crate::Result<()> {
     tracing::info!("数据库连接成功: {}", config.database.addr);
 
     let knowledge_vm = KnowledgeVM::with_embedding_dim(db_client, config.parser.embedding_dim)
-        .map_err(|e| error_core::helpers::internal_error(&e.to_string()))?;
+        .map_err(|e| error_core::helpers::io_error(&e.to_string()))?;
     let mcp_server = McpServer::new(knowledge_vm);
 
     tracing::info!("MCP Server 已就绪，等待 stdio 连接");

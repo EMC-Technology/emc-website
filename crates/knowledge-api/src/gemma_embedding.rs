@@ -11,10 +11,14 @@
 //! | 上下文长度 | 128K tokens |
 //! | 许可证 | Apache 2.0 |
 
+use crate::embedding_model::EmbeddingError;
 use super::candle_loader::CandleModelLoader;
-use super::embedding_model::{EmbeddingConfig, EmbeddingModelInfo, EmbeddingModelType, EmbeddingResult, EmbeddingModel as EmbeddingModelTrait};
+use super::embedding_model::{
+    EmbeddingConfig, EmbeddingModel as EmbeddingModelTrait, EmbeddingModelInfo, EmbeddingModelType,
+    EmbeddingResult,
+};
 use super::model_loader::{LoadedModel, ModelConfig, ModelLoader, PoolingStrategy};
-use super::EmbeddingError;
+use std::sync::Arc;
 
 /// Gemma 4.0 E4B 嵌入模型实现
 ///
@@ -82,7 +86,10 @@ impl GemmaEmbedding {
     /// - `EmbeddingError::ModelLoadFailed`：模型加载失败
     /// - `EmbeddingError::ConfigError`：配置错误
     pub async fn load_model(&mut self) -> Result<(), EmbeddingError> {
-        let model_id = self.config.model_id.clone()
+        let model_id = self
+            .config
+            .model_id
+            .clone()
             .unwrap_or_else(|| "google/gemma-4-e4b-it".to_string());
 
         let device = if self.config.use_gpu {
@@ -113,7 +120,9 @@ impl GemmaEmbedding {
         };
 
         let loader = CandleModelLoader::new(loader_config);
-        let model = loader.load().await
+        let model = loader
+            .load()
+            .await
             .map_err(|e| EmbeddingError::ModelLoadFailed(e.to_string()))?;
 
         self.loaded_model = Some(model);
@@ -146,9 +155,12 @@ impl GemmaEmbedding {
     }
 }
 
+#[async_trait::async_trait]
 impl EmbeddingModelTrait for GemmaEmbedding {
-    fn embed(&self, text: &str) -> Result<EmbeddingResult, EmbeddingError> {
-        let model = self.loaded_model.as_ref()
+    async fn embed(&self, text: &str) -> Result<EmbeddingResult, EmbeddingError> {
+        let model = self
+            .loaded_model
+            .as_ref()
             .ok_or_else(|| EmbeddingError::ModelNotLoaded("Gemma模型未加载".to_string()))?;
 
         if text.trim().is_empty() {
@@ -157,21 +169,55 @@ impl EmbeddingModelTrait for GemmaEmbedding {
 
         let start = std::time::Instant::now();
 
-        let result = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(
-                model.embed(text, PoolingStrategy::Eos)
-            )
-        })
-        .map_err(|e| EmbeddingError::InferenceFailed(e.to_string()))?;
+        let result = model.embed(text, PoolingStrategy::Eos)
+            .await
+            .map_err(|e| EmbeddingError::InferenceFailed(e.to_string()))?;
 
         let inference_time_ms = start.elapsed().as_secs_f64() * 1000.0;
 
+        let token_count = text.split_whitespace().count().max(
+            text.split(|c: char| !c.is_alphanumeric())
+                .filter(|t| !t.is_empty())
+                .count(),
+        );
+
         Ok(EmbeddingResult {
-            vector: result,
-            token_count: 0,
+            vector: Arc::new(result),
+            token_count,
             inference_time_ms,
             model_info: self.model_info.clone(),
         })
+    }
+
+    async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<EmbeddingResult>, EmbeddingError> {
+        let model = self
+            .loaded_model
+            .as_ref()
+            .ok_or_else(|| EmbeddingError::ModelNotLoaded("Gemma模型未加载".to_string()))?;
+
+        if texts.is_empty() {
+            return Err(EmbeddingError::EmptyInput);
+        }
+
+        let start = std::time::Instant::now();
+
+        let results = model.embed_batch(texts, PoolingStrategy::Eos)
+            .await
+            .map_err(|e| EmbeddingError::InferenceFailed(e.to_string()))?;
+
+        let inference_time_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+        let mut embedding_results = Vec::with_capacity(results.len());
+        for vector in results {
+            embedding_results.push(EmbeddingResult {
+                vector: Arc::new(vector),
+                token_count: 0,
+                inference_time_ms,
+                model_info: self.model_info.clone(),
+            });
+        }
+
+        Ok(embedding_results)
     }
 
     fn embedding_dim(&self) -> usize {

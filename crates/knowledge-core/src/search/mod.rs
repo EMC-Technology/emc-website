@@ -10,4 +10,6 @@ pub mod bm25;
 pub mod hybrid;
 
 pub use bm25::{Bm25Index, InvertedIndex};
-pub use hybrid::{HybridSearchResult, RRF_DEFAULT_K, reciprocal_rank_fusion};
+pub use hybrid::{HybridSearchResult, RRF_DEFAULT_K};
+#[cfg(feature = "db")]
+pub use hybrid::reciprocal_rank_fusion;

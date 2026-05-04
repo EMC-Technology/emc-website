@@ -12,11 +12,13 @@
 //! cargo test -p knowledge-api --test local_model_integration
 //! ```
 
-use knowledge_api::{
-    CandleModelLoader, DeviceType, EmbeddingConfig, EmbeddingError, EmbeddingModelTrait,
-    EmbeddingModelType, GemmaEmbedding, HashEmbedding, LoaderConfig, ModelBackend, ModelLoader,
-    PoolingStrategy, Quantization,
+use knowledge_api::embedding_model::{
+    EmbeddingConfig, EmbeddingError, EmbeddingModel as EmbeddingModelTrait, EmbeddingModelType,
 };
+use knowledge_api::hash_embedding::HashEmbedding;
+use knowledge_api::gemma_embedding::GemmaEmbedding;
+use knowledge_api::model_loader::{ModelLoader, ModelConfig as LoaderConfig, PoolingStrategy};
+use knowledge_api::candle_loader::CandleModelLoader;
 
 fn model_cache_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -38,9 +40,9 @@ fn gemma_model_available() -> bool {
 fn default_loader_config() -> LoaderConfig {
     LoaderConfig {
         model_id: "google/gemma-4-e4b-it".to_string(),
-        backend: ModelBackend::Candle,
-        device: DeviceType::Cpu,
-        quantization: Quantization::Fp16,
+        backend: knowledge_api::model_loader::ModelBackend::Candle,
+        device: knowledge_api::model_loader::DeviceType::Cpu,
+        quantization: knowledge_api::model_loader::Quantization::Fp16,
         max_seq_length: 128,
         batch_size: 1,
         cache_dir: Some(model_cache_dir()),
@@ -52,10 +54,10 @@ fn default_loader_config() -> LoaderConfig {
 
 // ========== HashEmbedding 测试 ==========
 
-#[test]
-fn test_hash_embedding_basic_inference() {
+#[tokio::test]
+async fn test_hash_embedding_basic_inference() {
     let hash = HashEmbedding::with_dimension(256);
-    let result = EmbeddingModelTrait::embed(&hash, "Hello, world!").expect("Hash嵌入应成功");
+    let result = EmbeddingModelTrait::embed(&hash, "Hello, world!").await.expect("Hash嵌入应成功");
 
     assert_eq!(result.vector.len(), 256, "嵌入维度应为256");
     assert!(result.inference_time_ms > 0.0, "推理时间应大于0");
@@ -68,32 +70,32 @@ fn test_hash_embedding_basic_inference() {
     );
 }
 
-#[test]
-fn test_hash_embedding_empty_input_returns_error() {
+#[tokio::test]
+async fn test_hash_embedding_empty_input_returns_error() {
     let hash = HashEmbedding::with_dimension(128);
-    let result = EmbeddingModelTrait::embed(&hash, "");
+    let result = EmbeddingModelTrait::embed(&hash, "").await;
     assert!(matches!(result, Err(EmbeddingError::EmptyInput)));
 
-    let result = EmbeddingModelTrait::embed(&hash, "   ");
+    let result = EmbeddingModelTrait::embed(&hash, "   ").await;
     assert!(matches!(result, Err(EmbeddingError::EmptyInput)));
 }
 
-#[test]
-fn test_hash_embedding_deterministic() {
+#[tokio::test]
+async fn test_hash_embedding_deterministic() {
     let hash = HashEmbedding::with_dimension(256);
-    let r1 = EmbeddingModelTrait::embed(&hash, "deterministic test").expect("嵌入应成功");
-    let r2 = EmbeddingModelTrait::embed(&hash, "deterministic test").expect("嵌入应成功");
+    let r1 = EmbeddingModelTrait::embed(&hash, "deterministic test").await.expect("嵌入应成功");
+    let r2 = EmbeddingModelTrait::embed(&hash, "deterministic test").await.expect("嵌入应成功");
 
     for (a, b) in r1.vector.iter().zip(r2.vector.iter()) {
         assert!((a - b).abs() < f32::EPSILON, "相同输入应产生相同嵌入向量");
     }
 }
 
-#[test]
-fn test_hash_embedding_different_inputs_differ() {
+#[tokio::test]
+async fn test_hash_embedding_different_inputs_differ() {
     let hash = HashEmbedding::with_dimension(256);
-    let r1 = EmbeddingModelTrait::embed(&hash, "apple").expect("嵌入应成功");
-    let r2 = EmbeddingModelTrait::embed(&hash, "orange").expect("嵌入应成功");
+    let r1 = EmbeddingModelTrait::embed(&hash, "apple").await.expect("嵌入应成功");
+    let r2 = EmbeddingModelTrait::embed(&hash, "orange").await.expect("嵌入应成功");
 
     let diff_count = r1
         .vector
@@ -104,11 +106,11 @@ fn test_hash_embedding_different_inputs_differ() {
     assert!(diff_count > 0, "不同输入应产生不同嵌入向量");
 }
 
-#[test]
-fn test_hash_embedding_multiple_dimensions() {
+#[tokio::test]
+async fn test_hash_embedding_multiple_dimensions() {
     for dim in [64, 128, 256, 512, 768, 1024] {
         let hash = HashEmbedding::with_dimension(dim);
-        let result = EmbeddingModelTrait::embed(&hash, "multi-dim test").expect("嵌入应成功");
+        let result = EmbeddingModelTrait::embed(&hash, "multi-dim test").await.expect("嵌入应成功");
         assert_eq!(result.vector.len(), dim, "维度{dim}嵌入长度不匹配");
     }
 }
@@ -184,7 +186,7 @@ async fn test_candle_loader_model_detection() {
 async fn test_candle_loader_name_and_backend() {
     let loader = CandleModelLoader::new(LoaderConfig::default());
     assert_eq!(loader.name(), "candle-loader");
-    assert_eq!(loader.supported_backend(), ModelBackend::Candle);
+    assert_eq!(loader.supported_backend(), knowledge_api::model_loader::ModelBackend::Candle);
 }
 
 #[tokio::test]
@@ -277,8 +279,8 @@ fn test_gemma_embedding_creation() {
     assert_eq!(EmbeddingModelTrait::model_name(&gemma), "gemma-4-e4b");
 }
 
-#[test]
-fn test_gemma_embedding_not_loaded_error() {
+#[tokio::test]
+async fn test_gemma_embedding_not_loaded_error() {
     let config = EmbeddingConfig {
         model_type: EmbeddingModelType::Gemma4E4b,
         embedding_dim: 2560,
@@ -291,7 +293,7 @@ fn test_gemma_embedding_not_loaded_error() {
     };
 
     let gemma = GemmaEmbedding::new(config).expect("创建应成功");
-    let result = EmbeddingModelTrait::embed(&gemma, "test");
+    let result = EmbeddingModelTrait::embed(&gemma, "test").await;
     assert!(matches!(result, Err(EmbeddingError::ModelNotLoaded(_))));
 }
 
@@ -322,9 +324,9 @@ async fn test_gemma_embedding_load_and_embed() {
     gemma.load_model().await.expect("模型加载应成功");
     assert!(gemma.is_loaded());
 
-    let result =
-        tokio::task::block_in_place(|| EmbeddingModelTrait::embed(&gemma, "Hello, world!"))
-            .expect("嵌入推理应成功");
+    let result = EmbeddingModelTrait::embed(&gemma, "Hello, world!")
+        .await
+        .expect("嵌入推理应成功");
 
     assert_eq!(result.vector.len(), 2560, "嵌入维度应为2560");
     assert!(result.inference_time_ms > 0.0, "推理时间应大于0");
@@ -357,9 +359,9 @@ async fn test_gemma_embedding_chinese_text() {
     let mut gemma = GemmaEmbedding::new(config).expect("创建应成功");
     gemma.load_model().await.expect("模型加载应成功");
 
-    let result =
-        tokio::task::block_in_place(|| EmbeddingModelTrait::embed(&gemma, "这是一个中文测试句子"))
-            .expect("中文嵌入应成功");
+    let result = EmbeddingModelTrait::embed(&gemma, "这是一个中文测试句子")
+        .await
+        .expect("中文嵌入应成功");
 
     assert_eq!(result.vector.len(), 2560);
 
@@ -388,19 +390,13 @@ async fn test_gemma_embedding_semantic_similarity() {
     let mut gemma = GemmaEmbedding::new(config).expect("创建应成功");
     gemma.load_model().await.expect("模型加载应成功");
 
-    let r_similar = tokio::task::block_in_place(|| {
-        let a = EmbeddingModelTrait::embed(&gemma, "The cat sat on the mat")?;
-        let b = EmbeddingModelTrait::embed(&gemma, "A kitten was sitting on a rug")?;
-        Ok::<_, EmbeddingError>((a, b))
-    })
-    .expect("相似句子嵌入应成功");
+    let a = EmbeddingModelTrait::embed(&gemma, "The cat sat on the mat").await.expect("嵌入应成功");
+    let b = EmbeddingModelTrait::embed(&gemma, "A kitten was sitting on a rug").await.expect("嵌入应成功");
+    let r_similar = (a, b);
 
-    let r_different = tokio::task::block_in_place(|| {
-        let a = EmbeddingModelTrait::embed(&gemma, "The cat sat on the mat")?;
-        let b = EmbeddingModelTrait::embed(&gemma, "Quantum physics explains subatomic particles")?;
-        Ok::<_, EmbeddingError>((a, b))
-    })
-    .expect("不同句子嵌入应成功");
+    let a = EmbeddingModelTrait::embed(&gemma, "The cat sat on the mat").await.expect("嵌入应成功");
+    let b = EmbeddingModelTrait::embed(&gemma, "Quantum physics explains subatomic particles").await.expect("嵌入应成功");
+    let r_different = (a, b);
 
     let sim_similar = cosine_similarity(&r_similar.0.vector, &r_similar.1.vector);
     let sim_different = cosine_similarity(&r_different.0.vector, &r_different.1.vector);

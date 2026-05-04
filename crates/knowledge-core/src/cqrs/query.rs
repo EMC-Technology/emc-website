@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use super::aggregate::DocumentStatus;
 
 /// Query trait - 表示读操作的请求
 ///
@@ -41,8 +42,8 @@ pub struct DocumentView {
     pub title: String,
     /// 内容 MIME 类型
     pub content_type: String,
-    /// 文档状态（`draft`、`published`、`archived`）
-    pub status: String,
+    /// 文档状态
+    pub status: DocumentStatus,
     /// 当前版本号
     pub version: u64,
     /// 创建时间
@@ -309,7 +310,7 @@ pub struct ListDocumentsFilter {
     /// 限定来源类型
     pub source_type: Option<String>,
     /// 限定文档状态
-    pub status: Option<String>,
+    pub status: Option<DocumentStatus>,
     /// 标题模糊匹配
     pub title_contains: Option<String>,
 }
@@ -334,7 +335,7 @@ mod tests {
             id: "doc_001".to_string(),
             title: "Test Document".to_string(),
             content_type: "markdown".to_string(),
-            status: "published".to_string(),
+            status: DocumentStatus::Published,
             version: 5,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -419,7 +420,7 @@ mod tests {
             id: "doc_003".to_string(),
             title: "No Content Doc".to_string(),
             content_type: "plain".to_string(),
-            status: "draft".to_string(),
+            status: DocumentStatus::Draft,
             version: 1,
             created_at: Utc::now(),
             updated_at: Utc::now(),

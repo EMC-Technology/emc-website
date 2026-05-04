@@ -171,7 +171,25 @@ pub(crate) fn wrap_llm_stream(
     let mapped = llm_stream.map(move |result| {
         result.map(|chunk| {
             if chunk.is_final {
-                RAGStreamChunk::done(request_id)
+                let mut done_chunk = RAGStreamChunk::done(request_id);
+                let mut meta = serde_json::Map::new();
+                if let Some(usage) = chunk.usage {
+                    meta.insert(
+                        "usage".to_string(),
+                        serde_json::json!({
+                            "promptTokens": usage.prompt_tokens,
+                            "completionTokens": usage.completion_tokens,
+                            "totalTokens": usage.total_tokens,
+                        }),
+                    );
+                }
+                if let Some(model) = chunk.model {
+                    meta.insert("model".to_string(), serde_json::Value::String(model));
+                }
+                if !meta.is_empty() {
+                    done_chunk.metadata = Some(serde_json::Value::Object(meta));
+                }
+                done_chunk
             } else {
                 RAGStreamChunk::content(request_id, chunk.content)
             }
@@ -188,6 +206,7 @@ pub(crate) fn wrap_llm_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rag::engine::TokenUsage;
     use futures::StreamExt;
 
     #[test]
@@ -247,9 +266,13 @@ mod tests {
     #[tokio::test]
     async fn test_wrap_llm_stream() {
         let mock_chunks: Vec<Result<StreamChunk>> = vec![
-            Ok(StreamChunk { content: "Hello ".to_string(), is_final: false }),
-            Ok(StreamChunk { content: "world!".to_string(), is_final: false }),
-            Ok(StreamChunk { content: String::new(), is_final: true }),
+            Ok(StreamChunk { content: "Hello ".to_string(), is_final: false, usage: None, model: None }),
+            Ok(StreamChunk { content: "world!".to_string(), is_final: false, usage: None, model: None }),
+            Ok(StreamChunk { content: String::new(), is_final: true, usage: Some(TokenUsage {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                total_tokens: 15,
+            }), model: Some("mock-llm".to_string()) }),
         ];
 
         let mock_stream = futures::stream::iter(mock_chunks);

@@ -5,6 +5,7 @@
 
 use error_core::Result;
 use serde::{Deserialize, Serialize};
+use std::future::Future;
 use tracing::debug;
 use uuid::Uuid;
 
@@ -92,28 +93,23 @@ impl Ord for ScoredDocument {
 /// 交叉编码器将查询和文档联合编码，输出精确的相关性分数。
 /// 与双编码器（Bi-Encoder）相比，交叉编码器精度更高但速度更慢，
 /// 适用于小规模候选集的精排阶段。
-#[async_trait::async_trait]
 pub trait CrossEncoderModel: Send + Sync {
     /// 对文档列表进行重排序
-    ///
-    /// # Errors
-    /// 模型推理失败时返回错误
-    async fn rerank(&self, query: &str, documents: &[Document]) -> Result<Vec<ScoredDocument>>;
+    fn rerank(&self, query: &str, documents: &[Document]) -> impl Future<Output = Result<Vec<ScoredDocument>>> + Send;
 
     /// 批量重排序
-    ///
-    /// # Errors
-    /// 模型推理失败时返回错误
-    async fn rerank_batch(
+    fn rerank_batch(
         &self,
         queries: &[&str],
         documents_list: &[Vec<Document>],
-    ) -> Result<Vec<Vec<ScoredDocument>>> {
-        let mut results = Vec::with_capacity(queries.len());
-        for (q, docs) in queries.iter().zip(documents_list.iter()) {
-            results.push(self.rerank(q, docs).await?);
+    ) -> impl Future<Output = Result<Vec<Vec<ScoredDocument>>>> + Send {
+        async move {
+            let mut results = Vec::with_capacity(queries.len());
+            for (q, docs) in queries.iter().zip(documents_list.iter()) {
+                results.push(self.rerank(q, docs).await?);
+            }
+            Ok(results)
         }
-        Ok(results)
     }
     /// 获取模型名称
     fn model_name(&self) -> &str;
@@ -176,19 +172,22 @@ impl Default for MockCrossEncoder {
     }
 }
 
-#[async_trait::async_trait]
+#[allow(clippy::manual_async_fn)]
 impl CrossEncoderModel for MockCrossEncoder {
-    async fn rerank(&self, query: &str, documents: &[Document]) -> Result<Vec<ScoredDocument>> {
-        debug!(model = %self.name, count = documents.len(), "mock rerank");
-        let mut scored: Vec<ScoredDocument> = documents
-            .iter()
-            .map(|d| ScoredDocument::new(d.clone(), self.compute_similarity(query, &d.content)))
-            .collect();
-        scored.sort();
-        for (i, s) in scored.iter_mut().enumerate() {
-            s.rank = i;
+    #[allow(clippy::manual_async_fn)]
+    fn rerank(&self, query: &str, documents: &[Document]) -> impl Future<Output = Result<Vec<ScoredDocument>>> + Send {
+        async move {
+            debug!(model = %self.name, count = documents.len(), "mock rerank");
+            let mut scored: Vec<ScoredDocument> = documents
+                .iter()
+                .map(|d| ScoredDocument::new(d.clone(), self.compute_similarity(query, &d.content)))
+                .collect();
+            scored.sort();
+            for (i, s) in scored.iter_mut().enumerate() {
+                s.rank = i;
+            }
+            Ok(scored)
         }
-        Ok(scored)
     }
     fn model_name(&self) -> &str {
         &self.name

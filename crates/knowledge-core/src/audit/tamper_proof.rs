@@ -34,7 +34,7 @@ pub struct TamperProofAuditLog {
     /// HMAC 签名器
     signer: HmacSigner,
     /// 链验证器（预留：实时链完整性校验尚未集成到写入路径，error-core 恢复状态机集成后实现）
-    #[allow(dead_code)]
+    #[allow(dead_code)] // 预留：防篡改审计接口，待集成到审计管道
     chain_validator: ChainValidator,
 }
 
@@ -365,7 +365,7 @@ pub struct HmacSigner {
     /// 32 字节 HMAC 签名密钥
     key: [u8; 32],
     /// 使用的哈希算法（预留：多算法切换尚未实现，LightField 替代后支持）
-    #[allow(dead_code)]
+    #[allow(dead_code)] // 预留：防篡改审计接口，待集成到审计管道
     algorithm: HashAlgorithm,
 }
 
@@ -475,9 +475,7 @@ impl ChainValidator {
         hasher.update(entry.event_type.code().as_bytes());
         hasher.update(entry.actor.actor_id().as_bytes());
         hasher.update(
-            serde_json::to_string(&entry.payload)
-                .unwrap_or_default()
-                .as_bytes(),
+            &serde_json::to_vec(&entry.payload).unwrap_or_default(),
         );
 
         if let Some(ref prev_hash) = entry.previous_hash {
@@ -678,7 +676,7 @@ pub struct FileAuditWriter {
     /// 审计日志文件路径
     log_path: std::path::PathBuf,
     /// 条目 ID → 文件行号的索引（预留：按 ID 快速定位审计条目尚未实现，LightField 替代后原生支持）
-    #[allow(dead_code)]
+    #[allow(dead_code)] // 预留：防篡改审计接口，待集成到审计管道
     index: Arc<RwLock<HashMap<String, u64>>>,
 }
 
@@ -707,17 +705,17 @@ impl FileAuditWriter {
             .append(true)
             .open(&self.log_path)
             .await
-            .map_err(|e| helpers::internal_error(&format!("无法打开审计日志文件: {e}")))?;
+            .map_err(|e| helpers::io_error(&format!("无法打开审计日志文件: {e}")))?;
 
         file.write_all(line.as_bytes())
             .await
-            .map_err(|e| helpers::internal_error(&format!("写入审计日志失败: {e}")))?;
+            .map_err(|e| helpers::io_error(&format!("写入审计日志失败: {e}")))?;
         file.write_all(b"\n")
             .await
-            .map_err(|e| helpers::internal_error(&format!("写入换行符失败: {e}")))?;
+            .map_err(|e| helpers::io_error(&format!("写入换行符失败: {e}")))?;
         file.flush()
             .await
-            .map_err(|e| helpers::internal_error(&format!("刷新缓冲区失败: {e}")))?;
+            .map_err(|e| helpers::io_error(&format!("刷新缓冲区失败: {e}")))?;
 
         Ok(())
     }
@@ -727,7 +725,7 @@ impl FileAuditWriter {
         match tokio::fs::read_to_string(&self.log_path).await {
             Ok(content) => Ok(content.lines().map(String::from).collect()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-            Err(e) => Err(helpers::internal_error(&format!("读取审计日志失败: {e}"))),
+            Err(e) => Err(helpers::io_error(&format!("读取审计日志失败: {e}"))),
         }
     }
 }
@@ -735,7 +733,9 @@ impl FileAuditWriter {
 #[async_trait]
 impl AuditWriter for FileAuditWriter {
     async fn append(&self, entry: &AuditEntry) -> Result<AuditEntryId> {
-        let line = serde_json::to_string(entry)?;
+        let bytes = serde_json::to_vec(entry)?;
+        let line = String::from_utf8(bytes)
+            .map_err(|e| error_core::helpers::serde_error(&e.to_string()))?;
         self.append_line(&line).await?;
         Ok(entry.id.clone())
     }
@@ -752,7 +752,7 @@ impl AuditWriter for FileAuditWriter {
             }
         }
 
-        entries.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        entries.sort_by_key(|a| a.timestamp);
         Ok(entries)
     }
 

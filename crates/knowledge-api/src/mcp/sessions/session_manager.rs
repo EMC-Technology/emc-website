@@ -303,7 +303,7 @@ impl SessionManager {
             updated_at: now,
             expires_at: now
                 + chrono::Duration::from_std(self.config.default_ttl)
-                    .map_err(|e| helpers::internal_error(&format!("default_ttl 配置值无效: {e}")))?,
+                    .map_err(|e| helpers::config_error(&format!("default_ttl 配置值无效: {e}")))?,
             context_window: SessionContextWindow {
                 max_messages: self.config.max_messages,
                 max_tokens: self.config.max_tokens,
@@ -525,7 +525,7 @@ impl SessionManager {
         let now = Utc::now();
         let idle_threshold =
             now - chrono::Duration::from_std(self.config.idle_timeout)
-                .map_err(|e| helpers::internal_error(&format!("idle_timeout 配置值无效: {e}")))?;
+                .map_err(|e| helpers::config_error(&format!("idle_timeout 配置值无效: {e}")))?;
 
         let expired_ids: Vec<Uuid> = self
             .active_sessions

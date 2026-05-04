@@ -184,11 +184,11 @@ impl<E: SentenceEmbedder + Send + Sync + 'static> SemanticChunker<E> {
         debug!(embeddings_count = embeddings.len(), "嵌入计算完成");
 
         if embeddings.len() != sentences.len() {
-            return Err(error_core::helpers::internal_error(&format!(
+            return Err(error_core::helpers::validation_error(&format!(
                 "嵌入数量 ({}) 与句子数量 ({}) 不匹配",
                 embeddings.len(),
                 sentences.len()
-            )));
+            ), "compute_semantic_embeddings"));
         }
 
         // Step 3: 检测语义边界
@@ -513,7 +513,7 @@ impl<E: SentenceEmbedder + Send + Sync + 'static> SemanticChunker<E> {
             }
             overlap_count += 1;
             // 粗略估算：假设每句平均 20 tokens
-            accumulated_tokens += 20;
+            accumulated_tokens += self.config.max_chunk_size / 50;
         }
 
         overlap_count
@@ -551,6 +551,7 @@ impl<E: SentenceEmbedder + Send + Sync + 'static> SemanticChunker<E> {
             (text, text.len())
         } else {
             let split_at = self.config.max_chunk_size.min(text.len());
+            let split_at = crate::floor_char_boundary(text, split_at);
             (&text[..split_at], split_at)
         }
     }

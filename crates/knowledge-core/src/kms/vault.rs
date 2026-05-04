@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use chrono::{DateTime, Utc};
@@ -70,7 +69,7 @@ pub struct VaultKmsConfig {
 ///
 /// # 安全警告
 ///
-/// `skip_verify` 设为 `true` 将跳过 TLS 证书验证，仅应在开发/测试环境中使用。
+/// `skip_verify` 设为 `true` 将跳过 TLS 证书验证，仅应在开发测试环境中使用。
 /// 生产环境必须配置有效的 CA 证书。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VaultTlsConfig {
@@ -107,10 +106,10 @@ impl VaultKms {
 
         let settings = settings_builder
             .build()
-            .map_err(|e| helpers::internal_error(&format!("Vault 配置构建失败: {}", e)))?;
+            .map_err(|e| helpers::io_error(&format!("Vault 配置构建失败: {}", e)))?;
 
         let client = vaultrs::client::VaultClient::new(settings)
-            .map_err(|e| helpers::internal_error(&format!("创建 Vault 客户端失败: {}", e)))?;
+            .map_err(|e| helpers::io_error(&format!("创建 Vault 客户端失败: {}", e)))?;
 
         let client = Arc::new(client);
         let transit_mount = config
@@ -191,7 +190,7 @@ impl VaultKms {
 
                 let mut leases_map = leases.write().await;
                 match result {
-                    Ok(_) => {
+                    Ok(()) => {
                         if let Some(entry) = leases_map.get_mut(&info.lease_id) {
                             entry.last_renewed = Utc::now();
                             entry.renew_fail_count = 0;
@@ -249,7 +248,7 @@ impl VaultKms {
         });
 
         let body_str = serde_json::to_string(&body)
-            .map_err(|e| helpers::internal_error(&format!("序列化请求失败: {}", e)))?;
+            .map_err(|e| helpers::serde_error(&format!("序列化请求失败: {}", e)))?;
 
         let mut request = client
             .http
@@ -266,12 +265,12 @@ impl VaultKms {
         let response = request
             .send()
             .await
-            .map_err(|e| helpers::internal_error(&format!("Vault lease 续期请求失败: {}", e)))?;
+            .map_err(|e| helpers::io_error(&format!("Vault lease 续期请求失败: {}", e)))?;
 
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(helpers::internal_error(&format!(
+            return Err(helpers::io_error(&format!(
                 "Vault lease 续期失败: HTTP {} - {}",
                 status, body
             )));
@@ -330,7 +329,7 @@ impl VaultKms {
 
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl KeyManagementService for VaultKms {
     async fn generate_dek(&self, key_id: &str) -> Result<EncryptedKey> {
         let response = vaultrs::transit::generate::data_key(
@@ -341,15 +340,15 @@ impl KeyManagementService for VaultKms {
             None,
         )
         .await
-        .map_err(|e| helpers::internal_error(&format!("Vault 生成 DEK 失败: {}", e)))?;
+        .map_err(|e| helpers::io_error(&format!("Vault 生成 DEK 失败: {}", e)))?;
 
         let plaintext = response
             .plaintext
-            .ok_or_else(|| helpers::internal_error("Vault 未返回明文 DEK"))?;
+            .ok_or_else(|| helpers::crypto_error("Vault 未返回明文 DEK"))?;
 
         let decoded = BASE64
             .decode(&plaintext)
-            .map_err(|e| helpers::internal_error(&format!("Base64 解码失败: {}", e)))?;
+            .map_err(|e| helpers::crypto_error(&format!("Base64 解码失败: {}", e)))?;
 
         let nonce = decoded[..12].to_vec();
         let ciphertext_blob = decoded[12..].to_vec();
@@ -374,11 +373,11 @@ impl KeyManagementService for VaultKms {
             None,
         )
         .await
-        .map_err(|e| helpers::internal_error(&format!("Vault 加密失败: {}", e)))?;
+        .map_err(|e| helpers::io_error(&format!("Vault 加密失败: {}", e)))?;
 
         let ct_bytes = BASE64
             .decode(&response.ciphertext)
-            .map_err(|e| helpers::internal_error(&format!("Base64 解码失败: {}", e)))?;
+            .map_err(|e| helpers::crypto_error(&format!("Base64 解码失败: {}", e)))?;
 
         Ok(Ciphertext::new(
             ct_bytes,
@@ -398,11 +397,11 @@ impl KeyManagementService for VaultKms {
             None,
         )
         .await
-        .map_err(|e| helpers::internal_error(&format!("Vault 解密失败: {}", e)))?;
+        .map_err(|e| helpers::io_error(&format!("Vault 解密失败: {}", e)))?;
 
         BASE64
             .decode(&response.plaintext)
-            .map_err(|e| helpers::internal_error(&format!("Base64 解码失败: {}", e)))
+            .map_err(|e| helpers::crypto_error(&format!("Base64 解码失败: {}", e)))
     }
 
     async fn sign(&self, key_id: &str, data: &[u8]) -> Result<Signature> {
@@ -416,11 +415,11 @@ impl KeyManagementService for VaultKms {
             None,
         )
         .await
-        .map_err(|e| helpers::internal_error(&format!("Vault 签名失败: {}", e)))?;
+        .map_err(|e| helpers::io_error(&format!("Vault 签名失败: {}", e)))?;
 
         let sig_bytes = BASE64
             .decode(&response.signature)
-            .map_err(|e| helpers::internal_error(&format!("Base64 解码失败: {}", e)))?;
+            .map_err(|e| helpers::crypto_error(&format!("Base64 解码失败: {}", e)))?;
 
         Ok(Signature::new(
             sig_bytes,
@@ -445,7 +444,7 @@ impl KeyManagementService for VaultKms {
             Some(&mut opts_builder),
         )
         .await
-        .map_err(|e| helpers::internal_error(&format!("Vault 验证签名失败: {}", e)))?;
+        .map_err(|e| helpers::io_error(&format!("Vault 验证签名失败: {}", e)))?;
 
         Ok(response.valid)
     }
@@ -453,7 +452,7 @@ impl KeyManagementService for VaultKms {
     async fn rotate_key(&self, key_id: &str) -> Result<RotationResult> {
         vaultrs::transit::key::rotate(self.client.as_ref(), &self.transit_mount, key_id)
             .await
-            .map_err(|e| helpers::internal_error(&format!("Vault 密钥轮换失败: {}", e)))?;
+            .map_err(|e| helpers::io_error(&format!("Vault 密钥轮换失败: {}", e)))?;
 
         Ok(RotationResult {
             key_id: key_id.to_string(),
@@ -467,7 +466,7 @@ impl KeyManagementService for VaultKms {
     async fn list_keys(&self) -> Result<Vec<KeyMetadata>> {
         let response = vaultrs::transit::key::list(self.client.as_ref(), &self.transit_mount)
             .await
-            .map_err(|e| helpers::internal_error(&format!("Vault 列出密钥失败: {}", e)))?;
+            .map_err(|e| helpers::io_error(&format!("Vault 列出密钥失败: {}", e)))?;
 
         let mut metadata_list = Vec::new();
 
@@ -501,7 +500,7 @@ impl KeyManagementService for VaultKms {
         let key_info =
             vaultrs::transit::key::read(self.client.as_ref(), &self.transit_mount, key_id)
                 .await
-                .map_err(|e| helpers::internal_error(&format!("Vault 读取密钥失败: {}", e)))?;
+                .map_err(|e| helpers::io_error(&format!("Vault 读取密钥失败: {}", e)))?;
 
         Ok(KeyMetadata {
             key_id: key_id.to_string(),
@@ -523,7 +522,7 @@ impl KeyManagementService for VaultKms {
 
         vaultrs::transit::key::delete(self.client.as_ref(), &self.transit_mount, key_id)
             .await
-            .map_err(|e| helpers::internal_error(&format!("Vault 删除密钥失败: {}", e)))?;
+            .map_err(|e| helpers::io_error(&format!("Vault 删除密钥失败: {}", e)))?;
 
         Ok(())
     }
@@ -532,7 +531,8 @@ impl KeyManagementService for VaultKms {
         let start = std::time::Instant::now();
 
         match vaultrs::sys::health(self.client.as_ref()).await {
-            Ok(_) => {
+            Ok(()) => {
+                #[allow(clippy::cast_possible_truncation)]
                 let latency = start.elapsed().as_millis() as u64;
                 Ok(KmsHealthStatus::healthy(latency))
             }
@@ -545,11 +545,11 @@ impl KeyManagementService for VaultKms {
 }
 
 impl VaultKms {
-    /// 在 Vault Transit 引擎中创建新密钥
+    /// 从 Vault Transit 引擎中创建新密钥
     ///
     /// # 参数
     ///
-    /// - `key_name`: 密钥名称（在 Vault 中唯一标识）
+    /// - `key_name`: 密钥名称（在 Vault 中唯一标识符）
     /// - `key_type`: 密钥类型（如 `aes256-gcm96`、`chacha20-poly1305`）
     ///
     /// # Errors
@@ -570,7 +570,7 @@ impl VaultKms {
             Some(&mut opts_builder),
         )
         .await
-        .map_err(|e| helpers::internal_error(&format!("创建 Vault 密钥失败: {}", e)))?;
+        .map_err(|e| helpers::io_error(&format!("创建 Vault 密钥失败: {}", e)))?;
 
         self.describe_key(key_name).await
     }

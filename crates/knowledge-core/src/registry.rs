@@ -87,11 +87,11 @@ impl Registry {
     ///
     /// - 文件存在但无法读取时返回 I/O 错误
     /// - 文件内容不是合法 JSON 时返回解析错误
-    pub fn load_from(path: &PathBuf) -> Result<Self> {
+    pub fn load_from(path: &std::path::Path) -> Result<Self> {
         if !path.exists() {
             return Ok(Self {
                 entries: HashMap::new(),
-                path: path.clone(),
+                path: path.to_path_buf(),
             });
         }
 
@@ -106,7 +106,7 @@ impl Registry {
 
         Ok(Self {
             entries,
-            path: path.clone(),
+            path: path.to_path_buf(),
         })
     }
 
@@ -127,7 +127,7 @@ impl Registry {
             })?;
         }
 
-        let content = serde_json::to_string_pretty(&self.entries).map_err(|e| {
+        let content = serde_json::to_vec_pretty(&self.entries).map_err(|e| {
             helpers::serde_error(&format!("注册表序列化失败: {e}"))
         })?;
 

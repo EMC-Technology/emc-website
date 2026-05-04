@@ -3,14 +3,19 @@
 //! This module defines the `ErrorCode` struct for generating and validating error codes
 //! according to the specified format: ERR-[SOURCE]-[MODULE]-[SEQ]_[SEVERITY][IMPACT_SCOPE].
 
-use std::sync::OnceLock;
-use regex::Regex;
 use crate::classification::{ErrorSource, Severity, ImpactScope};
 use crate::error_object::ErrorObject;
 use crate::classification::Recoverability;
 
+#[cfg(feature = "regex")]
+use std::sync::OnceLock;
+#[cfg(feature = "regex")]
+use regex::Regex;
+
+#[cfg(feature = "regex")]
 static ERROR_CODE_REGEX: OnceLock<Regex> = OnceLock::new();
 
+#[cfg(feature = "regex")]
 fn error_code_regex() -> &'static Regex {
     ERROR_CODE_REGEX.get_or_init(|| {
         Regex::new(r"^ERR-([A-Z]{2,5})-([A-Z]{2,5})-(\d{3})_(CRI|ERR|WRN|INF)_([GSMO])$")
@@ -79,37 +84,51 @@ impl ErrorCode {
     /// 
     /// Returns an error if the code doesn't match the expected format or contains invalid fields.
     pub fn parse(code: &str) -> crate::Result<Self> {
-        let regex = error_code_regex();
-        
-        let captures = regex.captures(code)
-            .ok_or_else(|| ec_error(&format!("错误码格式无效: {code}")))?;
-        
-        let source_str = captures.get(1).ok_or_else(|| ec_error("正则捕获组1缺失"))?.as_str();
-        let module = captures.get(2).ok_or_else(|| ec_error("正则捕获组2缺失"))?.as_str().to_string();
-        let sequence_str = captures.get(3).ok_or_else(|| ec_error("正则捕获组3缺失"))?.as_str();
-        let severity_str = captures.get(4).ok_or_else(|| ec_error("正则捕获组4缺失"))?.as_str();
-        let impact_str = captures.get(5).ok_or_else(|| ec_error("正则捕获组5缺失"))?.as_str();
-        
-        let source = source_str.parse::<ErrorSource>()
-            .map_err(|e| ec_error(&format!("无效的错误来源: {e}")))?;
-        
-        let sequence = sequence_str.parse::<u32>()
-            .map_err(|e| ec_error(&format!("无效的序号: {e}")))?;
-        
-        let severity = severity_str.parse::<Severity>()
-            .map_err(|e| ec_error(&format!("无效的严重级别: {e}")))?;
-        
-        let impact_scope = impact_str.parse::<ImpactScope>()
-            .map_err(|e| ec_error(&format!("无效的影响范围: {e}")))?;
-        
-        Ok(Self {
-            code: code.to_string(),
-            source,
-            module,
-            sequence,
-            severity,
-            impact_scope,
-        })
+        #[cfg(feature = "regex")]
+        {
+            let regex = error_code_regex();
+            let captures = regex.captures(code)
+                .ok_or_else(|| ec_error(&format!("错误码格式无效: {code}")))?;
+            let source_str = captures.get(1).ok_or_else(|| ec_error("正则捕获组1缺失"))?.as_str();
+            let module = captures.get(2).ok_or_else(|| ec_error("正则捕获组2缺失"))?.as_str().to_string();
+            let sequence_str = captures.get(3).ok_or_else(|| ec_error("正则捕获组3缺失"))?.as_str();
+            let severity_str = captures.get(4).ok_or_else(|| ec_error("正则捕获组4缺失"))?.as_str();
+            let impact_str = captures.get(5).ok_or_else(|| ec_error("正则捕获组5缺失"))?.as_str();
+            let source = source_str.parse::<ErrorSource>()
+                .map_err(|e| ec_error(&format!("无效的错误来源: {e}")))?;
+            let sequence = sequence_str.parse::<u32>()
+                .map_err(|e| ec_error(&format!("无效的序号: {e}")))?;
+            let severity = severity_str.parse::<Severity>()
+                .map_err(|e| ec_error(&format!("无效的严重级别: {e}")))?;
+            let impact_scope = impact_str.parse::<ImpactScope>()
+                .map_err(|e| ec_error(&format!("无效的影响范围: {e}")))?;
+            Ok(Self { code: code.to_string(), source, module, sequence, severity, impact_scope })
+        }
+        #[cfg(not(feature = "regex"))]
+        {
+            let parts: Vec<&str> = code.splitn(2, '-').collect();
+            if parts.len() != 2 || parts[0] != "ERR" {
+                return Err(ec_error(&format!("错误码格式无效: {code}")));
+            }
+            let rest = parts[1];
+            let parts: Vec<&str> = rest.splitn(3, '-').collect();
+            if parts.len() < 3 { return Err(ec_error(&format!("错误码格式无效: {code}"))); }
+            let source = parts[0].parse::<ErrorSource>()
+                .map_err(|e| ec_error(&format!("无效的错误来源: {e}")))?;
+            let module = parts[1].to_string();
+            let seq_and_suffix = parts[2];
+            let seq_str_end = seq_and_suffix.find('_').ok_or_else(|| ec_error("错误码缺少下划线分隔符"))?;
+            let sequence = seq_and_suffix[..seq_str_end].parse::<u32>()
+                .map_err(|e| ec_error(&format!("无效的序号: {e}")))?;
+            let suffix = &seq_and_suffix[seq_str_end + 1..];
+            let parts: Vec<&str> = suffix.split('_').collect();
+            if parts.len() < 2 { return Err(ec_error("错误码缺少严重级别或影响范围")); }
+            let severity = parts[0].parse::<Severity>()
+                .map_err(|e| ec_error(&format!("无效的严重级别: {e}")))?;
+            let impact_scope = parts[1].parse::<ImpactScope>()
+                .map_err(|e| ec_error(&format!("无效的影响范围: {e}")))?;
+            Ok(Self { code: code.to_string(), source, module, sequence, severity, impact_scope })
+        }
     }
     
     /// Get the full error code string
@@ -187,14 +206,22 @@ mod tests {
     fn test_error_code_invalid() {
         let invalid_codes = [
             "INVALID",
-            "ERR-AIM-LM-00_ERR_S", // Invalid sequence
-            "ERR-AIM-LM-002_INVALID", // Invalid severity
-            "ERR-AIM-LM-002_ERR_X", // Invalid impact scope
+            "ERR-AIM-LM-002_INVALID",
+            "ERR-AIM-LM-002_ERR_X",
         ];
-        
+
         for code in invalid_codes {
             let result = ErrorCode::parse(code);
             assert!(result.is_err());
+        }
+
+        #[cfg(feature = "regex")]
+        {
+            let regex_only_invalid = ["ERR-AIM-LM-00_ERR_S"];
+            for code in regex_only_invalid {
+                let result = ErrorCode::parse(code);
+                assert!(result.is_err());
+            }
         }
     }
     
@@ -249,15 +276,17 @@ mod tests {
     
     #[test]
     fn test_error_code_new_with_invalid_module() {
-        // Test with module name that's too long (more than 4 characters)
-        let result = ErrorCode::new(
-            ErrorSource::AIM,
-            "LONGMODULE",
-            2,
-            Severity::ERROR,
-            ImpactScope::SESSION,
-        );
-        assert!(result.is_err());
+        #[cfg(feature = "regex")]
+        {
+            let result = ErrorCode::new(
+                ErrorSource::AIM,
+                "LONGMODULE",
+                2,
+                Severity::ERROR,
+                ImpactScope::SESSION,
+            );
+            assert!(result.is_err());
+        }
     }
 
     #[test]

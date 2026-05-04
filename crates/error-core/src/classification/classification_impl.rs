@@ -25,8 +25,7 @@ pub struct InvalidImpactScope(String);
 #[derive(Debug, Clone, thiserror::Error)]
 #[error("无效的可恢复性: {0}")]
 pub struct InvalidRecoverability(String);
-#[cfg(test)]
-use proptest::prelude::*;
+// proptest 导入位于 #[cfg(test)] mod tests 块内
 
 /// Error source classification
 /// 
@@ -267,6 +266,9 @@ impl fmt::Display for Recoverability {
         write!(f, "{}", self.as_str())
     }
 }
+
+#[cfg(test)]
+use proptest::prelude::*;
 
 #[cfg(test)]
 impl Arbitrary for ErrorSource {

@@ -163,6 +163,8 @@ impl SearchParams {
     /// 2. **黑名单关键字扫描**：查询体中不得包含 DDL/DML 关键字
     /// 3. **长度限制**：查询不超过 10000 字符
     /// 4. **注释剥离**：移除 `--` 和 `/* */` 注释后再检测关键字
+    /// 5. **分号防护**：禁止分号，防止多语句注入
+    /// 6. **字符串字面量剥离**：移除引号内内容后再检测关键字，防止合法数据值误判
     ///
     /// # Errors
     ///
@@ -179,6 +181,10 @@ impl SearchParams {
             return Err("查询不能为空".to_string());
         }
 
+        if normalized.contains(';') {
+            return Err("查询不允许包含分号（防止多语句注入）".to_string());
+        }
+
         let first_word = normalized.split_whitespace().next().unwrap_or("");
         if first_word != "SELECT" {
             return Err(format!(
@@ -193,8 +199,9 @@ impl SearchParams {
         ];
 
         let after_select = &normalized[6..];
+        let code_only = strip_string_literals(after_select);
         for keyword in &dangerous_keywords {
-            if after_select.contains(keyword) {
+            if code_only.contains(keyword) {
                 return Err(format!("查询包含禁止的关键字: {}", keyword.trim()));
             }
         }
@@ -223,6 +230,48 @@ fn strip_surrealql_comments(query: &str) -> String {
             }
             if i + 1 < chars.len() {
                 i += 2;
+            }
+        } else {
+            result.push(chars[i]);
+            i += 1;
+        }
+    }
+
+    result
+}
+
+/// 剥离 SQL 中的字符串字面量，防止合法数据值中的关键字误判
+///
+/// 将单引号和双引号内的内容替换为占位符 `?`，仅保留引号结构。
+/// 例如 `WHERE title = 'CREATE'` 变为 `WHERE title = ?`，
+/// 避免数据值中的 `CREATE` 被黑名单错误拦截。
+fn strip_string_literals(sql: &str) -> String {
+    let mut result = String::with_capacity(sql.len());
+    let chars: Vec<char> = sql.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        if chars[i] == '\'' {
+            result.push('\'');
+            i += 1;
+            while i < chars.len() && chars[i] != '\'' {
+                i += 1;
+            }
+            if i < chars.len() {
+                result.push('?');
+                result.push('\'');
+                i += 1;
+            }
+        } else if chars[i] == '"' {
+            result.push('"');
+            i += 1;
+            while i < chars.len() && chars[i] != '"' {
+                i += 1;
+            }
+            if i < chars.len() {
+                result.push('?');
+                result.push('"');
+                i += 1;
             }
         } else {
             result.push(chars[i]);

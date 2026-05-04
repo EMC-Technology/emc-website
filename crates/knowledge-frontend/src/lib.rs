@@ -1,4 +1,4 @@
-#![allow(clippy::result_large_err)]
+#![allow(clippy::result_large_err)] // ErrorObject 含因果链+上下文帧，体积较大但语义完整
 //! 前端 UI 层（Dioxus → WASM）
 //!
 //! 本 crate 基于 Dioxus 框架编译为 WebAssembly：

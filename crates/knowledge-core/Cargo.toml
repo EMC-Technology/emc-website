@@ -13,7 +13,7 @@ keywords = ["knowledge-graph", "search", "cqrs", "abac", "encryption"]
 categories = ["database", "text-processing"]
 
 [features]
-default = ["db"]
+default = ["db", "kms-local", "pii"]
 db = ["dep:surrealdb"]
 event-driven = []
 
@@ -22,15 +22,21 @@ qdrant = ["dep:qdrant-client", "dep:tonic"]
 hnswlib = []  # HNSWLIB 适配器无额外依赖（纯内存实现）
 
 # KMS 后端支持
-kms-local = []  # 本地文件系统 KMS（默认可用）
+kms-local = ["dep:lru"]  # 本地文件系统 KMS（默认可用）
 kms-aws = ["dep:aws-config", "dep:aws-sdk-kms", "dep:aws-smithy-runtime", "dep:aws-sdk-sts"]  # AWS KMS
 kms-vault = ["dep:vaultrs"]  # HashiCorp Vault
 
 # PII 脱敏
 pii = ["dep:fancy-regex"]
 
-# 审计增强
-audit-enhanced = []
+# Candle 本地 Cross-Encoder 推理
+reranker-local = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:hf-hub"]
+
+# CUDA GPU 加速（需安装 CUDA toolkit）
+cuda = ["candle-core?/cuda", "candle-nn?/cuda", "candle-transformers?/cuda"]
+
+# Apple Metal 加速（macOS M1/M2/M3）
+metal = ["candle-core?/metal", "candle-nn?/metal", "candle-transformers?/metal"]
 
 [dependencies]
 serde = { workspace = true }
@@ -44,13 +50,13 @@ tracing = { workspace = true }
 chrono = { workspace = true }
 surrealdb = { version = "1.3", optional = true, default-features = false, features = ["kv-mem", "protocol-ws"] }
 async-trait = { workspace = true }
-dirs = { version = "5", default-features = false }
+dirs = { workspace = true }
 tokio = { workspace = true }
-hex = { version = "0.4", default-features = false, features = ["alloc"] }
+hex = { workspace = true }
 once_cell = { workspace = true }
 uuid = { workspace = true }
 thiserror = { workspace = true }
-dashmap = { version = "5.5", default-features = false }
+dashmap = { workspace = true }
 
 # 缓存依赖
 moka = { workspace = true }
@@ -67,6 +73,7 @@ ring = { workspace = true }
 hmac = { workspace = true }
 sha2 = { workspace = true }
 base64 = { workspace = true }
+lru = { workspace = true, optional = true }
 
 # AWS SDK (可选)
 aws-config = { workspace = true, optional = true }
@@ -80,12 +87,19 @@ vaultrs = { workspace = true, optional = true }
 # PII 脱敏依赖
 fancy-regex = { workspace = true, optional = true }
 
+# Candle ML 推理框架 — Cross-Encoder 本地推理
+# 与 knowledge-api 保持相同版本策略：0.10 兼容 rand 0.9 + tokenizers 0.22
+candle-core = { version = "0.10", default-features = false, features = [], optional = true }
+candle-nn = { version = "0.10", default-features = false, features = [], optional = true }
+candle-transformers = { version = "0.10", default-features = false, features = [], optional = true }
+tokenizers = { version = "0.22", default-features = false, features = ["http"], optional = true }
+hf-hub = { version = "0.4", default-features = false, features = ["tokio"], optional = true }
+
 [dev-dependencies]
 tokio = { workspace = true }
 tempfile = "3.10"
 proptest = { version = "1.4", default-features = false, features = ["std"] }
 criterion = { version = "0.5", default-features = false }
-lru = { workspace = true }
 
 [[bench]]
 name = "crypto_bench"

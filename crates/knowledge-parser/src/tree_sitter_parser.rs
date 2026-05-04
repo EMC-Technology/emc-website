@@ -157,7 +157,7 @@ impl TreeSitterParser {
             Entry::Vacant(e) => {
                 let mut p = tree_sitter::Parser::new();
                 p.set_language(language_obj).map_err(|err| {
-                    helpers::internal_error(&format!(
+                    helpers::config_error(&format!(
                         "设置 tree-sitter language 失败 (language={language}): {err}"
                     ))
                 })?;
@@ -175,7 +175,7 @@ impl TreeSitterParser {
 
         let nodes = self.extract_nodes(&root, source_bytes);
 
-        Ok(TreeSitterAst { nodes, is_valid })
+        Ok(TreeSitterAst { nodes: nodes?, is_valid })
     }
 
     /// 遍历 AST 提取所有节点（递归深度优先遍历）
@@ -191,12 +191,15 @@ impl TreeSitterParser {
     /// # Returns
     ///
     /// 按深度优先顺序排列的 `AstNode` 列表
-    #[must_use]
-    pub fn extract_nodes(&self, root: &tree_sitter::Node, source: &[u8]) -> Vec<AstNode> {
+    ///
+    /// # Errors
+    ///
+    /// 当源文本不是有效 UTF-8 时返回解析错误
+    pub fn extract_nodes(&self, root: &tree_sitter::Node, source: &[u8]) -> Result<Vec<AstNode>> {
         let mut nodes = Vec::new();
-        let source_str = std::str::from_utf8(source).unwrap_or("");
+        let source_str = std::str::from_utf8(source).map_err(|e| error_core::helpers::parse_error(&format!("源码非有效 UTF-8: {e}")))?;
         Self::extract_nodes_recursive(root, source_str, &mut nodes);
-        nodes
+        Ok(nodes)
     }
 
     fn extract_nodes_recursive(node: &tree_sitter::Node, source: &str, nodes: &mut Vec<AstNode>) {

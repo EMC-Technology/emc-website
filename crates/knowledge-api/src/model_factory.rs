@@ -2,7 +2,7 @@
 
 use super::candle_loader::CandleModelLoader;
 use super::model_loader::{
-    DeviceType, ModelBackend, ModelConfig, ModelInfo, ModelLoader, ModelLoaderError,
+    DeviceType, ModelBackend, ModelConfig, ModelInfo, ModelLoader, ModelLoaderError, Quantization,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -122,9 +122,43 @@ impl ModelRegistry {
     /// # Errors
     ///
     /// 此函数当前不会返回错误（空实现）。
+    /// 列出所有已注册的模型信息
     #[must_use]
-    pub const fn list_models() -> Vec<(String, ModelInfo)> {
-        vec![] // 简化实现
+    pub fn list_models() -> Vec<(String, ModelInfo)> {
+        Self::builtin_models()
+    }
+
+    /// 返回内置模型列表
+    #[must_use]
+    pub fn builtin_models() -> Vec<(String, ModelInfo)> {
+        vec![
+            ("hash-embedding".to_string(), ModelInfo {
+                name: "hash-embedding".to_string(),
+                version: "1.0.0".to_string(),
+                architecture: "Hash".to_string(),
+                parameter_count_billion: 0.0,
+                embedding_dim: 64,
+                vocab_size: 0,
+                max_context_length: 0,
+                model_size_bytes: 0,
+                backend: ModelBackend::Candle,
+                device: DeviceType::Cpu,
+                quantization: Quantization::default(),
+            }),
+            ("gemma-2b-embedding".to_string(), ModelInfo {
+                name: "gemma-2b-embedding".to_string(),
+                version: "1.0.0".to_string(),
+                architecture: "Gemma".to_string(),
+                parameter_count_billion: 2.0,
+                embedding_dim: 2048,
+                vocab_size: 256_000,
+                max_context_length: 8192,
+                model_size_bytes: 0,
+                backend: ModelBackend::Candle,
+                device: DeviceType::Cpu,
+                quantization: Quantization::default(),
+            }),
+        ]
     }
 
     /// 清空模型缓存
@@ -162,7 +196,9 @@ mod tests {
     #[tokio::test]
     async fn test_registry_basic() {
         let _registry = ModelRegistry::new();
-        let stats: Vec<(String, ModelInfo)> = ModelRegistry::list_models();
-        assert!(stats.is_empty());
+        let models = ModelRegistry::list_models();
+        assert!(!models.is_empty(), "内置模型列表不应为空");
+        let names: Vec<&str> = models.iter().map(|(name, _)| name.as_str()).collect();
+        assert!(names.contains(&"hash-embedding"), "应包含 hash-embedding 内置模型");
     }
 }

@@ -15,7 +15,11 @@ use crate::classification::{ErrorSource, Severity, ImpactScope, Recoverability};
 use crate::propagation::{ContextFrame, RecoveryHint, RetryConfig};
 use crate::error_code::registry;
 
-#[allow(missing_docs)]
+/// 类型状态标记模块
+///
+/// 用于 `ErrorObjectBuilder` 的编译期类型状态模式，
+/// 确保必填字段在构建时已被设置。
+#[allow(missing_docs)] // 类型状态标记无需单独文档
 pub mod state {
     #[allow(missing_docs)]
     pub struct Missing;
@@ -29,23 +33,19 @@ pub mod state {
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ErrorObject {
-    // 标识域
     code: String,
     #[cfg(feature = "uuid")]
     error_id: Uuid,
     
-    // 分类域
     source: ErrorSource,
     severity: Severity,
     impact_scope: ImpactScope,
     recoverability: Recoverability,
     
-    // 内容域
     message: String,
     user_message: String,
     details: HashMap<String, serde_json::Value>,
     
-    // 上下文域
     #[cfg(feature = "chrono")]
     timestamp: DateTime<Utc>,
     session_id: Option<String>,
@@ -53,11 +53,9 @@ pub struct ErrorObject {
     module_path: String,
     operation: String,
     
-    // 因果域
     cause: Option<Box<Self>>,
     context_chain: Vec<ContextFrame>,
     
-    // 恢复域
     recovery_hints: Vec<RecoveryHint>,
     retry_config: Option<RetryConfig>,
 }
@@ -80,7 +78,12 @@ impl std::error::Error for ErrorObject {
 
 impl ErrorObject {
     /// Create a new `ErrorObject` builder
+    ///
+    /// **注意**: 此方法仅限 `From` trait 实现和 `error-core` 内部使用。
+    /// 业务 crate 必须使用 [`crate::helpers`] 模块中的函数构造错误，
+    /// 以确保所有错误码均通过注册表管理。
     #[must_use]
+    #[doc(hidden)]
     pub fn builder() -> ErrorObjectBuilder {
         ErrorObjectBuilder::new()
     }
@@ -134,7 +137,7 @@ impl ErrorObject {
         Self {
             code,
             #[cfg(feature = "uuid")]
-            error_id: Uuid::new_v4(),
+            error_id: Uuid::new_v4(), // 确定性例外：error_id 需全局唯一性而非可复现性
             source,
             severity,
             impact_scope,
@@ -156,9 +159,14 @@ impl ErrorObject {
     }
     
     /// Wrap a `std::error::Error` as the cause of this `ErrorObject`
+    ///
+    /// Uses `io_error` as the default cause classification since most
+    /// `std::error::Error` instances originate from I/O or infrastructure
+    /// operations. For domain-specific causes (LLM, DB, validation),
+    /// use the corresponding helper directly instead of this method.
     #[must_use]
     pub fn with_cause_std(mut self, error: impl std::error::Error + 'static) -> Self {
-        let cause_obj = crate::helpers::internal_error(&error.to_string());
+        let cause_obj = crate::helpers::io_error(&error.to_string());
         self.cause = Some(Box::new(cause_obj));
         self
     }
@@ -370,7 +378,10 @@ struct BuilderData {
     retry_config: Option<RetryConfig>,
 }
 
-#[allow(missing_docs, clippy::type_complexity)]
+/// `ErrorObject` 构建器
+///
+/// 使用类型状态模式确保必填字段（code, source, severity, `impact_scope`, recoverability, message, `user_message`, `module_path`, operation）在 `build()` 前已被设置。
+#[allow(missing_docs, clippy::type_complexity)] // 泛型参数过多，文档由 ErrorObject 统一提供
 pub struct ErrorObjectBuilder<
     Code = state::Missing,
     Src = state::Missing,
@@ -424,7 +435,8 @@ impl ErrorObjectBuilder {
     }
 }
 
-#[allow(missing_docs)]
+/// `ErrorObject` 构建器方法实现
+#[allow(missing_docs)] // 各方法语义由参数名和返回类型自解释
 impl<C, S, Se, I, R, M, U, Mo, O> ErrorObjectBuilder<C, S, Se, I, R, M, U, Mo, O> {
     #[must_use]
     pub fn code(self, code: &str) -> ErrorObjectBuilder<state::Present, S, Se, I, R, M, U, Mo, O> {
@@ -436,7 +448,7 @@ impl<C, S, Se, I, R, M, U, Mo, O> ErrorObjectBuilder<C, S, Se, I, R, M, U, Mo, O
 
     #[cfg(feature = "uuid")]
     #[must_use]
-    pub fn error_id(mut self, error_id: Uuid) -> Self {
+    pub const fn error_id(mut self, error_id: Uuid) -> Self {
         self.data.error_id = Some(error_id);
         self
     }
@@ -497,7 +509,7 @@ impl<C, S, Se, I, R, M, U, Mo, O> ErrorObjectBuilder<C, S, Se, I, R, M, U, Mo, O
 
     #[cfg(feature = "chrono")]
     #[must_use]
-    pub fn timestamp(mut self, timestamp: DateTime<Utc>) -> Self {
+    pub const fn timestamp(mut self, timestamp: DateTime<Utc>) -> Self {
         self.data.timestamp = Some(timestamp);
         self
     }
@@ -549,7 +561,7 @@ impl<C, S, Se, I, R, M, U, Mo, O> ErrorObjectBuilder<C, S, Se, I, R, M, U, Mo, O
     }
 
     #[must_use]
-    pub fn retry_config(mut self, retry_config: RetryConfig) -> Self {
+    pub const fn retry_config(mut self, retry_config: RetryConfig) -> Self {
         self.data.retry_config = Some(retry_config);
         self
     }

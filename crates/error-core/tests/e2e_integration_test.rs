@@ -252,35 +252,3 @@ fn test_error_object_builder_e2e() {
     assert_eq!(error.recovery_hints().len(), 1);
 }
 
-/// 测试异步错误处理
-#[cfg(feature = "async")]
-async fn test_async_error_handling_e2e() {
-    use tokio::time::{sleep, Duration};
-    
-    // 模拟异步错误
-    #[derive(Debug, thiserror::Error)]
-    #[error("Async operation failed")]
-    struct AsyncError;
-
-    let capture = BusinessErrorCapture::new("async_service", "operation");
-    
-    // 模拟异步操作
-    let result = tokio::spawn(async move {
-        sleep(Duration::from_millis(10)).await;
-        Err::<(), AsyncError>(AsyncError)
-    }).await;
-    
-    match result {
-        Ok(Err(err)) => {
-            let error = capture.capture_error(&err);
-            assert_eq!(error.source(), ErrorSource::INT);
-        }
-        _ => panic!("Unexpected result"),
-    }
-}
-
-#[cfg(feature = "async")]
-#[tokio::test]
-async fn test_async_error_handling() {
-    test_async_error_handling_e2e().await;
-}

@@ -209,11 +209,11 @@ impl ConfigLoader {
     /// 配置项不合法时返回错误（如端口为 0、地址为空等）。
     pub fn validate(config: &Config) -> crate::Result<()> {
         if config.server.port == 0 {
-            return Err(helpers::validation_error("ServerConfig", "服务器端口不能为 0"));
+            return Err(helpers::validation_error("服务器端口不能为 0", "validate_server_config"));
         }
         
         if config.database.addr.is_empty() {
-            return Err(helpers::validation_error("DatabaseConfig", "数据库地址不能为空"));
+            return Err(helpers::validation_error("数据库地址不能为空", "validate_database_config"));
         }
         
         if config.database.username.is_empty() || config.database.password.is_empty() {
@@ -249,22 +249,22 @@ impl ConfigLoader {
         }
 
         if config.server.tls && (config.server.cert_path.is_none() || config.server.key_path.is_none()) {
-            return Err(helpers::validation_error("ServerConfig", "启用 TLS 时必须设置 cert_path 和 key_path"));
+            return Err(helpers::validation_error("启用 TLS 时必须设置 cert_path 和 key_path", "validate_tls_config"));
         }
 
         if config.parser.max_file_size == 0 {
-            return Err(helpers::validation_error("ParserConfig", "最大文件大小不能为 0"));
+            return Err(helpers::validation_error("最大文件大小不能为 0", "validate_parser_config"));
         }
 
         if config.parser.chunk_overlap >= config.parser.chunk_size {
-            return Err(helpers::validation_error("ParserConfig", &format!(
+            return Err(helpers::validation_error(&format!(
                 "chunk_overlap ({}) 必须小于 chunk_size ({})",
                 config.parser.chunk_overlap, config.parser.chunk_size
-            )));
+            ), "validate_parser_config"));
         }
 
         if config.parser.embedding_dim == 0 {
-            return Err(helpers::validation_error("ParserConfig", "嵌入向量维度不能为 0"));
+            return Err(helpers::validation_error("嵌入向量维度不能为 0", "validate_parser_config"));
         }
         
         Ok(())

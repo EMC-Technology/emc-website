@@ -301,7 +301,7 @@ impl WorkingMemory {
                 entries.truncate(target_size);
 
                 // 重新放回 deque（保持时间顺序）
-                entries.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+                entries.sort_by_key(|a| a.created_at);
                 self.window = entries.into_iter().collect();
             }
             CompressionStrategy::TimeBased => {
@@ -315,7 +315,7 @@ impl WorkingMemory {
                 let mut entries: Vec<_> = self.window.drain(..).collect();
                 entries.sort_by_key(|e| e.access_count);
                 entries.truncate(target_size);
-                entries.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+                entries.sort_by_key(|a| a.created_at);
                 self.window = entries.into_iter().collect();
             }
         }
@@ -493,7 +493,7 @@ impl LongTermMemory {
         self.store
             .store(&id, &vector, &payload)
             .await
-            .map_err(|e| error_core::helpers::internal_error(&format!("向量存储失败: {e}")))?;
+            .map_err(|e| error_core::helpers::agent_memory_error(&format!("向量存储失败: {e}")))?;
 
         // 更新内存索引
         {
@@ -627,7 +627,7 @@ impl LongTermMemory {
             let mut entries: Vec<_> = index.values().cloned().collect();
 
             // 按时间倒序排序，取最近 50 条
-            entries.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+            entries.sort_by_key(|b| std::cmp::Reverse(b.created_at));
             entries.truncate(50);
             entries
         };
@@ -640,7 +640,7 @@ impl LongTermMemory {
         let summary = summarizer
             .summarize(&recent_entries)
             .await
-            .map_err(|e| error_core::helpers::internal_error(&format!("摘要生成失败: {e}")))?;
+            .map_err(|e| error_core::helpers::agent_memory_error(&format!("摘要生成失败: {e}")))?;
 
         // 创建新的反思记忆
         let reflection_entry = MemoryEntry::new(MemoryType::Reflection, summary)
@@ -762,7 +762,7 @@ impl EpisodicMemory {
     pub async fn record_episode(&self, episode: &Episode) -> crate::Result<Uuid> {
         let id =
             self.store.save_episode(episode).await.map_err(|e| {
-                error_core::helpers::internal_error(&format!("保存事件失败: {e}"))
+                error_core::helpers::agent_memory_error(&format!("保存事件失败: {e}"))
             })?;
 
         info!(
@@ -816,7 +816,7 @@ impl EpisodicMemory {
     pub async fn extract_patterns(&self) -> crate::Result<Vec<ExecutionPattern>> {
         // 获取最近的成功事件
         let recent_episodes = self.store.list_recent(100).await.map_err(|e| {
-            error_core::helpers::internal_error(&format!("获取事件列表失败: {e}"))
+            error_core::helpers::agent_memory_error(&format!("获取事件列表失败: {e}"))
         })?;
 
         // 过滤出成功的事件

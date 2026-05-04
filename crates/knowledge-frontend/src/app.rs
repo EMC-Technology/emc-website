@@ -1,10 +1,10 @@
+#![allow(clippy::derive_partial_eq_without_eq)] // Dioxus 组件 derive 宏生成不完整的 PartialEq
 //! Dioxus 根组件
 //!
 //! 四个核心视图：
 //! - `DocumentListView`: 文档列表与上传
 //! - `BlockDetailView`: 文档详情/Block/Token
 
-#![allow(clippy::derive_partial_eq_without_eq)]
 //! - `GraphVisualizationView`: 图谱可视化
 //! - `SettingsView`: 系统设置
 

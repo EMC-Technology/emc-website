@@ -64,7 +64,7 @@ impl SymbolResolver {
             }
         }
 
-        self.references.clone()
+        std::mem::take(&mut self.references)
     }
 
     /// 注册符号定义点
@@ -224,7 +224,7 @@ impl SymbolResolver {
     }
 
     fn is_link_reference(_token: &Token, context: &str) -> bool {
-        context.contains("](") || context.contains('[')
+        context.contains("](")
     }
 
     fn match_usage_to_definition(
@@ -287,12 +287,25 @@ impl SymbolResolver {
     }
 
     fn build_context_string(tokens: &[Token]) -> String {
-        tokens
+        let filtered: Vec<&str> = tokens
             .iter()
             .filter(|t| t.token_type != TokenType::Punct || matches!(t.content.as_str(), "(" | ")" | "[" | "]" | "{" | "}" | ":" | ";" | "," | "."))
             .map(|t| t.content.as_str())
-            .collect::<Vec<_>>()
-            .join(" ")
+            .collect();
+
+        let mut result = String::new();
+        for (i, s) in filtered.iter().enumerate() {
+            if i > 0 {
+                let prev = filtered[i - 1];
+                if (prev == "]" && *s == "(") || (prev == "[" && *s == "]") {
+                    result.push_str(s);
+                    continue;
+                }
+                result.push(' ');
+            }
+            result.push_str(s);
+        }
+        result
     }
 }
 

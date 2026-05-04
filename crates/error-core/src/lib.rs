@@ -1,5 +1,5 @@
 #![deny(missing_docs)]
-#![allow(clippy::result_large_err)]
+#![allow(clippy::result_large_err)] // ErrorObject 含因果链+上下文帧+恢复提示，体积较大但语义完整
 //! Error handling core library for `InfinityEvolutionIDE`
 //! 
 //! This crate provides a comprehensive error handling system for `InfinityEvolutionIDE`,
@@ -26,12 +26,19 @@
 //! 
 //! ## Feature Matrix
 //! 
-//! | Feature | Description | Dependencies |
-//! |---------|-------------|--------------|
-//! | `std` | Standard library support | None |
-//! | `serde` | Serialization/deserialization | serde |
-//! | `async` | Async support | tokio |
-//! | `full` | All features enabled | serde, tokio |
+//! | Feature | Description | Dependencies | Default |
+//! |---------|-------------|--------------|---------|
+//! | `std` | Standard library support | None | Yes |
+//! | `serde` | Serialization/deserialization | serde | No |
+//! | `uuid` | UUID error identifiers | uuid | No |
+//! | `chrono` | Timestamp support | chrono | No |
+//! | `wasm` | WASM target support | serde + uuid + serde-json | No |
+//! | `db` | SurrealDB error conversion | surrealdb | No |
+//! | `serde-json` | JSON serialization + serde_json::Error conversion | serde | No |
+//! | `jsonwebtoken` | JWT error conversion | jsonwebtoken | No |
+//! | `logging` | Structured logging (tracing) | tracing + tracing-subscriber | Yes |
+//! | `regex` | Regex-based error code validation | regex | No |
+//! | `full` | All features enabled | All above | No |
 
 /// Error classification system
 /// 
@@ -95,8 +102,4 @@ pub mod prelude;
 
 pub use prelude::*;
 
-#[cfg(feature = "serde")]
-extern crate serde;
 
-#[cfg(feature = "async")]
-extern crate tokio;

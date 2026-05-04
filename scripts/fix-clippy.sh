@@ -74,7 +74,7 @@ echo -e "${BLUE}[Phase 2] 尝试自动修复...${NC}"
 # 提取可自动修复的警告类型
 AUTO_FIXABLE=$(grep -oE 'warning\[[^]]+\]' "$CLIPPY_OUTPUT" 2>/dev/null \
     | sort -u \
-    | grep -E '(unused_imports|dead_code|redundant_clone|needless_borrow|map_flatten|clone_on_copy|explicit_iter_loop)' \
+    | grep -E '(unused_imports|dead_code|redundant_clone|needless_borrow|map_flatten|clone_on_copy|explicit_iter_loop|explicit_counter_loop|unnecessary_sort_by|duration_suboptimal_units|useless_conversion|doc_markdown|single_match_else|map_unwrap_or)' \
     || true)
 
 if [ -n "$AUTO_FIXABLE" ]; then
@@ -171,6 +171,29 @@ cat << 'GUIDE'
 
 7. clippy::panic_in_result_fn
    → 返回 Err 而非 panic
+
+8. clippy::explicit_counter_loop
+   → 使用 (start..).zip(iter) 替代手动计数器循环
+
+9. clippy::unnecessary_sort_by
+   → 升序: sort_by_key(|a| a.field) 替代 sort_by(|a, b| a.field.cmp(&b.field))
+   → 降序: sort_by_key(|b| std::cmp::Reverse(b.field)) 替代 sort_by(|a, b| b.field.cmp(&a.field))
+
+10. clippy::duration_suboptimal_units
+    → 使用最大可读单位: Duration::from_secs(1) 替代 Duration::from_millis(1000)
+
+11. clippy::useless_conversion
+    → 移除函数参数位置多余的 .into_iter() / .into() 调用（IntoIterator/Into 已隐式满足）
+
+12. clippy::doc_markdown
+    → 文档注释中的类型路径、CamelCase 标识符须用反引号包裹: `mpsc::Receiver`
+
+13. clippy::single_match_else
+    → match 仅有一个模式分支时改用 if let: if let Ok(v) = expr { v } else { fallback }
+
+14. clippy::map_unwrap_or
+    → Result: .map(f).unwrap_or(x) → .map_or(x, f); .map(f).unwrap_or(false) → .is_ok_and(f)
+    → Option: .map(f).unwrap_or(x) → .map_or(x, f); .map(f).unwrap_or(false) → .is_some_and(f)
 
 详细文档: https://rust-lang.github.io/rust-clippy/master/index.html
 GUIDE

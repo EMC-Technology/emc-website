@@ -136,7 +136,7 @@ impl<V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static> CacheManag
             WritePolicy::WriteThrough => {
                 if let Some(ref l2) = self.l2 {
                     if let Err(e) = l2.set(key, value, ttl).await {
-                        return Err(error_core::helpers::internal_error(&format!(
+                        return Err(error_core::helpers::cache_manager_l2_error(&format!(
                             "L2 cache write error for key {key}: {e}"
                         )));
                     }

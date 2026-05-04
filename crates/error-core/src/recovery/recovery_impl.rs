@@ -60,11 +60,19 @@ impl RecoveryStateMachine {
     }
 
     /// Start the recovery process
+    ///
+    /// # Note
+    ///
+    /// 可从任意状态调用。调用者应确保状态转换的语义合理性。
     pub const fn start_recovery(&mut self) {
         self.state = RecoveryState::Recovering;
     }
 
     /// Record a successful recovery
+    ///
+    /// # Note
+    ///
+    /// 可从任意状态调用。调用者应确保状态转换的语义合理性。
     pub const fn recover_success(&mut self) {
         self.state = RecoveryState::Recovered;
         self.retry_attempts = 0;
@@ -107,6 +115,14 @@ impl RecoveryStateMachine {
 
         let delay_ms = initial_delay as f64 * (multiplier.powi(attempt as i32));
         let delay_ms = delay_ms.min(max_delay as f64);
+
+        let delay_ms = if self.retry_config.use_jitter() {
+            let jitter = deterministic_jitter(attempt);
+            delay_ms * (1.0 + jitter)
+        } else {
+            delay_ms
+        };
+
         let delay_ms = delay_ms.round().clamp(0.0, u64::MAX as f64) as u64;
 
         Duration::from_millis(delay_ms)
@@ -247,6 +263,12 @@ impl CircuitBreaker {
 
     /// Check if a request is allowed
     #[allow(clippy::match_same_arms)]
+    /// 检查是否允许请求通过
+    ///
+    /// # Side Effect
+    ///
+    /// 当断路器处于 `Open` 状态且重置超时已过时，
+    /// 此方法会将状态转换为 `HalfOpen`（命令-查询分离例外）。
     pub fn allow_request(&mut self) -> bool {
         match self.state {
             CircuitBreakerState::Closed => true,
@@ -358,13 +380,13 @@ mod tests {
         let mut backoff = ExponentialBackoff::new(retry_config);
 
         let delay1 = backoff.next_delay().unwrap();
-        assert_eq!(delay1, Duration::from_millis(1000));
+        assert_eq!(delay1, Duration::from_secs(1));
 
         let delay2 = backoff.next_delay().unwrap();
-        assert_eq!(delay2, Duration::from_millis(2000));
+        assert_eq!(delay2, Duration::from_secs(2));
 
         let delay3 = backoff.next_delay().unwrap();
-        assert_eq!(delay3, Duration::from_millis(4000));
+        assert_eq!(delay3, Duration::from_secs(4));
 
         let delay4 = backoff.next_delay();
         assert!(delay4.is_none());
@@ -392,7 +414,7 @@ mod tests {
 
         // Test calculate_retry_delay
         let delay = machine.calculate_retry_delay();
-        assert!(delay >= Duration::from_millis(1000));
+        assert!(delay >= Duration::from_secs(1));
 
         // Test open_circuit
         machine.open_circuit();

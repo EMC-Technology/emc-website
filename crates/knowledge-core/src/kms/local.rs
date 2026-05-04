@@ -1,12 +1,11 @@
 use aes_gcm::{
-    aead::{Aead, AeadCore, KeyInit, OsRng},
     Aes256Gcm, Nonce,
+    aead::{Aead, AeadCore, KeyInit, OsRng},
 };
+use async_trait::async_trait;
 use chrono::Utc;
-use ring::{
-    rand as ring_rand,
-    signature::Ed25519KeyPair,
-};
+use rand::RngCore;
+use ring::{rand as ring_rand, signature::Ed25519KeyPair};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -14,9 +13,13 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use zeroize::ZeroizeOnDrop;
 
-use crate::error::helpers;
-use crate::kms::traits::*;
 use crate::Result;
+use crate::error::helpers;
+use crate::kms::traits::{
+    Ciphertext, EncryptedKey, EncryptionAlgorithm, KeyManagementService, KeyMetadata, KeySpec,
+    KeyType, KeyUsage, KmsHealthStatus, RotationResult, RotationStatus, Signature,
+    SignatureAlgorithm,
+};
 
 /// 主密钥包装类型，确保析构时安全擦除
 #[derive(Clone, ZeroizeOnDrop)]
@@ -63,8 +66,6 @@ pub struct LocalKms {
     keys_dir: PathBuf,
     /// 内存中的密钥缓存
     key_store: Arc<RwLock<HashMap<String, StoredKey>>>,
-    /// 随机数生成器
-    rng: Arc<RwLock<ring_rand::SystemRandom>>,
 }
 
 /// 存储的密钥结构
@@ -93,14 +94,13 @@ impl LocalKms {
         let keys_dir = keys_dir.as_ref().to_path_buf();
 
         std::fs::create_dir_all(&keys_dir).map_err(|e| {
-            helpers::internal_error(&format!("无法创建密钥目录 {:?}: {}", keys_dir, e))
+            helpers::io_error(&format!("无法创建密钥目录 {}: {e}", keys_dir.display()))
         })?;
 
         Ok(Self {
             master_key: MasterKey::new(master_key),
             keys_dir,
             key_store: Arc::new(RwLock::new(HashMap::new())),
-            rng: Arc::new(RwLock::new(ring_rand::SystemRandom::new())),
         })
     }
 
@@ -125,23 +125,20 @@ impl LocalKms {
     }
 
     /// 生成随机主密钥
-    fn generate_master_key() -> [u8; 32] {
+    pub(crate) fn generate_master_key() -> [u8; 32] {
         let mut key = [0u8; 32];
-        use rand::RngCore;
-        rand::rngs::OsRng.fill_bytes(&mut key);
+        rand::rng().fill_bytes(&mut key);
         key
     }
 
     /// 从文件加载主密钥
     fn load_master_key(path: &Path) -> Result<[u8; 32]> {
         let data = std::fs::read(path).map_err(|e| {
-            helpers::internal_error(&format!("无法读取主密钥文件 {:?}: {}", path, e))
+            helpers::io_error(&format!("无法读取主密钥文件 {}: {e}", path.display()))
         })?;
 
         if data.len() != 32 {
-            return Err(helpers::crypto_error(
-                "主密钥文件长度不正确（应为32字节）",
-            ));
+            return Err(helpers::crypto_error("主密钥文件长度不正确（应为32字节）"));
         }
 
         let mut key = [0u8; 32];
@@ -155,7 +152,7 @@ impl LocalKms {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(path, key).map_err(|e| {
-            helpers::internal_error(&format!("无法写入主密钥文件 {:?}: {}", path, e))
+            helpers::io_error(&format!("无法写入主密钥文件 {}: {e}", path.display()))
         })?;
         Ok(())
     }
@@ -163,20 +160,20 @@ impl LocalKms {
     /// 使用主密钥加密数据
     fn encrypt_with_master_key(&self, plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
         let cipher = Aes256Gcm::new_from_slice(self.master_key.as_bytes())
-            .map_err(|e| helpers::crypto_error(&format!("AES 初始化失败: {}", e)))?;
+            .map_err(|e| helpers::crypto_error(&format!("AES 初始化失败: {e}")))?;
 
         let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
         let ciphertext = cipher
             .encrypt(&nonce, plaintext)
-            .map_err(|e| helpers::crypto_error(&format!("加密失败: {}", e)))?;
+            .map_err(|e| helpers::crypto_error(&format!("加密失败: {e}")))?;
 
-        Ok((ciphertext.to_vec(), nonce.to_vec()))
+        Ok((ciphertext.clone(), nonce.to_vec()))
     }
 
     /// 使用主密钥解密数据
     fn decrypt_with_master_key(&self, ciphertext: &[u8], iv: &[u8]) -> Result<Vec<u8>> {
         let cipher = Aes256Gcm::new_from_slice(self.master_key.as_bytes())
-            .map_err(|e| helpers::crypto_error(&format!("AES 初始化失败: {}", e)))?;
+            .map_err(|e| helpers::crypto_error(&format!("AES 初始化失败: {e}")))?;
 
         let nonce = Nonce::from_slice(iv);
         let plaintext = cipher
@@ -188,9 +185,8 @@ impl LocalKms {
 
     /// 从磁盘加载所有密钥
     async fn load_keys_from_disk(&self) -> Result<()> {
-        let entries = std::fs::read_dir(&self.keys_dir).map_err(|e| {
-            helpers::internal_error(&format!("无法读取密钥目录: {}", e))
-        })?;
+        let entries = std::fs::read_dir(&self.keys_dir)
+            .map_err(|e| helpers::io_error(&format!("无法读取密钥目录: {e}")))?;
 
         for entry in entries.flatten() {
             let path = entry.path();
@@ -208,29 +204,27 @@ impl LocalKms {
     }
 
     /// 将密钥保存到磁盘
-    async fn save_key_to_disk(&self, stored_key: &StoredKey) -> Result<()> {
+    fn save_key_to_disk(&self, stored_key: &StoredKey) -> Result<()> {
         let filename = format!("{}.key", stored_key.metadata.key_id);
         let path = self.keys_dir.join(filename);
 
         let data = bincode::serialize(stored_key)
-            .map_err(|e| helpers::internal_error(&format!("序列化密钥失败: {}", e)))?;
+            .map_err(|e| helpers::serde_error(&format!("序列化密钥失败: {e}")))?;
 
-        std::fs::write(&path, &data).map_err(|e| {
-            helpers::internal_error(&format!("无法写入密钥文件 {:?}: {}", path, e))
-        })?;
+        std::fs::write(&path, &data)
+            .map_err(|e| helpers::io_error(&format!("无法写入密钥文件 {}: {e}", path.display())))?;
 
         Ok(())
     }
 
     /// 从磁盘删除密钥文件
     fn delete_key_file(&self, key_id: &str) -> Result<()> {
-        let filename = format!("{}.key", key_id);
+        let filename = format!("{key_id}.key");
         let path = self.keys_dir.join(filename);
 
         if path.exists() {
-            std::fs::remove_file(&path).map_err(|e| {
-                helpers::internal_error(&format!("无法删除密钥文件: {}", e))
-            })?;
+            std::fs::remove_file(&path)
+                .map_err(|e| helpers::io_error(&format!("无法删除密钥文件: {e}")))?;
         }
 
         Ok(())
@@ -239,9 +233,9 @@ impl LocalKms {
     /// 解密获取密钥材料的明文
     async fn decrypt_key_material(&self, key_id: &str) -> Result<Vec<u8>> {
         let store = self.key_store.read().await;
-        let stored_key = store.get(key_id).ok_or_else(|| {
-            helpers::not_found("密钥", key_id)
-        })?;
+        let stored_key = store
+            .get(key_id)
+            .ok_or_else(|| helpers::not_found("密钥", key_id))?;
 
         self.decrypt_with_master_key(&stored_key.encrypted_material, &stored_key.iv)
     }
@@ -272,8 +266,7 @@ impl LocalKms {
     fn generate_key_material(spec: KeySpec) -> Vec<u8> {
         let len = spec.key_material_length();
         let mut material = vec![0u8; len];
-        use rand::RngCore;
-        rand::rngs::OsRng.fill_bytes(&mut material);
+        rand::rng().fill_bytes(&mut material);
         material
     }
 }
@@ -301,23 +294,24 @@ impl KeyManagementService for LocalKms {
         match dek.algorithm {
             EncryptionAlgorithm::Aes256Gcm => {
                 let cipher = Aes256Gcm::new_from_slice(&dek_plaintext)
-                    .map_err(|e| helpers::crypto_error(&format!("DEK 初始化失败: {}", e)))?;
+                    .map_err(|e| helpers::crypto_error(&format!("DEK 初始化失败: {e}")))?;
 
                 let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
                 let ciphertext = cipher
                     .encrypt(&nonce, plaintext)
-                    .map_err(|e| helpers::crypto_error(&format!("加密失败: {}", e)))?;
+                    .map_err(|e| helpers::crypto_error(&format!("加密失败: {e}")))?;
 
                 Ok(Ciphertext::new(
-                    ciphertext.to_vec(),
+                    ciphertext.clone(),
                     dek.key_id.clone(),
                     EncryptionAlgorithm::Aes256Gcm,
                 )
                 .with_nonce(nonce.to_vec()))
             }
-            _ => Err(helpers::unsupported_format(
-                &format!("{:?} 算法尚未实现", dek.algorithm),
-            )),
+            _ => Err(helpers::unsupported_format(&format!(
+                "{:?} 算法尚未实现",
+                dek.algorithm
+            ))),
         }
     }
 
@@ -327,7 +321,7 @@ impl KeyManagementService for LocalKms {
         match dek.algorithm {
             EncryptionAlgorithm::Aes256Gcm => {
                 let cipher = Aes256Gcm::new_from_slice(&dek_plaintext)
-                    .map_err(|e| helpers::crypto_error(&format!("DEK 初始化失败: {}", e)))?;
+                    .map_err(|e| helpers::crypto_error(&format!("DEK 初始化失败: {e}")))?;
 
                 if ciphertext.nonce.is_empty() {
                     return Err(helpers::crypto_error(
@@ -336,15 +330,19 @@ impl KeyManagementService for LocalKms {
                 }
 
                 let nonce = Nonce::from_slice(&ciphertext.nonce);
-                let plaintext = cipher
-                    .decrypt(nonce, ciphertext.data.as_slice())
-                    .map_err(|_| helpers::crypto_error("解密失败：数据可能已损坏或 Nonce 不匹配"))?;
+                let plaintext =
+                    cipher
+                        .decrypt(nonce, ciphertext.data.as_slice())
+                        .map_err(|_| {
+                            helpers::crypto_error("解密失败：数据可能已损坏或 Nonce 不匹配")
+                        })?;
 
                 Ok(plaintext)
             }
-            _ => Err(helpers::unsupported_format(
-                &format!("{:?} 算法尚未实现", dek.algorithm),
-            )),
+            _ => Err(helpers::unsupported_format(&format!(
+                "{:?} 算法尚未实现",
+                dek.algorithm
+            ))),
         }
     }
 
@@ -352,7 +350,7 @@ impl KeyManagementService for LocalKms {
         let key_material = self.decrypt_key_material(key_id).await?;
 
         let key_pair = Ed25519KeyPair::from_pkcs8_maybe_unchecked(&key_material)
-            .map_err(|e| helpers::crypto_error(&format!("无效的 Ed25519 密钥: {}", e)))?;
+            .map_err(|e| helpers::crypto_error(&format!("无效的 Ed25519 密钥: {e}")))?;
 
         let signature = key_pair.sign(data);
 
@@ -367,10 +365,7 @@ impl KeyManagementService for LocalKms {
         let key_material = self.decrypt_key_material(key_id).await?;
 
         let public_key =
-            ring::signature::UnparsedPublicKey::new(
-                &ring::signature::ED25519,
-                &key_material,
-            );
+            ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, &key_material);
 
         match public_key.verify(data, &signature.value) {
             Ok(()) => Ok(true),
@@ -380,9 +375,9 @@ impl KeyManagementService for LocalKms {
 
     async fn rotate_key(&self, key_id: &str) -> Result<RotationResult> {
         let mut store = self.key_store.write().await;
-        let stored_key = store.get_mut(key_id).ok_or_else(|| {
-            helpers::not_found("密钥", key_id)
-        })?;
+        let stored_key = store
+            .get_mut(key_id)
+            .ok_or_else(|| helpers::not_found("密钥", key_id))?;
 
         let new_material = Self::generate_key_material(stored_key.metadata.key_spec);
         let (encrypted_material, iv) = self.encrypt_with_master_key(&new_material)?;
@@ -400,7 +395,7 @@ impl KeyManagementService for LocalKms {
         drop(store);
         let stored_key_ref = self.key_store.read().await.get(key_id).cloned();
         if let Some(sk) = stored_key_ref {
-            self.save_key_to_disk(&sk).await?;
+            self.save_key_to_disk(&sk)?;
         }
 
         Ok(RotationResult {
@@ -441,9 +436,9 @@ impl KeyManagementService for LocalKms {
         let start = std::time::Instant::now();
 
         let store = self.key_store.read().await;
-        let _ = store.len(); 
+        let _ = store.len();
 
-        let latency = start.elapsed().as_millis() as u64;
+        let latency = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
         Ok(KmsHealthStatus::healthy(latency))
     }
 }
@@ -480,7 +475,7 @@ impl LocalKms {
             store.insert(key_id.to_string(), stored_key.clone());
         }
 
-        self.save_key_to_disk(&stored_key).await?;
+        self.save_key_to_disk(&stored_key)?;
 
         Ok(stored_key.metadata)
     }
@@ -492,7 +487,7 @@ impl LocalKms {
         description: Option<&str>,
     ) -> Result<KeyMetadata> {
         let pkcs8_doc = Ed25519KeyPair::generate_pkcs8(&ring_rand::SystemRandom::new())
-            .map_err(|e| helpers::crypto_error(&format!("生成 Ed25519 密钥对失败: {}", e)))?;
+            .map_err(|e| helpers::crypto_error(&format!("生成 Ed25519 密钥对失败: {e}")))?;
 
         let pkcs8_bytes = pkcs8_doc.as_ref().to_vec();
         let (encrypted_material, iv) = self.encrypt_with_master_key(&pkcs8_bytes)?;
@@ -518,7 +513,7 @@ impl LocalKms {
             store.insert(key_id.to_string(), stored_key.clone());
         }
 
-        self.save_key_to_disk(&stored_key).await?;
+        self.save_key_to_disk(&stored_key)?;
 
         Ok(stored_key.metadata)
     }
@@ -546,16 +541,19 @@ impl LocalKmsConfig {
 
 impl Default for LocalKmsConfig {
     fn default() -> Self {
-        Self::with_defaults(dirs::data_local_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("knowledge-system")
-            .join("kms"))
+        Self::with_defaults(
+            dirs::data_local_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("knowledge-system")
+                .join("kms"),
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
     use tempfile::tempdir;
 
     #[tokio::test]
@@ -564,7 +562,10 @@ mod tests {
         let master_key = LocalKms::generate_master_key();
         let kms = LocalKms::new(master_key, dir.path()).unwrap();
 
-        let metadata = kms.create_key("test-key-1", KeySpec::Aes256, Some("测试密钥")).await.unwrap();
+        let metadata = kms
+            .create_key("test-key-1", KeySpec::Aes256, Some("测试密钥"))
+            .await
+            .unwrap();
         assert_eq!(metadata.key_id, "test-key-1");
         assert_eq!(metadata.key_spec, KeySpec::Aes256);
         assert!(metadata.enabled);
@@ -583,7 +584,9 @@ mod tests {
         let master_key = LocalKms::generate_master_key();
         let kms = LocalKms::new(master_key, dir.path()).unwrap();
 
-        kms.create_signing_key("sign-key-1", Some("签名密钥")).await.unwrap();
+        kms.create_signing_key("sign-key-1", Some("签名密钥"))
+            .await
+            .unwrap();
 
         let data = b"Data to sign";
         let signature = kms.sign("sign-key-1", data).await.unwrap();
@@ -592,7 +595,10 @@ mod tests {
         assert!(verified);
 
         let wrong_data = b"Wrong data";
-        let verified_wrong = kms.verify("sign-key-1", wrong_data, &signature).await.unwrap();
+        let verified_wrong = kms
+            .verify("sign-key-1", wrong_data, &signature)
+            .await
+            .unwrap();
         assert!(!verified_wrong);
     }
 
@@ -602,8 +608,12 @@ mod tests {
         let master_key = LocalKms::generate_master_key();
         let kms = LocalKms::new(master_key, dir.path()).unwrap();
 
-        kms.create_key("key-a", KeySpec::Aes256, None).await.unwrap();
-        kms.create_key("key-b", KeySpec::Aes128, None).await.unwrap();
+        kms.create_key("key-a", KeySpec::Aes256, None)
+            .await
+            .unwrap();
+        kms.create_key("key-b", KeySpec::Aes128, None)
+            .await
+            .unwrap();
 
         let keys = kms.list_keys().await.unwrap();
         assert_eq!(keys.len(), 2);
@@ -619,7 +629,9 @@ mod tests {
         let master_key = LocalKms::generate_master_key();
         let kms = LocalKms::new(master_key, dir.path()).unwrap();
 
-        kms.create_key("rotate-me", KeySpec::Aes256, None).await.unwrap();
+        kms.create_key("rotate-me", KeySpec::Aes256, None)
+            .await
+            .unwrap();
 
         let result = kms.rotate_key("rotate-me").await.unwrap();
         assert_eq!(result.status, RotationStatus::Completed);
@@ -635,7 +647,9 @@ mod tests {
         let master_key = LocalKms::generate_master_key();
         let kms = LocalKms::new(master_key, dir.path()).unwrap();
 
-        kms.create_key("to-delete", KeySpec::Aes256, None).await.unwrap();
+        kms.create_key("to-delete", KeySpec::Aes256, None)
+            .await
+            .unwrap();
         assert!(kms.list_keys().await.unwrap().len() == 1);
 
         kms.destroy_key("to-delete").await.unwrap();
@@ -663,7 +677,9 @@ mod tests {
 
         {
             let kms = LocalKms::new(master_key, dir.path()).unwrap();
-            kms.create_key("persisted-key", KeySpec::Aes256, None).await.unwrap();
+            kms.create_key("persisted-key", KeySpec::Aes256, None)
+                .await
+                .unwrap();
         }
 
         let kms2 = LocalKms::new(master_key, dir.path()).unwrap();
@@ -680,38 +696,48 @@ mod tests {
         let master_key = LocalKms::generate_master_key();
         let kms = LocalKms::new(master_key, dir.path()).unwrap();
 
-        kms.create_key("ctx-key", KeySpec::Aes256, None).await.unwrap();
+        kms.create_key("ctx-key", KeySpec::Aes256, None)
+            .await
+            .unwrap();
         let dek = kms.generate_dek("ctx-key").await.unwrap();
 
         let mut ctx = HashMap::new();
         ctx.insert("purpose".to_string(), "test".to_string());
 
-        let ct = Ciphertext::new(b"test".to_vec(), dek.key_id.clone(), EncryptionAlgorithm::Aes256Gcm)
-            .with_context(ctx);
+        let ct = Ciphertext::new(
+            b"test".to_vec(),
+            dek.key_id.clone(),
+            EncryptionAlgorithm::Aes256Gcm,
+        )
+        .with_context(ctx);
 
         assert!(ct.context.is_some());
-        assert_eq!(ct.context.unwrap().context.get("purpose").unwrap(), "test");
+        assert_eq!(ct.context.unwrap().get("purpose").unwrap(), "test");
     }
 
-    #[proptest::proptest]
-    fn test_encrypt_decrypt_roundtrip(#[proptest::strategy("0..1000usize")] size: usize) {
-        use std::hint::black_box;
+    proptest! {
+        #[test]
+        fn test_encrypt_decrypt_roundtrip(size in 0..1000usize) {
+            use std::hint::black_box;
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let dir = tempdir().unwrap();
-            let master_key = LocalKms::generate_master_key();
-            let kms = LocalKms::new(master_key, dir.path()).unwrap();
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let dir = tempdir().unwrap();
+                let master_key = LocalKms::generate_master_key();
+                let kms = LocalKms::new(master_key, dir.path()).unwrap();
 
-            kms.create_key("fuzz-key", KeySpec::Aes256, None).await.unwrap();
-            let dek = kms.generate_dek("fuzz-key").await.unwrap();
+                kms.create_key("fuzz-key", KeySpec::Aes256, None)
+                    .await
+                    .unwrap();
+                let dek = kms.generate_dek("fuzz-key").await.unwrap();
 
-            let data: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
-            let black_box(black_box(&data));
+                let data: Vec<u8> = (0..size).map(|i| u8::try_from(i % 256).unwrap()).collect();
+                let _ = black_box(black_box(&data));
 
-            let ct = kms.encrypt(&dek, &data).await.unwrap();
-            let decrypted = kms.decrypt(&dek, &ct).await.unwrap();
-            assert_eq!(data, decrypted);
-        });
+                let ct = kms.encrypt(&dek, &data).await.unwrap();
+                let decrypted = kms.decrypt(&dek, &ct).await.unwrap();
+                assert_eq!(data, decrypted);
+            });
+        }
     }
 }

@@ -63,27 +63,18 @@ impl SafeRecordId {
     pub fn parse(input: &str) -> Result<Self> {
         let parts: Vec<&str> = input.splitn(2, ':').collect();
         if parts.len() != 2 {
-            return Err(helpers::validation_error(
-                &format!("ID 格式错误：缺少冒号分隔符，输入 '{input}'"),
-                "parse_record_id",
-            ));
+            return Err(helpers::invalid_record_id(input));
         }
 
         let table_name = parts[0];
         let id_value = parts[1];
 
         if table_name.is_empty() {
-            return Err(helpers::validation_error(
-                "ID 格式错误：表名不能为空",
-                "parse_record_id",
-            ));
+            return Err(helpers::invalid_record_id(input));
         }
 
         if id_value.is_empty() {
-            return Err(helpers::validation_error(
-                "ID 格式错误：ID 值不能为空",
-                "parse_record_id",
-            ));
+            return Err(helpers::invalid_record_id(input));
         }
 
         let record_id = RecordId::from((table_name.to_string(), id_value.to_string()));
@@ -167,7 +158,7 @@ mod tests {
         let result = SafeRecordId::parse("invalid_format");
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.to_string().contains("缺少冒号分隔符"));
+        assert!(err.to_string().contains("无效的 RecordID 格式"));
     }
 
     #[test]
@@ -175,7 +166,7 @@ mod tests {
         let result = SafeRecordId::parse(":abc123");
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.to_string().contains("表名不能为空"));
+        assert!(err.to_string().contains("无效的 RecordID 格式"));
     }
 
     #[test]
@@ -183,7 +174,7 @@ mod tests {
         let result = SafeRecordId::parse("document:");
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.to_string().contains("ID 值不能为空"));
+        assert!(err.to_string().contains("无效的 RecordID 格式"));
     }
 
     #[test]

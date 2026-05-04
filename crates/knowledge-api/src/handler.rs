@@ -111,6 +111,12 @@ pub async fn upload_document(
         return Err(helpers::validation_error("文件路径不允许包含编码后的路径遍历字符", "upload").into());
     }
 
+    let double_decoded = urlencoding::decode(&decoded_path)
+        .map_err(|_| helpers::validation_error("文件路径双重编码无效", "upload"))?;
+    if double_decoded.contains("..") {
+        return Err(helpers::validation_error("文件路径不允许包含双重编码后的路径遍历字符", "upload").into());
+    }
+
     let source_type = detect_source_type(&req.path);
 
     let hash = blake3_hash(&req.content);
@@ -263,11 +269,12 @@ pub async fn get_block_tokens(
 /// # Errors
 ///
 /// 当 Token 不存在或数据库查询失败时返回错误。
-pub fn get_token(
+pub async fn get_token(
     Path(id): Path<String>,
     State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<Token>>, ApiError> {
-    let token = state.vm.get_token(&id)?;
+    let token = state.vm.get_token(&id)
+        .map_err(ApiError::from)?;
     Ok(Json(ApiResponse::success(token)))
 }
 

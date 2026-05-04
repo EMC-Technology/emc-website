@@ -69,8 +69,22 @@ impl StringUtils {
     /// Sanitize a string for logging
     #[must_use]
     pub fn sanitize_for_logging(s: &str) -> String {
-        // Replace newlines and tabs with spaces
-        s.replace(['\n', '\t'], " ")
+        let mut result = String::with_capacity(s.len());
+        for ch in s.chars() {
+            match ch {
+                '\n' | '\r' | '\t' => result.push(' '),
+                c if c.is_control() => result.push(' '),
+                '\\' => {
+                    if result.ends_with("\\x1b") || result.ends_with("\\033") {
+                        result.push(' ');
+                    } else {
+                        result.push(ch);
+                    }
+                }
+                c => result.push(c),
+            }
+        }
+        result
     }
 }
 

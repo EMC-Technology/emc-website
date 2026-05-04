@@ -13,7 +13,7 @@
 //! 其中：
 //! - `k1 = 1.2`：词频饱和参数
 //! - `b = 0.75`：文档长度归一化参数
-//! - `IDF(qi) = ln((N - n(qi) + 0.5) / (n(qi) + 0.5) + 1)`
+//! - `IDF(qi) = ln(1 + (N - n(qi) + 0.5) / (n(qi) + 0.5))  [BM25+ 变体，保证 IDF 非负]`
 //! - `N`：文档总数
 //! - `n(qi)`：包含词项 qi 的文档数
 //! - `f(qi, D)`：词项 qi 在文档 D 中的词频
@@ -315,10 +315,10 @@ impl InvertedIndex {
     ///
     /// 按词频降序排列的 (文档 ID, 词频) 列表
     pub fn search(&self, term: &str) -> Vec<(String, f64)> {
-        let mut results = self
+        let mut results: Vec<(String, f64)> = self
             .index
             .get(term)
-            .cloned()
+            .map(|v| v.iter().map(|(k, f)| (k.clone(), *f)).collect())
             .unwrap_or_default();
         results.sort_by(|a, b| {
             b.1.partial_cmp(&a.1)

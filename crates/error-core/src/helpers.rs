@@ -25,30 +25,30 @@ pub fn validation_error(message: &str, operation: &str) -> ErrorObject {
 
 /// Construct an invalid `RecordID` error (USR/ERROR/OPERATION)
 #[must_use]
-pub fn invalid_record_id(message: &str) -> ErrorObject {
+pub fn invalid_record_id(id: &str) -> ErrorObject {
     ErrorObject::builder()
         .code(registry::INVALID_RECORD_ID)
         .source(ErrorSource::USR)
         .severity(Severity::ERROR)
         .impact_scope(ImpactScope::OPERATION)
         .recoverability(Recoverability::NonRecoverable)
-        .message(&format!("无效的 RecordID 格式: {message}"))
+        .message(&format!("无效的 RecordID 格式: {id}"))
         .user_message("输入的 ID 格式无效，请检查后重试")
         .module_path("validation")
         .operation("validate_record_id")
         .build()
 }
 
-/// Construct a not-found error (USR/WARNING/OPERATION)
+/// Construct a not-found error (USR/ERROR/OPERATION)
 #[must_use]
-pub fn not_found(resource: &str, id: &str) -> ErrorObject {
+pub fn not_found(entity: &str, id: &str) -> ErrorObject {
     ErrorObject::builder()
         .code(registry::NOT_FOUND)
         .source(ErrorSource::USR)
-        .severity(Severity::WARNING)
+        .severity(Severity::ERROR)
         .impact_scope(ImpactScope::OPERATION)
         .recoverability(Recoverability::NonRecoverable)
-        .message(&format!("资源不存在: {resource}:{id}"))
+        .message(&format!("资源不存在: {entity}:{id}"))
         .user_message("请求的资源未找到")
         .module_path("validation")
         .operation("lookup")
@@ -215,6 +215,22 @@ pub fn net_api_error(message: &str) -> ErrorObject {
         .build()
 }
 
+/// Construct an LLM API call error (AIM/ERROR/OPERATION)
+#[must_use]
+pub fn llm_api_error(message: &str, operation: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::LLM_API_FAILED)
+        .source(ErrorSource::AIM)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::AutoRecoverable)
+        .message(message)
+        .user_message("LLM 调用失败，请稍后重试")
+        .module_path("llm")
+        .operation(operation)
+        .build()
+}
+
 /// Construct an API deserialization error (INT/ERROR/OPERATION)
 #[must_use]
 pub fn api_deserialize_error(message: &str) -> ErrorObject {
@@ -324,6 +340,820 @@ pub fn ws_receive_failed_error(message: &str) -> ErrorObject {
         .user_message("广播目标未找到")
         .module_path("ws")
         .operation("receive")
+        .build()
+}
+
+/// Construct an LLM judgment error (AIM/ERROR/OPERATION)
+#[must_use]
+pub fn llm_judgment_error(message: &str, operation: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::LLM_JUDGMENT_FAILED)
+        .source(ErrorSource::AIM)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::AutoRecoverable)
+        .message(message)
+        .user_message("LLM 判决失败")
+        .module_path("llm_judge")
+        .operation(operation)
+        .build()
+}
+
+/// Construct a metric calculation error (AIM/ERROR/OPERATION)
+#[must_use]
+pub fn metric_calc_error(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::METRIC_CALC_FAILED)
+        .source(ErrorSource::AIM)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::AutoRecoverable)
+        .message(message)
+        .user_message("指标计算失败")
+        .module_path("metrics")
+        .operation("calculate")
+        .build()
+}
+
+/// Construct a dataset load error (FS/ERROR/SESSION)
+#[must_use]
+pub fn dataset_load_error(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::DATASET_LOAD_FAILED)
+        .source(ErrorSource::FS)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::SESSION)
+        .recoverability(Recoverability::AutoRecoverable)
+        .message(message)
+        .user_message("数据集加载失败")
+        .module_path("dataset")
+        .operation("load")
+        .build()
+}
+
+/// Construct an evaluation timeout error (INT/WARNING/OPERATION)
+#[must_use]
+pub fn eval_timeout_error(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::EVAL_TIMEOUT)
+        .source(ErrorSource::INT)
+        .severity(Severity::WARNING)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::AutoRecoverable)
+        .message(message)
+        .user_message("评估操作超时")
+        .module_path("evaluator")
+        .operation("evaluate")
+        .build()
+}
+
+// ── 孤儿错误码补充 helper ────────────────────────────────────
+
+/// Construct an I/O operation error (FS/ERROR/OPERATION)
+#[must_use]
+pub fn io_error(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::IO_FAILED)
+        .source(ErrorSource::FS)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::AutoRecoverable)
+        .message(&format!("I/O 操作失败: {message}"))
+        .user_message("文件操作失败，请稍后重试")
+        .module_path("io")
+        .operation("io_operation")
+        .build()
+}
+
+/// Construct a token invalid/expired error (SEC/WARNING/OPERATION)
+#[must_use]
+pub fn token_invalid_error(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::TOKEN_INVALID)
+        .source(ErrorSource::SEC)
+        .severity(Severity::WARNING)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::NonRecoverable)
+        .message(&format!("令牌无效或已过期: {message}"))
+        .user_message("认证令牌已失效，请重新登录")
+        .module_path("auth")
+        .operation("token_validate")
+        .build()
+}
+
+/// Construct a general fallback error (INT/ERROR/OPERATION)
+#[must_use]
+pub fn general_fallback_error(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::GENERAL_FALLBACK)
+        .source(ErrorSource::INT)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::AutoRecoverable)
+        .message(message)
+        .user_message("操作失败，请稍后重试")
+        .module_path("system")
+        .operation("fallback")
+        .build()
+}
+
+/// Construct a frontend/UI error (USR/ERROR/OPERATION)
+#[must_use]
+pub fn frontend_ui_error(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::FRONTEND_UI_ERROR)
+        .source(ErrorSource::USR)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::NonRecoverable)
+        .message(message)
+        .user_message("界面操作失败")
+        .module_path("ui")
+        .operation("render")
+        .build()
+}
+
+/// Construct a gateway/API layer error (NET/ERROR/SESSION)
+#[must_use]
+pub fn gateway_error(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::GATEWAY_ERROR)
+        .source(ErrorSource::NET)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::SESSION)
+        .recoverability(Recoverability::AutoRecoverable)
+        .message(message)
+        .user_message("网关请求失败，请稍后重试")
+        .module_path("gateway")
+        .operation("proxy")
+        .build()
+}
+
+/// Construct a business logic error (INT/ERROR/MODULE)
+#[must_use]
+pub fn business_logic_error(message: &str, operation: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::BUSINESS_LOGIC_ERROR)
+        .source(ErrorSource::INT)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::MODULE)
+        .recoverability(Recoverability::ManualIntervention)
+        .message(message)
+        .user_message("业务处理失败")
+        .module_path("business")
+        .operation(operation)
+        .build()
+}
+
+/// Construct an infrastructure error (SYS/ERROR/GLOBAL)
+#[must_use]
+pub fn infrastructure_error(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::INFRASTRUCTURE_ERROR)
+        .source(ErrorSource::SYS)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::GLOBAL)
+        .recoverability(Recoverability::ManualIntervention)
+        .message(message)
+        .user_message("基础设施故障，请联系管理员")
+        .module_path("infrastructure")
+        .operation("system")
+        .build()
+}
+
+/// Construct an extraction error (AIM/ERROR/OPERATION)
+#[must_use]
+pub fn extraction_error(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::EXTRACTION_FAILED)
+        .source(ErrorSource::AIM)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::AutoRecoverable)
+        .message(message)
+        .user_message("实体/关系抽取失败")
+        .module_path("extractor")
+        .operation("extract")
+        .build()
+}
+
+/// Construct a disambiguation error (AIM/WARNING/OPERATION)
+#[must_use]
+pub fn disambiguation_error(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::DISAMBIGUATION_FAILED)
+        .source(ErrorSource::AIM)
+        .severity(Severity::WARNING)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::AutoRecoverable)
+        .message(message)
+        .user_message("实体消歧失败")
+        .module_path("disambiguator")
+        .operation("disambiguate")
+        .build()
+}
+
+// ── 嵌入模型 helper ─────────────────────────────────────────
+
+/// Construct an embedding config error (AIM/ERROR/OPERATION)
+#[must_use]
+pub fn embedding_config_error(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::EMBEDDING_CONFIG_ERROR)
+        .source(ErrorSource::AIM)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::NonRecoverable)
+        .message(&format!("嵌入模型配置错误: {message}"))
+        .user_message("嵌入模型配置有误")
+        .module_path("embedding")
+        .operation("configure")
+        .build()
+}
+
+/// Construct an embedding model not loaded error (AIM/ERROR/OPERATION)
+#[must_use]
+pub fn embedding_model_not_loaded(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::EMBEDDING_MODEL_NOT_LOADED)
+        .source(ErrorSource::AIM)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::AutoRecoverable)
+        .message(&format!("嵌入模型未加载: {message}"))
+        .user_message("嵌入模型尚未就绪，请稍后重试")
+        .module_path("embedding")
+        .operation("load")
+        .build()
+}
+
+/// Construct an embedding model load failed error (AIM/CRITICAL/OPERATION)
+#[must_use]
+pub fn embedding_model_load_failed(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::EMBEDDING_MODEL_LOAD_FAILED)
+        .source(ErrorSource::AIM)
+        .severity(Severity::CRITICAL)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::ManualIntervention)
+        .message(&format!("嵌入模型加载失败: {message}"))
+        .user_message("嵌入模型加载失败，请联系管理员")
+        .module_path("embedding")
+        .operation("load")
+        .build()
+}
+
+/// Construct an embedding inference failed error (AIM/ERROR/OPERATION)
+#[must_use]
+pub fn embedding_inference_failed(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::EMBEDDING_INFERENCE_FAILED)
+        .source(ErrorSource::AIM)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::AutoRecoverable)
+        .message(&format!("嵌入推理失败: {message}"))
+        .user_message("嵌入计算失败，请稍后重试")
+        .module_path("embedding")
+        .operation("infer")
+        .build()
+}
+
+/// Construct an embedding empty input error (AIM/WARNING/OPERATION)
+#[must_use]
+pub fn embedding_empty_input() -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::EMBEDDING_EMPTY_INPUT)
+        .source(ErrorSource::AIM)
+        .severity(Severity::WARNING)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::NonRecoverable)
+        .message("嵌入计算输入为空")
+        .user_message("输入内容为空，无法计算嵌入")
+        .module_path("embedding")
+        .operation("infer")
+        .build()
+}
+
+/// Construct an embedding tokenizer error (AIM/ERROR/OPERATION)
+#[must_use]
+pub fn embedding_tokenizer_error(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::EMBEDDING_TOKENIZER_ERROR)
+        .source(ErrorSource::AIM)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::NonRecoverable)
+        .message(&format!("Tokenizer 错误: {message}"))
+        .user_message("文本处理失败")
+        .module_path("embedding")
+        .operation("tokenize")
+        .build()
+}
+
+/// Construct an embedding I/O error (AIM/ERROR/OPERATION)
+#[must_use]
+pub fn embedding_io_error(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::EMBEDDING_IO_ERROR)
+        .source(ErrorSource::AIM)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::AutoRecoverable)
+        .message(&format!("嵌入模型 I/O 错误: {message}"))
+        .user_message("模型文件操作失败")
+        .module_path("embedding")
+        .operation("io")
+        .build()
+}
+
+// ── Agent helper ─────────────────────────────────────────────
+
+/// Construct an agent LLM error (AIM/ERROR/OPERATION)
+#[must_use]
+pub fn agent_llm_error(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::AGENT_LLM_ERROR)
+        .source(ErrorSource::AIM)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::AutoRecoverable)
+        .message(&format!("LLM 调用失败: {message}"))
+        .user_message("AI 服务调用失败，请稍后重试")
+        .module_path("agent")
+        .operation("llm_call")
+        .build()
+}
+
+/// Construct an agent tool error (AIM/ERROR/OPERATION)
+#[must_use]
+pub fn agent_tool_error(tool: &str, error: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::AGENT_TOOL_ERROR)
+        .source(ErrorSource::AIM)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::AutoRecoverable)
+        .message(&format!("工具 '{tool}' 调用失败: {error}"))
+        .user_message("工具执行失败")
+        .module_path("agent")
+        .operation("tool_call")
+        .build()
+}
+
+/// Construct an agent tool not found error (AIM/WARNING/OPERATION)
+#[must_use]
+pub fn agent_tool_not_found(tool: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::AGENT_TOOL_NOT_FOUND)
+        .source(ErrorSource::AIM)
+        .severity(Severity::WARNING)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::NonRecoverable)
+        .message(&format!("工具 '{tool}' 不存在"))
+        .user_message("请求的工具不可用")
+        .module_path("agent")
+        .operation("tool_lookup")
+        .build()
+}
+
+/// Construct an agent max iterations error (AIM/WARNING/OPERATION)
+#[must_use]
+pub fn agent_max_iterations(max: usize) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::AGENT_MAX_ITERATIONS)
+        .source(ErrorSource::AIM)
+        .severity(Severity::WARNING)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::NonRecoverable)
+        .message(&format!("达到最大迭代次数: {max}"))
+        .user_message("任务执行步数已达上限")
+        .module_path("agent")
+        .operation("execute")
+        .build()
+}
+
+/// Construct an agent timeout error (AIM/WARNING/SESSION)
+#[must_use]
+pub fn agent_timeout() -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::AGENT_TIMEOUT)
+        .source(ErrorSource::AIM)
+        .severity(Severity::WARNING)
+        .impact_scope(ImpactScope::SESSION)
+        .recoverability(Recoverability::AutoRecoverable)
+        .message("Agent 执行超时")
+        .user_message("任务执行超时，请稍后重试")
+        .module_path("agent")
+        .operation("execute")
+        .build()
+}
+
+/// Construct an agent clarification needed error (AIM/WARNING/OPERATION)
+#[must_use]
+pub fn agent_clarification(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::AGENT_CLARIFICATION)
+        .source(ErrorSource::AIM)
+        .severity(Severity::WARNING)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::NonRecoverable)
+        .message(&format!("需要澄清: {message}"))
+        .user_message("请提供更多信息以继续")
+        .module_path("agent")
+        .operation("clarify")
+        .build()
+}
+
+/// Construct an agent parse action error (AIM/ERROR/OPERATION)
+#[must_use]
+pub fn agent_parse_action_error(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::AGENT_PARSE_ACTION)
+        .source(ErrorSource::AIM)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::AutoRecoverable)
+        .message(&format!("无法解析 LLM 输出的动作: {message}"))
+        .user_message("AI 响应解析失败")
+        .module_path("agent")
+        .operation("parse_action")
+        .build()
+}
+
+/// Construct an agent memory error (AIM/ERROR/OPERATION)
+#[must_use]
+pub fn agent_memory_error(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::AGENT_MEMORY_ERROR)
+        .source(ErrorSource::AIM)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::AutoRecoverable)
+        .message(&format!("记忆系统错误: {message}"))
+        .user_message("记忆系统异常")
+        .module_path("agent")
+        .operation("memory")
+        .build()
+}
+
+/// Construct an agent invalid state transition error (AIM/ERROR/OPERATION)
+#[must_use]
+pub fn agent_invalid_transition(from: &str, to: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::AGENT_INVALID_TRANSITION)
+        .source(ErrorSource::AIM)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::NonRecoverable)
+        .message(&format!("无效的状态转换: 从 {from} 到 {to}"))
+        .user_message("任务状态异常")
+        .module_path("agent")
+        .operation("transition")
+        .build()
+}
+
+/// Construct an agent workflow error (AIM/ERROR/OPERATION)
+#[must_use]
+pub fn agent_workflow_error(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::AGENT_WORKFLOW_ERROR)
+        .source(ErrorSource::AIM)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::AutoRecoverable)
+        .message(&format!("工作流错误: {message}"))
+        .user_message("工作流执行失败")
+        .module_path("agent")
+        .operation("workflow")
+        .build()
+}
+
+/// Construct an agent serialization error (AIM/ERROR/OPERATION)
+#[must_use]
+pub fn agent_serialization_error(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::AGENT_SERIALIZATION_ERROR)
+        .source(ErrorSource::AIM)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::NonRecoverable)
+        .message(&format!("序列化错误: {message}"))
+        .user_message("数据处理失败")
+        .module_path("agent")
+        .operation("serialize")
+        .build()
+}
+
+/// Construct an agent permission denied error (SEC/ERROR/OPERATION)
+#[must_use]
+pub fn agent_permission_denied(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::AGENT_PERMISSION_DENIED)
+        .source(ErrorSource::SEC)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::NonRecoverable)
+        .message(&format!("权限不足: {message}"))
+        .user_message("权限不足，无法执行此操作")
+        .module_path("agent")
+        .operation("authorize")
+        .build()
+}
+
+/// Construct an agent safety check failed error (SEC/CRITICAL/OPERATION)
+#[must_use]
+pub fn agent_safety_check_failed(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::AGENT_SAFETY_CHECK)
+        .source(ErrorSource::SEC)
+        .severity(Severity::CRITICAL)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::NonRecoverable)
+        .message(&format!("安全检查未通过: {message}"))
+        .user_message("操作被安全策略拦截")
+        .module_path("agent")
+        .operation("safety_check")
+        .build()
+}
+
+// ── CQRS 聚合 helper ────────────────────────────────────────
+
+/// Construct an aggregate invalid state error (INT/ERROR/OPERATION)
+#[must_use]
+pub fn aggregate_invalid_state(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::AGGREGATE_INVALID_STATE)
+        .source(ErrorSource::INT)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::NonRecoverable)
+        .message(&format!("聚合状态无效: {message}"))
+        .user_message("数据状态异常")
+        .module_path("cqrs")
+        .operation("aggregate")
+        .build()
+}
+
+/// Construct an aggregate business rule violation error (INT/ERROR/OPERATION)
+#[must_use]
+pub fn aggregate_business_rule(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::AGGREGATE_BUSINESS_RULE)
+        .source(ErrorSource::INT)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::NonRecoverable)
+        .message(&format!("业务规则违反: {message}"))
+        .user_message("操作违反业务规则")
+        .module_path("cqrs")
+        .operation("validate")
+        .build()
+}
+
+/// Construct an aggregate not found error (INT/WARNING/OPERATION)
+#[must_use]
+pub fn aggregate_not_found(id: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::AGGREGATE_NOT_FOUND)
+        .source(ErrorSource::INT)
+        .severity(Severity::WARNING)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::NonRecoverable)
+        .message(&format!("聚合未找到: {id}"))
+        .user_message("请求的数据未找到")
+        .module_path("cqrs")
+        .operation("load")
+        .build()
+}
+
+/// Construct an aggregate version conflict error (INT/ERROR/OPERATION)
+#[must_use]
+pub fn aggregate_version_conflict(expected: u64, actual: u64) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::AGGREGATE_VERSION_CONFLICT)
+        .source(ErrorSource::INT)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::AutoRecoverable)
+        .message(&format!("版本冲突: 期望 {expected}, 实际 {actual}"))
+        .user_message("数据已被其他操作修改，请刷新后重试")
+        .module_path("cqrs")
+        .operation("commit")
+        .build()
+}
+
+/// Construct an aggregate serialization error (INT/ERROR/OPERATION)
+#[must_use]
+pub fn aggregate_serialization_error(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::AGGREGATE_SERIALIZATION)
+        .source(ErrorSource::INT)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::NonRecoverable)
+        .message(&format!("聚合序列化错误: {message}"))
+        .user_message("数据处理失败")
+        .module_path("cqrs")
+        .operation("serialize")
+        .build()
+}
+
+// ── 缓存 helper ─────────────────────────────────────────────
+
+/// Construct a cache L2 connection error (FS/ERROR/SESSION)
+#[must_use]
+pub fn cache_l2_connection_error(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::CACHE_L2_CONNECTION)
+        .source(ErrorSource::FS)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::SESSION)
+        .recoverability(Recoverability::AutoRecoverable)
+        .message(&format!("缓存连接失败: {message}"))
+        .user_message("缓存服务暂时不可用")
+        .module_path("cache")
+        .operation("connect")
+        .build()
+}
+
+/// Construct a cache L2 serialization error (INT/ERROR/OPERATION)
+#[must_use]
+pub fn cache_l2_serialization_error(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::CACHE_L2_SERIALIZATION)
+        .source(ErrorSource::INT)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::NonRecoverable)
+        .message(&format!("缓存序列化失败: {message}"))
+        .user_message("缓存数据处理失败")
+        .module_path("cache")
+        .operation("serialize")
+        .build()
+}
+
+/// Construct a cache L2 deserialization error (INT/ERROR/OPERATION)
+#[must_use]
+pub fn cache_l2_deserialization_error(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::CACHE_L2_DESERIALIZATION)
+        .source(ErrorSource::INT)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::NonRecoverable)
+        .message(&format!("缓存反序列化失败: {message}"))
+        .user_message("缓存数据读取失败")
+        .module_path("cache")
+        .operation("deserialize")
+        .build()
+}
+
+/// Construct a cache L2 operation error (FS/ERROR/OPERATION)
+#[must_use]
+pub fn cache_l2_operation_error(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::CACHE_L2_OPERATION)
+        .source(ErrorSource::FS)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::AutoRecoverable)
+        .message(&format!("缓存操作失败: {message}"))
+        .user_message("缓存操作失败，请稍后重试")
+        .module_path("cache")
+        .operation("operate")
+        .build()
+}
+
+/// Construct a cache manager L2 error (FS/ERROR/OPERATION)
+#[must_use]
+pub fn cache_manager_l2_error(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::CACHE_MANAGER_L2)
+        .source(ErrorSource::FS)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::AutoRecoverable)
+        .message(&format!("缓存管理器 L2 错误: {message}"))
+        .user_message("缓存服务异常")
+        .module_path("cache")
+        .operation("manage")
+        .build()
+}
+
+/// Construct a cache manager serialization error (INT/ERROR/OPERATION)
+#[must_use]
+pub fn cache_manager_serialization_error(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::CACHE_MANAGER_SERIALIZATION)
+        .source(ErrorSource::INT)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::NonRecoverable)
+        .message(&format!("缓存管理器序列化错误: {message}"))
+        .user_message("缓存数据处理失败")
+        .module_path("cache")
+        .operation("serialize")
+        .build()
+}
+
+// ── 事件系统 helper ─────────────────────────────────────────
+
+/// Construct an event type mismatch error (INT/ERROR/OPERATION)
+#[must_use]
+pub fn event_type_mismatch() -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::EVENT_TYPE_MISMATCH)
+        .source(ErrorSource::INT)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::NonRecoverable)
+        .message("事件类型不匹配")
+        .user_message("事件处理失败")
+        .module_path("event")
+        .operation("dispatch")
+        .build()
+}
+
+/// Construct an event processing failed error (INT/ERROR/OPERATION)
+#[must_use]
+pub fn event_processing_failed(message: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::EVENT_PROCESSING_FAILED)
+        .source(ErrorSource::INT)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::AutoRecoverable)
+        .message(&format!("事件处理失败: {message}"))
+        .user_message("事件处理异常")
+        .module_path("event")
+        .operation("process")
+        .build()
+}
+
+/// Construct an event no subscribers error (INT/WARNING/OPERATION)
+#[must_use]
+pub fn event_no_subscribers(event_id: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::EVENT_NO_SUBSCRIBERS)
+        .source(ErrorSource::INT)
+        .severity(Severity::WARNING)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::NonRecoverable)
+        .message(&format!("没有活跃的订阅者接收事件 (event_id={event_id})"))
+        .user_message("事件无接收方")
+        .module_path("event")
+        .operation("publish")
+        .build()
+}
+
+/// Construct an event bus shutdown error (INT/WARNING/SESSION)
+#[must_use]
+pub fn event_bus_shutdown() -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::EVENT_BUS_SHUTDOWN)
+        .source(ErrorSource::INT)
+        .severity(Severity::WARNING)
+        .impact_scope(ImpactScope::SESSION)
+        .recoverability(Recoverability::NonRecoverable)
+        .message("事件总线已关闭")
+        .user_message("事件服务已停止")
+        .module_path("event")
+        .operation("publish")
+        .build()
+}
+
+/// Construct an event publish timeout error (INT/WARNING/OPERATION)
+#[must_use]
+pub fn event_publish_timeout(elapsed_ms: u64) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::EVENT_PUBLISH_TIMEOUT)
+        .source(ErrorSource::INT)
+        .severity(Severity::WARNING)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::AutoRecoverable)
+        .message(&format!("事件发布超时 (elapsed={elapsed_ms}ms)"))
+        .user_message("事件发布超时")
+        .module_path("event")
+        .operation("publish")
+        .build()
+}
+
+// ── 可观测性 helper ─────────────────────────────────────────
+
+/// Construct an observability forbidden error (SEC/ERROR/OPERATION)
+#[must_use]
+pub fn observability_forbidden(message: &str, code: &str) -> ErrorObject {
+    ErrorObject::builder()
+        .code(registry::OBSERVABILITY_FORBIDDEN)
+        .source(ErrorSource::SEC)
+        .severity(Severity::ERROR)
+        .impact_scope(ImpactScope::OPERATION)
+        .recoverability(Recoverability::NonRecoverable)
+        .message(message)
+        .user_message("访问被拒绝")
+        .module_path("observability")
+        .operation(code)
         .build()
 }
 

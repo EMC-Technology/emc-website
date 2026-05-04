@@ -51,20 +51,25 @@ struct CacheKey {
 
 impl CacheKey {
     fn from_request(req: &AuthorizationRequest) -> Self {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let mut hasher = blake3::Hasher::new();
         let ctx = &req.context;
-        ctx.request_time.hash(&mut hasher);
+        hasher.update(ctx.request_time.timestamp_millis().to_le_bytes().as_slice());
         if let Some(ip) = &ctx.source_ip {
-            ip.hash(&mut hasher);
+            hasher.update(ip.as_bytes());
         }
         if let Some(fp) = &ctx.device_fingerprint {
-            fp.hash(&mut hasher);
+            hasher.update(fp.as_bytes());
         }
         for (k, v) in &ctx.extra {
-            k.hash(&mut hasher);
-            v.hash(&mut hasher);
+            hasher.update(k.as_bytes());
+            v.update_hasher(&mut hasher);
         }
+        let hash = hasher.finalize();
+        let context_hash = u64::from_le_bytes(
+            hash.as_bytes()[..8]
+                .try_into()
+                .expect("blake3 输出至少 8 字节"),
+        );
         Self {
             principal: req.principal.id.clone(),
             principal_entity_type: req.principal.entity_type.clone(),
@@ -73,7 +78,7 @@ impl CacheKey {
             resource_type: req.resource.resource_type.clone(),
             owner_id: req.resource.owner_id.clone(),
             scope_id: req.resource.scope_id.clone(),
-            context_hash: hasher.finish(),
+            context_hash,
         }
     }
 }
@@ -856,7 +861,7 @@ impl AuthorizationEngine {
                     "id" => Ok(LiteralValue::String(req.principal.id.clone())),
                     "entity_type" => Ok(LiteralValue::String(req.principal.entity_type.clone())),
                     "roles" => Ok(LiteralValue::String(req.principal.roles.clone().join(","))),
-                    _ => Err(helpers::internal_error(&format!("主体属性不存在: {attr}"))),
+                    _ => Err(helpers::not_found("PrincipalAttr", &format!("主体属性不存在: {attr}"))),
                 }
             }
             ContextValue::ResourceAttr(attr) => {
@@ -871,29 +876,29 @@ impl AuthorizationEngine {
                         .owner_id
                         .as_ref()
                         .map(|v| LiteralValue::String(v.clone()))
-                        .ok_or_else(|| helpers::internal_error(&format!("资源属性不存在: {attr}"))),
+                        .ok_or_else(|| helpers::not_found("ResourceAttr", &format!("资源属性不存在: {attr}"))),
                     "scope_id" => req
                         .resource
                         .scope_id
                         .as_ref()
                         .map(|v| LiteralValue::String(v.clone()))
-                        .ok_or_else(|| helpers::internal_error(&format!("资源属性不存在: {attr}"))),
-                    _ => Err(helpers::internal_error(&format!("资源属性不存在: {attr}"))),
+                        .ok_or_else(|| helpers::not_found("ResourceAttr", &format!("资源属性不存在: {attr}"))),
+                    _ => Err(helpers::not_found("ResourceAttr", &format!("资源属性不存在: {attr}"))),
                 }
             }
             ContextValue::ActionAttr(attr) => match attr.as_str() {
                 "id" => Ok(LiteralValue::String(req.action.id.clone())),
                 "resource_type" => Ok(LiteralValue::String(req.action.resource_type.clone())),
-                other => Err(helpers::internal_error(&format!(
+                other => Err(helpers::validation_error(&format!(
                     "不支持的动作属性: {other}"
-                ))),
+                ), "resolve_context_value")),
             },
             ContextValue::ContextAttr(attr) => req
                 .context
                 .extra
                 .get(attr)
                 .cloned()
-                .ok_or_else(|| helpers::internal_error(&format!("上下文属性不存在: {attr}"))),
+                .ok_or_else(|| helpers::not_found("ContextAttr", &format!("上下文属性不存在: {attr}"))),
         }
     }
 
@@ -977,8 +982,7 @@ impl AuthorizationEngine {
                 LiteralValue::String(s),
                 LiteralValue::String(pattern),
             ) => regex::Regex::new(pattern)
-                .map(|re| re.is_match(s))
-                .unwrap_or(false),
+                .is_ok_and(|re| re.is_match(s)),
             _ => false,
         }
     }

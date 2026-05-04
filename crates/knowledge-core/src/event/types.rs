@@ -9,6 +9,74 @@ use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+use crate::model::{SourceType, RefType};
+
+/// 健康状态枚举
+///
+/// 用于 `SystemHealthEvent` 的 `status` 字段，
+/// 替代原先的 `String` 类型以获得编译期类型安全。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HealthStatus {
+    /// 健康
+    Healthy,
+    /// 降级运行
+    Degraded,
+    /// 不健康
+    Unhealthy,
+    /// 未知状态
+    Unknown,
+}
+
+/// 知识节点类型枚举
+///
+/// 用于 `NodeCreatedEvent` 和 `NodeDeletedEvent` 的 `node_type` 字段，
+/// 替代原先的 `String` 类型。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NodeType {
+    /// 文档根节点
+    Document,
+    /// 块容器节点
+    Block,
+    /// 词元叶子节点
+    Token,
+    /// 语义实体
+    SemanticEntity,
+}
+
+/// 嵌入实体类型枚举
+///
+/// 用于 `EmbeddingGeneratedEvent` 和 `EmbeddingCachedEvent` 的 `entity_type` 字段，
+/// 替代原先的 `String` 类型。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EmbeddingEntityType {
+    /// 文档
+    Document,
+    /// 块
+    Block,
+    /// 词元
+    Token,
+    /// 语义实体
+    SemanticEntity,
+}
+
+/// 图查询类型枚举
+///
+/// 用于 `QueryExecutedEvent` 的 `query_type` 字段，
+/// 替代原先的 `String` 类型。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum QueryType {
+    /// 图遍历查询
+    Traversal,
+    /// 最短路径查询
+    ShortestPath,
+    /// 邻居查询
+    Neighbors,
+    /// 模式匹配查询
+    PatternMatch,
+    /// 聚合查询
+    Aggregation,
+}
+
 /// 所有系统事件的统一 trait
 ///
 /// 实现此 trait 的类型可作为事件总线的消息载体。
@@ -244,7 +312,7 @@ pub struct DocumentIngestedEvent {
     pub document_id: String,
     pub file_path: String,
     pub file_size: u64,
-    pub source_type: String,
+    pub source_type: SourceType,
     pub hash: String,
     #[serde(with = "chrono::serde::ts_milliseconds")]
     pub timestamp: DateTime<Utc>,
@@ -257,7 +325,7 @@ impl DocumentIngestedEvent {
         document_id: impl Into<String>,
         file_path: impl Into<String>,
         file_size: u64,
-        source_type: impl Into<String>,
+        source_type: SourceType,
         hash: impl Into<String>,
         source: impl Into<String>,
     ) -> Self {
@@ -266,7 +334,7 @@ impl DocumentIngestedEvent {
             document_id: document_id.into(),
             file_path: file_path.into(),
             file_size,
-            source_type: source_type.into(),
+            source_type,
             hash: hash.into(),
             timestamp: Utc::now(),
             version: 1,
@@ -393,7 +461,7 @@ impl DocumentDeletedEvent {
 pub struct NodeCreatedEvent {
     pub id: Uuid,
     pub node_id: String,
-    pub node_type: String,
+    pub node_type: NodeType,
     pub document_id: Option<String>,
     #[serde(with = "chrono::serde::ts_milliseconds")]
     pub timestamp: DateTime<Utc>,
@@ -404,14 +472,14 @@ pub struct NodeCreatedEvent {
 impl NodeCreatedEvent {
     pub fn new(
         node_id: impl Into<String>,
-        node_type: impl Into<String>,
+        node_type: NodeType,
         document_id: Option<impl Into<String>>,
         source: impl Into<String>,
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
             node_id: node_id.into(),
-            node_type: node_type.into(),
+            node_type,
             document_id: document_id.map(|s| s.into()),
             timestamp: Utc::now(),
             version: 1,
@@ -421,11 +489,15 @@ impl NodeCreatedEvent {
 }
 
 /// 知识节点更新事件
+///
+/// 使用 `ChangeSet` 记录字段级变更（old_value → new_value），
+/// 与 `DocumentUpdatedData` 保持一致的审计追踪能力。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeUpdatedEvent {
     pub id: Uuid,
     pub node_id: String,
-    pub updated_fields: Vec<String>,
+    /// 字段级变更集（仅包含实际变更的字段）
+    pub changes: crate::cqrs::event_store::ChangeSet,
     #[serde(with = "chrono::serde::ts_milliseconds")]
     pub timestamp: DateTime<Utc>,
     pub version: u32,
@@ -435,13 +507,13 @@ pub struct NodeUpdatedEvent {
 impl NodeUpdatedEvent {
     pub fn new(
         node_id: impl Into<String>,
-        updated_fields: Vec<String>,
+        changes: crate::cqrs::event_store::ChangeSet,
         source: impl Into<String>,
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
             node_id: node_id.into(),
-            updated_fields,
+            changes,
             timestamp: Utc::now(),
             version: 1,
             source: source.into(),
@@ -454,7 +526,7 @@ impl NodeUpdatedEvent {
 pub struct NodeDeletedEvent {
     pub id: Uuid,
     pub node_id: String,
-    pub node_type: String,
+    pub node_type: NodeType,
     #[serde(with = "chrono::serde::ts_milliseconds")]
     pub timestamp: DateTime<Utc>,
     pub version: u32,
@@ -464,13 +536,13 @@ pub struct NodeDeletedEvent {
 impl NodeDeletedEvent {
     pub fn new(
         node_id: impl Into<String>,
-        node_type: impl Into<String>,
+        node_type: NodeType,
         source: impl Into<String>,
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
             node_id: node_id.into(),
-            node_type: node_type.into(),
+            node_type,
             timestamp: Utc::now(),
             version: 1,
             source: source.into(),
@@ -484,7 +556,8 @@ pub struct NodeLinkedEvent {
     pub id: Uuid,
     pub from_node_id: String,
     pub to_node_id: String,
-    pub relation_type: String,
+    /// 关系类型（类型安全枚举，替代原先的 `String`）
+    pub relation_type: RefType,
     #[serde(with = "chrono::serde::ts_milliseconds")]
     pub timestamp: DateTime<Utc>,
     pub version: u32,
@@ -495,14 +568,14 @@ impl NodeLinkedEvent {
     pub fn new(
         from_node_id: impl Into<String>,
         to_node_id: impl Into<String>,
-        relation_type: impl Into<String>,
+        relation_type: RefType,
         source: impl Into<String>,
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
             from_node_id: from_node_id.into(),
             to_node_id: to_node_id.into(),
-            relation_type: relation_type.into(),
+            relation_type,
             timestamp: Utc::now(),
             version: 1,
             source: source.into(),
@@ -519,7 +592,7 @@ impl NodeLinkedEvent {
 pub struct EdgeCreatedEvent {
     pub id: Uuid,
     pub edge_id: String,
-    pub ref_type: String,
+    pub ref_type: RefType,
     pub from_id: String,
     pub to_id: String,
     #[serde(with = "chrono::serde::ts_milliseconds")]
@@ -531,7 +604,7 @@ pub struct EdgeCreatedEvent {
 impl EdgeCreatedEvent {
     pub fn new(
         edge_id: impl Into<String>,
-        ref_type: impl Into<String>,
+        ref_type: RefType,
         from_id: impl Into<String>,
         to_id: impl Into<String>,
         source: impl Into<String>,
@@ -539,7 +612,7 @@ impl EdgeCreatedEvent {
         Self {
             id: Uuid::new_v4(),
             edge_id: edge_id.into(),
-            ref_type: ref_type.into(),
+            ref_type,
             from_id: from_id.into(),
             to_id: to_id.into(),
             timestamp: Utc::now(),
@@ -554,7 +627,7 @@ impl EdgeCreatedEvent {
 pub struct EdgeDeletedEvent {
     pub id: Uuid,
     pub edge_id: String,
-    pub ref_type: String,
+    pub ref_type: RefType,
     #[serde(with = "chrono::serde::ts_milliseconds")]
     pub timestamp: DateTime<Utc>,
     pub version: u32,
@@ -564,13 +637,13 @@ pub struct EdgeDeletedEvent {
 impl EdgeDeletedEvent {
     pub fn new(
         edge_id: impl Into<String>,
-        ref_type: impl Into<String>,
+        ref_type: RefType,
         source: impl Into<String>,
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
             edge_id: edge_id.into(),
-            ref_type: ref_type.into(),
+            ref_type,
             timestamp: Utc::now(),
             version: 1,
             source: source.into(),
@@ -618,7 +691,7 @@ impl SearchPerformedEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryExecutedEvent {
     pub id: Uuid,
-    pub query_type: String,
+    pub query_type: QueryType,
     pub query_body: String,
     pub result_count: usize,
     pub duration_ms: u64,
@@ -630,7 +703,7 @@ pub struct QueryExecutedEvent {
 
 impl QueryExecutedEvent {
     pub fn new(
-        query_type: impl Into<String>,
+        query_type: QueryType,
         query_body: impl Into<String>,
         result_count: usize,
         duration_ms: u64,
@@ -638,7 +711,7 @@ impl QueryExecutedEvent {
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
-            query_type: query_type.into(),
+            query_type,
             query_body: query_body.into(),
             result_count,
             duration_ms,
@@ -658,7 +731,7 @@ impl QueryExecutedEvent {
 pub struct EmbeddingGeneratedEvent {
     pub id: Uuid,
     pub entity_id: String,
-    pub entity_type: String,
+    pub entity_type: EmbeddingEntityType,
     pub embedding_dim: usize,
     pub model_name: String,
     pub generation_duration_ms: u64,
@@ -671,7 +744,7 @@ pub struct EmbeddingGeneratedEvent {
 impl EmbeddingGeneratedEvent {
     pub fn new(
         entity_id: impl Into<String>,
-        entity_type: impl Into<String>,
+        entity_type: EmbeddingEntityType,
         embedding_dim: usize,
         model_name: impl Into<String>,
         generation_duration_ms: u64,
@@ -680,7 +753,7 @@ impl EmbeddingGeneratedEvent {
         Self {
             id: Uuid::new_v4(),
             entity_id: entity_id.into(),
-            entity_type: entity_type.into(),
+            entity_type,
             embedding_dim,
             model_name: model_name.into(),
             generation_duration_ms,
@@ -696,7 +769,7 @@ impl EmbeddingGeneratedEvent {
 pub struct EmbeddingCachedEvent {
     pub id: Uuid,
     pub entity_id: String,
-    pub entity_type: String,
+    pub entity_type: EmbeddingEntityType,
     pub cache_key: String,
     #[serde(with = "chrono::serde::ts_milliseconds")]
     pub timestamp: DateTime<Utc>,
@@ -707,14 +780,14 @@ pub struct EmbeddingCachedEvent {
 impl EmbeddingCachedEvent {
     pub fn new(
         entity_id: impl Into<String>,
-        entity_type: impl Into<String>,
+        entity_type: EmbeddingEntityType,
         cache_key: impl Into<String>,
         source: impl Into<String>,
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
             entity_id: entity_id.into(),
-            entity_type: entity_type.into(),
+            entity_type,
             cache_key: cache_key.into(),
             timestamp: Utc::now(),
             version: 1,
@@ -771,7 +844,7 @@ impl UserActionEvent {
 pub struct SystemHealthEvent {
     pub id: Uuid,
     pub component: String,
-    pub status: String,
+    pub status: HealthStatus,
     pub details: Option<String>,
     #[serde(with = "chrono::serde::ts_milliseconds")]
     pub timestamp: DateTime<Utc>,
@@ -782,14 +855,14 @@ pub struct SystemHealthEvent {
 impl SystemHealthEvent {
     pub fn new(
         component: impl Into<String>,
-        status: impl Into<String>,
+        status: HealthStatus,
         details: Option<impl Into<String>>,
         source: impl Into<String>,
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
             component: component.into(),
-            status: status.into(),
+            status,
             details: details.map(|s| s.into()),
             timestamp: Utc::now(),
             version: 1,
@@ -812,7 +885,7 @@ mod tests {
             "doc-001",
             "/test.md",
             1024,
-            "Markdown",
+            SourceType::Markdown,
             &"a".repeat(64),
             "file-ingester",
         );
@@ -833,7 +906,7 @@ mod tests {
             "doc-002",
             "/api.rs",
             2048,
-            "Code",
+            SourceType::Code,
             &"b".repeat(64),
             "parser",
         ));
@@ -848,9 +921,9 @@ mod tests {
     fn test_knowledge_event_tagged_serialization() {
         let events = vec![
             KnowledgeEvent::DocumentParsed(DocumentParsedEvent::new("doc-003", 10, 200, 50, "parser")),
-            KnowledgeEvent::NodeCreated(NodeCreatedEvent::new("node-001", "Block", Some("doc-003"), "graph-builder")),
+            KnowledgeEvent::NodeCreated(NodeCreatedEvent::new("node-001", NodeType::Block, Some("doc-003"), "graph-builder")),
             KnowledgeEvent::EmbeddingGenerated(EmbeddingGeneratedEvent::new(
-                "block-001", "Block", 1536, "text-embedding-ada-002", 120, "embedding-service",
+                "block-001", EmbeddingEntityType::Block, 1536, "text-embedding-ada-002", 120, "embedding-service",
             )),
         ];
 
@@ -866,22 +939,22 @@ mod tests {
     #[test]
     fn test_all_event_types_have_valid_metadata() {
         let event_variants: Vec<KnowledgeEvent> = vec![
-            KnowledgeEvent::DocumentIngested(DocumentIngestedEvent::new("d", "/", 0, "", "", "s")),
+            KnowledgeEvent::DocumentIngested(DocumentIngestedEvent::new("d", "/", 0, SourceType::Plain, "", "s")),
             KnowledgeEvent::DocumentParsed(DocumentParsedEvent::new("d", 0, 0, 0, "s")),
             KnowledgeEvent::DocumentIndexed(DocumentIndexedEvent::new("d", 0, 0, "s")),
             KnowledgeEvent::DocumentDeleted(DocumentDeletedEvent::new("d", 0, 0, 0, "s")),
-            KnowledgeEvent::NodeCreated(NodeCreatedEvent::new("n", "T", None::<String>, "s")),
-            KnowledgeEvent::NodeUpdated(NodeUpdatedEvent::new("n", vec![], "s")),
-            KnowledgeEvent::NodeDeleted(NodeDeletedEvent::new("n", "T", "s")),
-            KnowledgeEvent::NodeLinked(NodeLinkedEvent::new("a", "b", "r", "s")),
-            KnowledgeEvent::EdgeCreated(EdgeCreatedEvent::new("e", "r", "a", "b", "s")),
-            KnowledgeEvent::EdgeDeleted(EdgeDeletedEvent::new("e", "r", "s")),
+            KnowledgeEvent::NodeCreated(NodeCreatedEvent::new("n", NodeType::Token, None::<String>, "s")),
+            KnowledgeEvent::NodeUpdated(NodeUpdatedEvent::new("n", crate::cqrs::event_store::ChangeSet::new(), "s")),
+            KnowledgeEvent::NodeDeleted(NodeDeletedEvent::new("n", NodeType::Token, "s")),
+            KnowledgeEvent::NodeLinked(NodeLinkedEvent::new("a", "b", RefType::Usage, "s")),
+            KnowledgeEvent::EdgeCreated(EdgeCreatedEvent::new("e", RefType::Usage, "a", "b", "s")),
+            KnowledgeEvent::EdgeDeleted(EdgeDeletedEvent::new("e", RefType::Usage, "s")),
             KnowledgeEvent::SearchPerformed(SearchPerformedEvent::new("q", 0, 0, "s")),
-            KnowledgeEvent::QueryExecuted(QueryExecutedEvent::new("t", "b", 0, 0, "s")),
-            KnowledgeEvent::EmbeddingGenerated(EmbeddingGeneratedEvent::new("e", "t", 0, "m", 0, "s")),
-            KnowledgeEvent::EmbeddingCached(EmbeddingCachedEvent::new("e", "t", "k", "s")),
+            KnowledgeEvent::QueryExecuted(QueryExecutedEvent::new(QueryType::Traversal, "b", 0, 0, "s")),
+            KnowledgeEvent::EmbeddingGenerated(EmbeddingGeneratedEvent::new("e", EmbeddingEntityType::Document, 0, "m", 0, "s")),
+            KnowledgeEvent::EmbeddingCached(EmbeddingCachedEvent::new("e", EmbeddingEntityType::Document, "k", "s")),
             KnowledgeEvent::UserAction(UserActionEvent::new("u", "a", None::<String>, None::<String>, "s")),
-            KnowledgeEvent::SystemHealthCheck(SystemHealthEvent::new("c", "ok", None::<String>, "s")),
+            KnowledgeEvent::SystemHealthCheck(SystemHealthEvent::new("c", HealthStatus::Healthy, None::<String>, "s")),
         ];
 
         for event in event_variants {
@@ -894,7 +967,7 @@ mod tests {
 
     #[test]
     fn test_timestamp_chrono_milliseconds_roundtrip() {
-        let event = NodeCreatedEvent::new("node-ts", "Token", None::<String>, "test");
+        let event = NodeCreatedEvent::new("node-ts", NodeType::Token, None::<String>, "test");
         let original_ts = event.timestamp;
 
         let json = serde_json::to_string(&event).expect("序列化失败");

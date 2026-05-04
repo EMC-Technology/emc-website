@@ -2,9 +2,6 @@ use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
 use knowledge_core::model::{Community, Document, RecordIdType};
-use rand::SeedableRng;
-use rand::rngs::StdRng;
-use rand::seq::SliceRandom;
 
 use crate::pipeline::ParseStage;
 
@@ -15,29 +12,30 @@ use crate::pipeline::ParseStage;
 /// 确保相同输入在不同平台/编译优化级别下产生相同结果。
 const DETERMINISTIC_EPSILON: f64 = 1e-10;
 
-/// Symbol graph for community detection
+/// 符号图，用于社区检测
 ///
-/// Represents a weighted undirected graph where nodes are symbol IDs
-/// and edges represent weighted relationships between symbols.
+/// 表示一个加权无向图，节点为符号 ID，边为符号间的加权关系。
+/// 节点按字典序排列以保证确定性。
 pub struct SymbolGraph {
     nodes: Vec<String>,
+    node_set: std::collections::HashSet<String>,
     edges: Vec<(String, String, f64)>,
 }
 
 impl SymbolGraph {
-    /// Creates an empty symbol graph
+    /// 创建空符号图
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             nodes: Vec::new(),
+            node_set: std::collections::HashSet::new(),
             edges: Vec::new(),
         }
     }
 
-    /// Creates a symbol graph from a list of weighted edges
+    /// 从边列表创建符号图
     ///
-    /// Nodes are automatically extracted from edge endpoints and sorted
-    /// for deterministic ordering.
+    /// 节点自动从边端点提取并按字典序排列，保证确定性。
     #[must_use]
     pub fn with_edges(edges: Vec<(String, String, f64)>) -> Self {
         let mut node_set = HashSet::new();
@@ -47,20 +45,24 @@ impl SymbolGraph {
         }
         let mut nodes: Vec<String> = node_set.into_iter().collect();
         nodes.sort();
-        Self { nodes, edges }
+        Self {
+            node_set: nodes.iter().cloned().collect(),
+            nodes,
+            edges,
+        }
     }
 
-    /// Adds a node to the graph if it does not already exist
+    /// 添加节点（若不存在）
     pub fn add_node(&mut self, node_id: impl Into<String>) {
         let id = node_id.into();
-        if !self.nodes.contains(&id) {
+        if self.node_set.insert(id.clone()) {
             self.nodes.push(id);
         }
     }
 
-    /// Adds a weighted undirected edge between two nodes
+    /// 添加加权无向边
     ///
-    /// Both endpoints are automatically added as nodes if they do not exist.
+    /// 两端点若不存在则自动添加。
     pub fn add_edge(&mut self, from: impl Into<String>, to: impl Into<String>, weight: f64) {
         let from_id = from.into();
         let to_id = to.into();
@@ -77,44 +79,67 @@ impl Default for SymbolGraph {
 }
 
 impl SymbolGraph {
-    /// Returns a slice of all node IDs in the graph
+    /// 返回所有节点 ID 的切片
     #[must_use]
     pub fn nodes(&self) -> &[String] {
         &self.nodes
     }
 
-    /// Returns a slice of all edges in the graph
+    /// 返回所有边的切片
     #[must_use]
     pub fn edges(&self) -> &[(String, String, f64)] {
         &self.edges
     }
 }
 
-/// Leiden community detection algorithm
+/// Leiden 社区检测算法
 ///
-/// Implements the Leiden algorithm for detecting communities in symbol graphs.
-/// Uses a seeded RNG (seed 42) for deterministic results.
+/// 实现确定性 Leiden 算法，检测符号图中的社区结构。
+/// 完全不依赖随机数生成器，符合本项目"0 随机性"设计哲学。
 ///
-/// The algorithm consists of three phases:
-/// 1. **Local Moving**: Move nodes to neighboring communities that maximize modularity gain
-/// 2. **Refinement**: Check if splitting communities improves modularity
-/// 3. **Aggregation**: Aggregate communities into super-nodes and repeat
+/// 算法三阶段：
+/// 1. **局部移动**：将节点移至使模块度增益最大的邻居社区
+/// 2. **细化**：检查分裂社区是否改善模块度
+/// 3. **聚合**：将社区聚合为超节点并递归执行
 ///
-/// Modularity formula: `Q = (1/2m) * Σ[A_ij - γ·k_i·k_j/(2m)] · δ(c_i, c_j)`
+/// 模块度公式：`Q = (1/2m) * Σ[A_ij - γ·k_i·k_j/(2m)] · δ(c_i, c_j)`
+///
+/// # 确定性保证
+///
+/// 传统 Leiden 实现使用随机 shuffle 打破节点遍历顺序的偏差。
+/// 本实现使用**确定性旋转**（deterministic rotation）替代：
+/// 每次迭代将节点处理顺序旋转 `iteration` 个位置。
+/// 这既避免了固定顺序的偏差，又保证了字节级确定性。
 pub struct CommunityDetector;
 
+/// 对切片执行确定性旋转
+///
+/// 将切片元素向左旋转 `shift` 个位置。
+/// 例如：`[0, 1, 2, 3, 4]` 旋转 2 位得到 `[2, 3, 4, 0, 1]`。
+/// 此操作是确定性的：相同输入永远产生相同输出。
+fn deterministic_rotate<T>(slice: &mut [T], shift: usize) {
+    if slice.is_empty() {
+        return;
+    }
+    let len = slice.len();
+    let shift = shift % len;
+    if shift == 0 {
+        return;
+    }
+    slice.rotate_left(shift);
+}
+
 impl CommunityDetector {
-    /// Detects communities in the given symbol graph using the Leiden algorithm
+    /// 使用 Leiden 算法检测社区
     ///
-    /// Returns a list of communities sorted by community ID, each with a name,
-    /// cohesion score, and member IDs. Results are deterministic for the same input graph.
+    /// 返回按社区 ID 排序的社区列表，每个社区包含名称、凝聚分数和成员 ID。
+    /// 结果对相同输入图具有确定性。
     #[must_use]
     pub fn detect(graph: &SymbolGraph) -> Vec<Community> {
         if graph.nodes.is_empty() {
             return Vec::new();
         }
 
-        let mut rng = StdRng::seed_from_u64(42);
         let n = graph.nodes.len();
 
         let idx_map: HashMap<String, usize> = graph
@@ -152,7 +177,7 @@ impl CommunityDetector {
         }
 
         let resolution = 1.0_f64;
-        let final_community = Self::leiden(&adj, &degree, total_weight, resolution, &mut rng);
+        let final_community = Self::leiden(&adj, &degree, total_weight, resolution);
 
         let mut community_map: HashMap<usize, Vec<usize>> = HashMap::new();
         for (node_idx, &comm) in final_community.iter().enumerate() {
@@ -186,7 +211,6 @@ impl CommunityDetector {
         degree: &[f64],
         total_weight: f64,
         resolution: f64,
-        rng: &mut StdRng,
     ) -> Vec<usize> {
         let n = adj.len();
         if n <= 1 {
@@ -202,7 +226,6 @@ impl CommunityDetector {
             degree,
             total_weight,
             resolution,
-            rng,
             &mut community,
             &mut community_nodes,
             &mut community_total_degree,
@@ -213,7 +236,6 @@ impl CommunityDetector {
             degree,
             total_weight,
             resolution,
-            rng,
             &community,
             &community_nodes,
         );
@@ -271,7 +293,6 @@ impl CommunityDetector {
             &super_degree,
             super_total_weight,
             resolution,
-            rng,
         );
 
         let mut result = vec![0; n];
@@ -288,7 +309,6 @@ impl CommunityDetector {
         degree: &[f64],
         total_weight: f64,
         resolution: f64,
-        rng: &mut StdRng,
         community: &mut [usize],
         community_nodes: &mut [Vec<usize>],
         community_total_degree: &mut [f64],
@@ -301,7 +321,7 @@ impl CommunityDetector {
             improved = false;
             iterations += 1;
             let mut order: Vec<usize> = (0..n).collect();
-            order.shuffle(rng);
+            deterministic_rotate(&mut order, iterations as usize);
             for &node in &order {
                 let current_comm = community[node];
                 let k_i = degree[node];
@@ -368,7 +388,6 @@ impl CommunityDetector {
         degree: &[f64],
         total_weight: f64,
         resolution: f64,
-        rng: &mut StdRng,
         community: &[usize],
         community_nodes: &[Vec<usize>],
     ) -> Vec<usize> {
@@ -392,7 +411,7 @@ impl CommunityDetector {
             }
 
             let mut order = members.clone();
-            order.shuffle(rng);
+            order.sort_unstable();
 
             for &node in &order {
                 let current_ref = refined[node];
@@ -489,11 +508,10 @@ impl CommunityDetector {
     }
 }
 
-/// Pipeline stage for community detection
+/// 社区检测流水线阶段
 ///
-/// This stage passes documents through unchanged. Actual community detection
-/// is performed by `CommunityDetector::detect` on the symbol graph
-/// after parsing is complete.
+/// 此阶段将文档直接传递，不进行修改。
+/// 实际的社区检测在解析完成后由 `CommunityDetector::detect` 对符号图执行。
 pub struct ProcessCommunitiesStage;
 
 #[cfg(feature = "db")]
@@ -611,5 +629,23 @@ mod tests {
             d_members.contains(&to_record_id("f")),
             "d and f should be in the same community"
         );
+    }
+
+    #[test]
+    fn test_deterministic_rotate() {
+        let mut v = vec![0, 1, 2, 3, 4];
+        deterministic_rotate(&mut v, 2);
+        assert_eq!(v, vec![2, 3, 4, 0, 1]);
+
+        deterministic_rotate(&mut v, 0);
+        assert_eq!(v, vec![2, 3, 4, 0, 1]);
+
+        let mut v2 = vec![0, 1, 2];
+        deterministic_rotate(&mut v2, 3);
+        assert_eq!(v2, vec![0, 1, 2]);
+
+        let mut empty: Vec<i32> = vec![];
+        deterministic_rotate(&mut empty, 5);
+        assert!(empty.is_empty());
     }
 }

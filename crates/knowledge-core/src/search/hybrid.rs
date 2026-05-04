@@ -1,15 +1,21 @@
 /// 混合搜索融合模块
 ///
 /// 基于 Reciprocal Rank Fusion (RRF) 的混合搜索算法。
-use std::collections::HashMap;
-use std::sync::Arc;
-
-use crate::search::bm25::Bm25Index;
-use crate::vector_store::{HybridQuery, SearchResult, VectorStore};
-use error_core::Result;
 use serde::{Deserialize, Serialize};
-use tracing::info;
 use uuid::Uuid;
+
+#[cfg(feature = "db")]
+use std::collections::HashMap;
+#[cfg(feature = "db")]
+use std::sync::Arc;
+#[cfg(feature = "db")]
+use crate::search::bm25::Bm25Index;
+#[cfg(feature = "db")]
+use crate::vector_store::{HybridQuery, SearchResult, VectorStore};
+#[cfg(feature = "db")]
+use error_core::Result;
+#[cfg(feature = "db")]
+use tracing::info;
 
 /// RRF 默认 K 参数
 ///
@@ -83,12 +89,14 @@ impl FusedSearchResult {
 ///
 /// 将关键词搜索（BM25）与语义向量搜索通过加权 RRF 算法融合，
 /// 兼顾精确匹配和语义理解能力。
+#[cfg(feature = "db")]
 pub struct HybridSearchEngine<V: VectorStore> {
     bm25: Arc<Bm25Index>,
     vector_store: Arc<V>,
     rrf_k: f64,
 }
 
+#[cfg(feature = "db")]
 impl<V: VectorStore> HybridSearchEngine<V> {
     /// 创建混合搜索引擎（使用默认 RRF K = 60）
     #[allow(clippy::cast_precision_loss)]
@@ -201,6 +209,7 @@ impl<V: VectorStore> HybridSearchEngine<V> {
 /// 当两个结果的融合分数差值小于浮点精度时，按 UUID 字典序作为确定性 tie-breaker，
 /// 符合项目 FATAL-LOG-01 修复要求。
 #[allow(clippy::cast_precision_loss)]
+    #[cfg(feature = "db")]
 pub fn weighted_rrf(
     bm25_results: &[Bm25Result],
     vector_results: &[SearchResult],
@@ -263,6 +272,7 @@ pub fn weighted_rrf(
 /// # 确定性保证
 ///
 /// 当两个结果的分数差值小于浮点精度时，按 ID 字典序作为确定性 tie-breaker。
+#[cfg(feature = "db")]
 #[allow(clippy::cast_precision_loss)]
 pub fn reciprocal_rank_fusion(
     bm25: &[(String, f64)],

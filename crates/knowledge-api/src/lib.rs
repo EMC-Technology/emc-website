@@ -1,5 +1,5 @@
-#![allow(clippy::result_large_err)]
-#![warn(missing_docs)]
+#![allow(clippy::result_large_err, clippy::manual_async_fn)]
+#![warn(missing_docs)] // TODO: 升级为 #![deny(missing_docs)] — 待所有公开 API 补全文档注释
 //! HTTP / WebSocket 通信层（`Axum`）
 //! 本 crate 提供 `RESTful API` 与实时双向通信能力：
 //! - [`Axum`] 路由与中间件（含 `WebSocket` 支持）
@@ -14,6 +14,8 @@
 
 /// AI Agent 工作流引擎（ReAct 模式）
 pub mod agent;
+/// 插件化集成架构：闭源安全 + 即插即用
+pub mod plugins;
 /// Axum 应用启动与生命周期管理
 pub mod application;
 /// 用户角色与权限控制（基础 JWT 认证）
@@ -117,12 +119,10 @@ pub mod event_subscriber;
 pub use context_generator::ContextGenerator;
 pub use embedding_factory::EmbeddingFactory as EmbeddingModelFactory;
 pub use embedding_model::{
-    EmbeddingConfig, EmbeddingError, EmbeddingModel as EmbeddingModelTrait, EmbeddingModelInfo,
+    EmbeddingModel as EmbeddingModelTrait, EmbeddingModelInfo,
     EmbeddingModelType, EmbeddingResult as ModelEmbeddingResult,
 };
 pub use embedding_service::{EmbeddingModel, EmbeddingResult, EmbeddingService};
-pub use gemma_embedding::GemmaEmbedding;
-pub use hash_embedding::HashEmbedding;
 pub use knowledge_vm::{
     ImpactAnalysisResult, ImpactLayer, KnowledgeVm as KnowledgeVM, KnowledgeVmConfig, RiskLevel,
 };
@@ -131,28 +131,13 @@ pub use query_types::{
     VectorSearchResultItem,
 };
 
-pub use candle_loader::CandleModelLoader;
-pub use gemma4_model::Gemma4TextModel;
-pub use hf_downloader::{DownloadProgress, HuggingFaceDownloader};
 pub use model_factory::{ModelLoaderFactory, ModelRegistry, load_model, load_model_with_config};
-/// 通用模型加载器导出
-///
-/// 提供框架无关的模型加载能力：
-/// - [`ModelLoader`][]: 统一加载接口
-/// - [`CandleModelLoader`][]: `Candle`框架实现
-/// - [`ModelLoaderFactory`][]: 工厂方法
-/// - [`ModelRegistry`][]: 模型注册中心
-/// - [`load_model`][]: 便捷加载函数
-/// - [`load_model_with_config`][]: 配置化加载
 pub use model_loader::{
-    DeviceType, InferenceResult, LoadedModel, ModelBackend, ModelConfig as LoaderConfig, ModelInfo,
-    ModelLoader, ModelLoaderError, PoolingStrategy, Quantization, TokenizerInfo,
+    ModelLoader, ModelLoaderError, LoadedModel, ModelConfig as LoaderConfig,
 };
 
 pub use dto::{
-    ApiResponse, BlockWithTokens, CommunityInfo, CommunitySearchGroup, FullTextSearchQuery,
-    HealthStatus, ListQueryParams, PaginationMeta, ProcessSearchGroup, SymbolContext,
-    SymbolReference, UploadDocumentRequest, VectorSearchQuery,
+    ApiResponse, HealthStatus, ListQueryParams, PaginationMeta, UploadDocumentRequest,
 };
 pub use handler::AppState;
 pub use mcp::run_mcp_server;

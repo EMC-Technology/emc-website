@@ -96,15 +96,6 @@ fn build_tracer_provider(resource: &Resource) -> TracerProvider {
 }
 
 #[must_use]
-/// 获取 Prometheus 指标导出句柄
-///
-/// 返回当前已注册的 Prometheus 导出器句柄，用于手动抓取指标数据。
-/// 当前实现返回 `None`，未来可集成真实的 Prometheus exporter。
-pub const fn get_prometheus_handle() -> Option<metrics_exporter_prometheus::PrometheusHandle> {
-    None
-}
-
-#[must_use]
 /// 判断当前是否为生产环境
 ///
 /// 检查 `ENVIRONMENT` 环境变量是否为 `"production"` 或 `"staging"`。

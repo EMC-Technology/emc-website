@@ -63,7 +63,7 @@ pub struct L2Cache {
     /// Redis 客户端实例
     client: Client,
     /// 默认过期时间（预留：L2 缓存自动过期策略尚未实现，UPCM 流程驱动后实现 TTL 策略）
-    #[allow(dead_code)]
+    #[allow(dead_code)] // 预留：缓存策略接口，待集成到上层模块
     default_ttl: Duration,
     /// 键名前缀，用于命名空间隔离
     key_prefix: String,

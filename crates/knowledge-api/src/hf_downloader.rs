@@ -49,6 +49,27 @@ pub enum ModelDownloadError {
     Cancelled,
 }
 
+impl From<ModelDownloadError> for error_core::ErrorObject {
+    fn from(err: ModelDownloadError) -> Self {
+        use error_core::helpers;
+        match err {
+            ModelDownloadError::NetworkError(e) => helpers::net_api_error(&format!("模型下载网络错误: {e}")),
+            ModelDownloadError::Io(e) => helpers::io_error(&format!("模型下载 I/O 错误: {e}")),
+            ModelDownloadError::JsonParse(e) => helpers::serde_error(&format!("模型元数据解析失败: {e}")),
+            ModelDownloadError::ModelNotFound { repo_id, file_name } => {
+                helpers::not_found("model", &format!("{repo_id}/{file_name}"))
+            }
+            ModelDownloadError::ChecksumMismatch { expected, actual } => {
+                helpers::crypto_error(&format!("模型校验和不匹配: 期望 {expected}, 实际 {actual}"))
+            }
+            ModelDownloadError::CacheDirCreationFailed(msg) => {
+                helpers::io_error(&format!("缓存目录创建失败: {msg}"))
+            }
+            ModelDownloadError::Cancelled => helpers::general_fallback_error("模型下载被取消"),
+        }
+    }
+}
+
 /// 下载进度信息
 #[derive(Debug, Clone)]
 pub struct DownloadProgress {

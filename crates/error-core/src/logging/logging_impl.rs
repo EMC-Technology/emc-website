@@ -66,14 +66,7 @@ impl LogEntry {
         // Add context chain to context
         for (i, _frame) in error.context_chain().iter().enumerate() {
             let frame_key = format!("context_frame_{i}");
-            #[cfg(feature = "serde")]
-            {
-                context.insert(frame_key, serde_json::Value::Null);
-            }
-            #[cfg(not(feature = "serde"))]
-            {
-                context.insert(frame_key, serde_json::Value::Null);
-            }
+            context.insert(frame_key, serde_json::Value::Null);
         }
         
         // Build cause chain
@@ -153,7 +146,7 @@ impl LogEntry {
 /// 与 UPCM 流程监控层集成后，日志写入将作为流程节点统一编排。
 #[doc(hidden)]
 pub struct ErrorLoggingLayer<W: for<'a> MakeWriter<'a> + 'static> {
-    _writer: W,
+    _writer: W, // 预留：未来用于自定义日志输出目标
 }
 
 impl<W: for<'a> MakeWriter<'a> + 'static> ErrorLoggingLayer<W> {

@@ -1,9 +1,12 @@
 //! 嵌入计算工作线程池
 //!
-//! 使用共享 mpsc 通道实现多 Worker 并发消费，
-//! 每个 Worker 从同一通道接收任务并执行嵌入计算。
+//! 使用 work-stealing 模式实现多 Worker 并发消费：
+//! 每个 Worker 持有独立的 mpsc::Receiver，调度器通过轮询
+//! 将任务分发到最空闲的 Worker，避免共享 Receiver 的持锁 await 问题。
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+
 use tokio::sync::mpsc;
 
 use crate::embedding_service::EmbeddingService;
@@ -43,21 +46,23 @@ impl EmbeddingWorker {
                 start_line: 0,
                 end_line: 0,
                 embedding: None,
-                idempotency_key: Some(task.text.clone()),
+                idempotency_key: None,
             };
-            let result = self.service.embed_block(&block).await;
-            let _ = task.callback.send(result.map(|r| r.embedding));
+            let result = self.service.embed_block(&block, &task.text).await;
+            let _ = task.callback.send(result.map(|r| Arc::try_unwrap(r.embedding).unwrap_or_else(|arc| (*arc).clone())));
         }
     }
 }
 
 /// 嵌入计算工作线程池
 ///
-/// 所有 Worker 共享同一个 mpsc 通道接收端，
-/// 通过 `mpsc::Receiver::recv()` 的竞争消费实现负载均衡。
+/// 每个 Worker 持有独立的 `mpsc::Receiver`，调度器通过原子计数器
+/// 轮询分发任务，避免共享 Receiver 的持锁 await 问题。
 pub struct EmbeddingWorkerPool {
-    /// 任务发送通道
-    tx: mpsc::Sender<PoolEmbeddingTask>,
+    /// 各 Worker 的任务发送通道
+    txs: Vec<mpsc::Sender<PoolEmbeddingTask>>,
+    /// 轮询计数器
+    next_worker: AtomicUsize,
 }
 
 impl EmbeddingWorkerPool {
@@ -65,43 +70,23 @@ impl EmbeddingWorkerPool {
     #[must_use]
     #[allow(clippy::needless_pass_by_value)]
     pub fn new(service: Arc<EmbeddingService>, workers: usize) -> Self {
-        let (tx, rx) = mpsc::channel::<PoolEmbeddingTask>(256);
-
-        let rx = Arc::new(tokio::sync::Mutex::new(rx));
+        let mut txs = Vec::with_capacity(workers);
 
         for _ in 0..workers {
+            let (tx, rx) = mpsc::channel::<PoolEmbeddingTask>(64);
+            txs.push(tx);
+
             let service = Arc::clone(&service);
-            let rx = Arc::clone(&rx);
             tokio::spawn(async move {
-                loop {
-                    let task = {
-                        let mut guard = rx.lock().await;
-                        guard.recv().await
-                    };
-                    match task {
-                        Some(task) => {
-                            let block = Block {
-                                id: None,
-                                doc_id: surrealdb::sql::Thing::from((
-                                    "block".to_string(),
-                                    "pool_worker".to_string(),
-                                )),
-                                block_type: knowledge_core::model::BlockType::Paragraph,
-                                start_line: 0,
-                                end_line: 0,
-                                embedding: None,
-                                idempotency_key: Some(task.text.clone()),
-                            };
-                            let result = service.embed_block(&block).await;
-                            let _ = task.callback.send(result.map(|r| r.embedding));
-                        }
-                        None => break,
-                    }
-                }
+                let mut worker = EmbeddingWorker::new(service, rx);
+                worker.run().await;
             });
         }
 
-        Self { tx }
+        Self {
+            txs,
+            next_worker: AtomicUsize::new(0),
+        }
     }
 
     /// # Errors
@@ -113,8 +98,16 @@ impl EmbeddingWorkerPool {
             text,
             callback: callback_tx,
         };
-        self.tx.send(task).await.map_err(|_| helpers::internal_error("工作线程池已关闭"))?;
-        callback_rx.await.map_err(|_| helpers::internal_error("工作线程响应超时"))?
+
+        let worker_count = self.txs.len();
+        let idx = self.next_worker.fetch_add(1, Ordering::Relaxed) % worker_count;
+        self.txs[idx]
+            .send(task)
+            .await
+            .map_err(|_| helpers::io_error("工作线程池已关闭"))?;
+        callback_rx
+            .await
+            .map_err(|_| helpers::io_error("工作线程响应超时"))?
     }
 }
 

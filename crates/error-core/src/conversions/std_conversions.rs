@@ -26,6 +26,9 @@ impl From<std::io::Error> for ErrorObject {
             .operation("io_operation")
             .build();
 
+        // NOTE: cause chain 被扁平化为单个 ErrorObject（用 → 连接），
+        // 而非嵌套的 cause.cause.cause 结构。这是为了简化错误展示，
+        // 但丢失了因果链的层级关系。未来可改为递归嵌套。
         if !source_chain.is_empty() {
             let cause_obj = Self::builder()
                 .code(registry::IO_FAILED)

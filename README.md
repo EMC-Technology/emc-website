@@ -1,44 +1,35 @@
 <div align="center">
 
-![Rust](https://img.shields.io/badge/Rust-1.75+-orange.svg)
-![License](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-blue.svg)
+![Rust](https://img.shields.io/badge/Rust-1.85+-orange.svg)
+![License](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)
 ![CI](https://github.com/EMC-Technology/emc-website/workflows/CI/badge.svg)
 ![deps](https://img.shields.io/badge/Status-WASM%20Ready-green.svg)
 
-# 武汉质能科技有限公司（EMC）核心技术开放套件
+# 文本全结构化知识系统 — 纯 Rust 全结构化知识库引擎
 
 </div>
 
-## 项目简介
+## 项目宪章
 
-本项目由武汉质能科技有限公司（EMC）开发维护，聚焦于微内核、轻量化数据库、3D Web 开发、全结构化知识系统等核心技术领域，开放部分基础组件供非商业场景下的技术研究与应用落地，同时提供商业闭源的高阶产品能力。
+- **使命**：让全球生态感知纯 Rust 知识库解决方案的可行性，公开验证错误驱动开发和流程驱动开发两大技术哲学
+- **愿景**：以 Rust 统一完整基础设施闭环，UPCM 驱动包含操作系统在内的所有相关软件
+- **设计哲学**：0 随机性，0 黑盒推断
 
-## 授权协议说明
+## 授权协议
 
-本项目采用 **CC BY-NC-SA 4.0**（知识共享署名-非商业性使用-相同方式共享 4.0 国际许可协议）授权，核心约束如下：
+本项目采用**分层双许可策略**：
 
-- **非商业性使用**：禁止任何以商业优势、货币补偿为主要目的的使用行为；仅允许学术研究、个人学习、非盈利项目等非商业场景使用。
-- **署名要求**：使用/分享开放内容时，需保留版权声明、授权协议说明，并标注武汉质能科技有限公司（EMC）为原始创作者（可按要求使用化名）。
-- **相同方式共享**：若基于开放内容制作衍生作品（Adapted Material），需采用与 CC BY-NC-SA 4.0 等效的协议授权衍生作品，且不得添加额外限制条款。
-- **技术修改允许**：可针对开放内容做必要的技术修改（包括规避有效技术保护措施），仅为适配使用场景的技术调整不视为衍生作品。
+| 内容类型 | 许可证 | 适用范围 |
+|---------|--------|---------|
+| 软件代码 | **MIT OR Apache-2.0** | `crates/`、`examples/`、`tests/`、`scripts/`、`docker/` |
+| 知识内容 | **CC-BY-SA 4.0** | `spec/`、`docs/` |
+| 模型权重 | Google Gemma License | 按需下载，不随代码分发 |
 
-本项目商业闭源内容（分布式数据库、完整3D浏览器操作系统、AI IDE、大模型推理实现）为专有知识产权，未经武汉质能科技有限公司（EMC）书面授权，禁止任何形式的使用、复制、分发。
+软件代码双许可与 Rust 语言自身及 crates.io 生态一致，是企业采用的黄金标准。
 
-**详细授权说明**：请参阅 [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) 文件，了解各部分内容的具体授权情况。
+**详细授权说明**：请参阅 [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) 文件。
 
-## 核心开放能力
-
-| 组件名称 | 功能说明 | 授权类型 |
-|---------|---------|--------|
-| 微内核SDK | 轻量级内核开发基础组件 | CC BY-NC-SA 4.0 |
-| 数据库单节点版 | 单机版轻量数据库核心能力 | CC BY-NC-SA 4.0 |
-| 3D Web SDK | 3D场景Web端渲染/交互基础套件 | CC BY-NC-SA 4.0 |
-| 知识系统 | 纯 Rust 全结构化知识库引擎 | CC BY-NC-SA 4.0 |
-| AI IDE 设计方法论 | 错误处理、恢复机制设计模式 | CC BY-NC-SA 4.0 |
-
-ℹ️ 查看详细方法论文档：docs/methodology/README.md
-
-## 知识系统核心特性
+## 核心特性
 
 - 🔍 **三路混合检索** — BM25 + Vector + Graph，加权 RRF 融合
 - 🧠 **GEMMA4-E4B 纯 Rust 推理** — 42 层 Transformer，Candle 框架，2560 维语义向量
@@ -49,26 +40,28 @@
 - 📋 **UPCM 流程驱动先行实践** — DAG 编排引擎 + YAML 工作流定义 + 统一状态机
 - 🤖 **MCP Server + ReAct Agent** — 7 Tool + 2 Prompt + Resources，推理-行动循环
 
+## 产品矩阵
+
+本项目是公司纯 Rust 产品矩阵的核心知识引擎层：
+
+| 项目 | 定位 | 许可证 |
+|------|------|--------|
+| **ullm** | LLM API 网关 (14 提供商/61+ 模型) | 开源 (MIT OR Apache-2.0) |
+| **知识库系统**（本项目） | 全结构化知识引擎 | 开源 (MIT OR Apache-2.0 + CC-BY-SA 4.0) |
+| **knowledge-infra** | DevOps 基础设施层 | 闭源 |
+| **error-core** | 统一错误处理核心库 | 开源 (MIT OR Apache-2.0) |
+| **UPCM** | 通用流程控制引擎 | 闭源（规划中） |
+
 ## 商业能力获取
 
-如需使用分布式数据库、完整3D浏览器操作系统、AI IDE、大模型推理实现等商业闭源产品，或希望将开放内容用于商业场景，请联系武汉质能科技有限公司（EMC）获取授权：
+如需使用分布式数据库、完整3D浏览器操作系统、AI IDE、大模型推理实现等商业闭源产品，请联系武汉质能科技有限公司（EMC）获取授权：
 
 - 联系邮箱：EMCTechnology@163.COM
 - 官方网址：https://emc-technology.github.io/emc-website
 
-## 使用规范
-
-非商业使用开放内容时，需在衍生作品/分发载体中清晰标注：
-
-- 版权声明：© 2026 武汉质能科技有限公司（EMC）
-- 授权协议链接：https://creativecommons.org/licenses/by-nc-sa/4.0/
-
-- 禁止对开放内容添加有效技术保护措施（ETM）以限制他人合法使用。
-- 若违反授权协议，使用权限将自动终止；30日内整改违规行为可恢复权限，否则需另行申请授权。
-
 ## 免责声明
 
-开放内容按"现状"提供，武汉质能科技有限公司（EMC）不承担任何明示/默示担保责任，包括但不限于适销性、特定用途适用性、无侵权等；因使用本项目内容产生的直接/间接损失，我方不承担赔偿责任（法律强制要求除外）。
+开放内容按"现状"提供，武汉质能科技有限公司（EMC）不承担任何明示/默示担保责任。
 
 ## 版权归属
 

@@ -8,6 +8,7 @@
 
 use error_core::helpers;
 use serde_json::Value;
+use wasm_bindgen::prelude::*;
 
 use knowledge_core::model::{Block, Document, Token};
 
@@ -17,12 +18,21 @@ const API_BASE: &str = "/api/v1";
 
 #[allow(clippy::needless_pass_by_value)]
 fn extract_typed_data<T: serde::de::DeserializeOwned>(resp: Value) -> Result<T> {
-    if resp.get("success").and_then(Value::as_bool).unwrap_or(false) {
-        let data = resp.get("data").ok_or_else(|| helpers::api_deserialize_error("响应缺少 data 字段"))?;
+    if resp
+        .get("success")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        let data = resp
+            .get("data")
+            .ok_or_else(|| helpers::api_deserialize_error("响应缺少 data 字段"))?;
         serde_json::from_value(data.clone())
             .map_err(|e| helpers::api_deserialize_error(&format!("数据反序列化失败: {e}")))
     } else {
-        let msg = resp.get("message").and_then(Value::as_str).unwrap_or("未知错误");
+        let msg = resp
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("未知错误");
         let code = resp.get("code").and_then(Value::as_str).unwrap_or("E9999");
         Err(helpers::net_api_error(&format!("[{code}] {msg}")))
     }
@@ -30,14 +40,28 @@ fn extract_typed_data<T: serde::de::DeserializeOwned>(resp: Value) -> Result<T> 
 
 #[allow(clippy::needless_pass_by_value)]
 fn extract_typed_data_vec<T: serde::de::DeserializeOwned>(resp: Value) -> Result<Vec<T>> {
-    if resp.get("success").and_then(Value::as_bool).unwrap_or(false) {
-        let data = resp.get("data").ok_or_else(|| helpers::api_deserialize_error("响应缺少 data 字段"))?;
-        let arr = data.as_array().ok_or_else(|| helpers::api_deserialize_error("数据不是数组"))?;
+    if resp
+        .get("success")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        let data = resp
+            .get("data")
+            .ok_or_else(|| helpers::api_deserialize_error("响应缺少 data 字段"))?;
+        let arr = data
+            .as_array()
+            .ok_or_else(|| helpers::api_deserialize_error("数据不是数组"))?;
         arr.iter()
-            .map(|item| serde_json::from_value(item.clone()).map_err(|e| helpers::api_deserialize_error(&format!("数据反序列化失败: {e}"))))
+            .map(|item| {
+                serde_json::from_value(item.clone())
+                    .map_err(|e| helpers::api_deserialize_error(&format!("数据反序列化失败: {e}")))
+            })
             .collect()
     } else {
-        let msg = resp.get("message").and_then(Value::as_str).unwrap_or("未知错误");
+        let msg = resp
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("未知错误");
         let code = resp.get("code").and_then(Value::as_str).unwrap_or("E9999");
         Err(helpers::net_api_error(&format!("[{code}] {msg}")))
     }
@@ -124,8 +148,7 @@ impl ApiClient {
     /// 网络请求失败或响应解析失败时返回错误
     pub async fn get_documents(&self) -> Result<Vec<Value>> {
         let url = format!("{}/documents", self.base_url);
-        self.get_json(&url).await
-            .and_then(Self::extract_data_array)
+        self.get_json(&url).await.and_then(Self::extract_data_array)
     }
 
     /// 获取单个文档详情
@@ -136,8 +159,7 @@ impl ApiClient {
     pub async fn get_document(&self, id: &str) -> Result<Value> {
         let encoded_id = js_sys::encode_uri_component(id);
         let url = format!("{}/documents/{}", self.base_url, encoded_id);
-        self.get_json(&url).await
-            .and_then(Self::extract_data)
+        self.get_json(&url).await.and_then(Self::extract_data)
     }
 
     /// 上传文件到服务端
@@ -146,7 +168,12 @@ impl ApiClient {
     ///
     /// 路径或内容为空时返回错误
     /// 网络请求失败或响应解析失败时返回错误
-    pub async fn upload_file(&self, path: &str, title: Option<&str>, content: &str) -> Result<Value> {
+    pub async fn upload_file(
+        &self,
+        path: &str,
+        title: Option<&str>,
+        content: &str,
+    ) -> Result<Value> {
         if path.trim().is_empty() {
             return Err(helpers::validation_error("文件路径不能为空", "upload"));
         }
@@ -159,7 +186,8 @@ impl ApiClient {
             "title": title,
             "content": content,
         });
-        self.post_json(&url, &body).await
+        self.post_json(&url, &body)
+            .await
             .and_then(Self::extract_data)
     }
 
@@ -182,8 +210,7 @@ impl ApiClient {
     pub async fn get_document_blocks(&self, doc_id: &str) -> Result<Vec<Value>> {
         let encoded_id = js_sys::encode_uri_component(doc_id);
         let url = format!("{}/documents/{}/blocks", self.base_url, encoded_id);
-        self.get_json(&url).await
-            .and_then(Self::extract_data_array)
+        self.get_json(&url).await.and_then(Self::extract_data_array)
     }
 
     /// 获取单个文本块详情
@@ -194,8 +221,7 @@ impl ApiClient {
     pub async fn get_block(&self, id: &str) -> Result<Value> {
         let encoded_id = js_sys::encode_uri_component(id);
         let url = format!("{}/blocks/{}", self.base_url, encoded_id);
-        self.get_json(&url).await
-            .and_then(Self::extract_data)
+        self.get_json(&url).await.and_then(Self::extract_data)
     }
 
     /// 获取文本块的词法单元列表
@@ -206,8 +232,7 @@ impl ApiClient {
     pub async fn get_block_tokens(&self, block_id: &str) -> Result<Vec<Value>> {
         let encoded_id = js_sys::encode_uri_component(block_id);
         let url = format!("{}/blocks/{}/tokens", self.base_url, encoded_id);
-        self.get_json(&url).await
-            .and_then(Self::extract_data_array)
+        self.get_json(&url).await.and_then(Self::extract_data_array)
     }
 
     /// 获取单个词法单元详情
@@ -218,8 +243,7 @@ impl ApiClient {
     pub async fn get_token(&self, id: &str) -> Result<Value> {
         let encoded_id = js_sys::encode_uri_component(id);
         let url = format!("{}/tokens/{}", self.base_url, encoded_id);
-        self.get_json(&url).await
-            .and_then(Self::extract_data)
+        self.get_json(&url).await.and_then(Self::extract_data)
     }
 
     /// 追加查询词的引用关系
@@ -233,11 +257,13 @@ impl ApiClient {
             || format!("{}/tokens/{}/references", self.base_url, encoded_id),
             |rt| {
                 let encoded_rt = js_sys::encode_uri_component(rt);
-                format!("{}/tokens/{}/references?ref_type={}", self.base_url, encoded_id, encoded_rt)
+                format!(
+                    "{}/tokens/{}/references?ref_type={}",
+                    self.base_url, encoded_id, encoded_rt
+                )
             },
         );
-        self.get_json(&url).await
-            .and_then(Self::extract_data)
+        self.get_json(&url).await.and_then(Self::extract_data)
     }
 
     /// 执行全文搜索
@@ -253,10 +279,14 @@ impl ApiClient {
         let encoded_query = js_sys::encode_uri_component(query);
         let url = limit.map_or_else(
             || format!("{}/search/fulltext?q={}", self.base_url, encoded_query),
-            |l| format!("{}/search/fulltext?q={}&limit={}", self.base_url, encoded_query, l),
+            |l| {
+                format!(
+                    "{}/search/fulltext?q={}&limit={}",
+                    self.base_url, encoded_query, l
+                )
+            },
         );
-        self.get_json(&url).await
-            .and_then(Self::extract_data_array)
+        self.get_json(&url).await.and_then(Self::extract_data_array)
     }
 
     /// 健康检查
@@ -276,8 +306,7 @@ impl ApiClient {
     /// 网络请求失败或响应解析失败时返回错误
     pub async fn get_documents_typed(&self) -> Result<Vec<Document>> {
         let url = format!("{}/documents", self.base_url);
-        self.get_json(&url).await
-            .and_then(extract_typed_data_vec)
+        self.get_json(&url).await.and_then(extract_typed_data_vec)
     }
 
     /// 获取单个文档详情（类型化）
@@ -288,8 +317,7 @@ impl ApiClient {
     pub async fn get_document_typed(&self, id: &str) -> Result<Document> {
         let encoded_id = js_sys::encode_uri_component(id);
         let url = format!("{}/documents/{}", self.base_url, encoded_id);
-        self.get_json(&url).await
-            .and_then(extract_typed_data)
+        self.get_json(&url).await.and_then(extract_typed_data)
     }
 
     /// 获取文档的文本块列表（类型化）
@@ -300,8 +328,7 @@ impl ApiClient {
     pub async fn get_document_blocks_typed(&self, doc_id: &str) -> Result<Vec<Block>> {
         let encoded_id = js_sys::encode_uri_component(doc_id);
         let url = format!("{}/documents/{}/blocks", self.base_url, encoded_id);
-        self.get_json(&url).await
-            .and_then(extract_typed_data_vec)
+        self.get_json(&url).await.and_then(extract_typed_data_vec)
     }
 
     /// 获取文本块的词法单元列表（类型化）
@@ -312,8 +339,7 @@ impl ApiClient {
     pub async fn get_block_tokens_typed(&self, block_id: &str) -> Result<Vec<Token>> {
         let encoded_id = js_sys::encode_uri_component(block_id);
         let url = format!("{}/blocks/{}/tokens", self.base_url, encoded_id);
-        self.get_json(&url).await
-            .and_then(extract_typed_data_vec)
+        self.get_json(&url).await.and_then(extract_typed_data_vec)
     }
 
     /// 执行全文搜索（类型化）
@@ -322,25 +348,40 @@ impl ApiClient {
     ///
     /// 搜索关键词为空时返回错误
     /// 网络请求失败或响应解析失败时返回错误
-    pub async fn full_text_search_typed(&self, query: &str, limit: Option<u32>) -> Result<Vec<Block>> {
+    pub async fn full_text_search_typed(
+        &self,
+        query: &str,
+        limit: Option<u32>,
+    ) -> Result<Vec<Block>> {
         if query.trim().is_empty() {
             return Err(helpers::validation_error("搜索关键词不能为空", "search"));
         }
         let encoded_query = js_sys::encode_uri_component(query);
         let url = limit.map_or_else(
             || format!("{}/search/fulltext?q={}", self.base_url, encoded_query),
-            |l| format!("{}/search/fulltext?q={}&limit={}", self.base_url, encoded_query, l),
+            |l| {
+                format!(
+                    "{}/search/fulltext?q={}&limit={}",
+                    self.base_url, encoded_query, l
+                )
+            },
         );
-        self.get_json(&url).await
-            .and_then(extract_typed_data_vec)
+        self.get_json(&url).await.and_then(extract_typed_data_vec)
     }
 
     #[allow(clippy::needless_pass_by_value)]
     fn extract_data(resp: Value) -> Result<Value> {
-        if resp.get("success").and_then(Value::as_bool).unwrap_or(false) {
+        if resp
+            .get("success")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
             Ok(resp.get("data").cloned().unwrap_or(Value::Null))
         } else {
-            let msg = resp.get("message").and_then(Value::as_str).unwrap_or("未知错误");
+            let msg = resp
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("未知错误");
             let code = resp.get("code").and_then(Value::as_str).unwrap_or("E9999");
             Err(helpers::net_api_error(&format!("[{code}] {msg}")))
         }
@@ -351,7 +392,9 @@ impl ApiClient {
         let data = Self::extract_data(resp)?;
         match data {
             Value::Array(arr) => Ok(arr),
-            other => Err(helpers::api_deserialize_error(&format!("数据类型错误，期望数组，实际得到: {other}"))),
+            other => Err(helpers::api_deserialize_error(&format!(
+                "数据类型错误，期望数组，实际得到: {other}"
+            ))),
         }
     }
 
@@ -375,7 +418,12 @@ impl Default for ApiClient {
     }
 }
 
-async fn fetch_json(method: &str, url: &str, body: Option<&Value>, auth_token: Option<&str>) -> Result<Value> {
+async fn fetch_json(
+    method: &str,
+    url: &str,
+    body: Option<&Value>,
+    auth_token: Option<&str>,
+) -> Result<Value> {
     use gloo_net::http::Request;
 
     let builder = match method {
@@ -391,8 +439,9 @@ async fn fetch_json(method: &str, url: &str, body: Option<&Value>, auth_token: O
     };
 
     let request = if let Some(b) = body {
-        let json_str = serde_json::to_string(b)
-            .map_err(|e| helpers::api_request_error(&format!("序列化请求体失败: {e}"), "serialize"))?;
+        let json_str = serde_json::to_string(b).map_err(|e| {
+            helpers::api_request_error(&format!("序列化请求体失败: {e}"), "serialize")
+        })?;
         builder
             .header("Content-Type", "application/json")
             .body(json_str)
@@ -451,7 +500,64 @@ impl RealtimeSync {
     #[must_use]
     pub fn connect(&self) -> Option<RealtimeConnection> {
         let ws = web_sys::WebSocket::new(&self.url).ok()?;
-        Some(RealtimeConnection { ws: Some(ws) })
+        let connection = RealtimeConnection {
+            ws: Some(ws.clone()),
+            message_handler: None,
+            error_handler: None,
+            close_handler: None,
+        };
+
+        // 设置消息监听器
+        let connection_ptr = std::rc::Rc::new(std::cell::RefCell::new(connection));
+        let connection_ptr_clone = connection_ptr.clone();
+
+        let on_message = Closure::wrap(Box::new(move |event: web_sys::MessageEvent| {
+            if let Some(text) = event.data().as_string() {
+                if let Ok(json) = serde_json::from_str(&text) {
+                    let connection = connection_ptr_clone.borrow();
+                    if let Some(handler) = &connection.message_handler {
+                        handler(json);
+                    }
+                }
+            }
+        }) as Box<dyn FnMut(_)>);
+
+        // 设置错误监听器
+        let connection_ptr_clone2 = connection_ptr.clone();
+        let on_error = Closure::wrap(Box::new(move |_event: web_sys::Event| {
+            let connection = connection_ptr_clone2.borrow();
+            if let Some(handler) = &connection.error_handler {
+                handler("WebSocket 错误".to_string());
+            }
+        }) as Box<dyn FnMut(_)>);
+
+        // 设置关闭监听器
+        let connection_ptr_clone3 = connection_ptr.clone();
+        let on_close = Closure::wrap(Box::new(move |_event: web_sys::CloseEvent| {
+            let connection = connection_ptr_clone3.borrow();
+            if let Some(handler) = &connection.close_handler {
+                handler();
+            }
+        }) as Box<dyn FnMut(_)>);
+
+        ws.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
+        ws.set_onerror(Some(on_error.as_ref().unchecked_ref()));
+        ws.set_onclose(Some(on_close.as_ref().unchecked_ref()));
+
+        on_message.forget();
+        on_error.forget();
+        on_close.forget();
+
+        // 创建一个新的连接结构体返回给调用者
+        let conn_ref = connection_ptr.borrow();
+        let ws_clone = conn_ref.ws.clone();
+        drop(conn_ref);
+        Some(RealtimeConnection {
+            ws: ws_clone,
+            message_handler: None,
+            error_handler: None,
+            close_handler: None,
+        })
     }
 }
 
@@ -461,11 +567,17 @@ impl Default for RealtimeSync {
     }
 }
 
+/// WebSocket 消息处理器
+pub type MessageHandler = Box<dyn Fn(Value) + 'static>;
+
 /// WebSocket 连接实例
 ///
 /// 封装原生 WebSocket 连接的订阅、发送和关闭操作。
 pub struct RealtimeConnection {
     ws: Option<web_sys::WebSocket>,
+    message_handler: Option<MessageHandler>,
+    error_handler: Option<Box<dyn Fn(String) + 'static>>,
+    close_handler: Option<Box<dyn Fn() + 'static>>,
 }
 
 impl RealtimeConnection {
@@ -511,10 +623,51 @@ impl RealtimeConnection {
         }
     }
 
+    /// 设置消息处理器
+    pub fn set_message_handler<F>(&mut self, handler: F)
+    where
+        F: Fn(Value) + 'static,
+    {
+        self.message_handler = Some(Box::new(handler));
+    }
+
+    /// 设置错误处理器
+    pub fn set_error_handler<F>(&mut self, handler: F)
+    where
+        F: Fn(String) + 'static,
+    {
+        self.error_handler = Some(Box::new(handler));
+    }
+
+    /// 设置关闭处理器
+    pub fn set_close_handler<F>(&mut self, handler: F)
+    where
+        F: Fn() + 'static,
+    {
+        self.close_handler = Some(Box::new(handler));
+    }
+
     /// 关闭 WebSocket 连接
     pub fn close(&mut self) {
         if let Some(ws) = self.ws.take() {
             let _ = ws.close();
+        }
+    }
+
+    /// 发送消息
+    ///
+    /// # Errors
+    ///
+    /// WebSocket 未连接或发送消息失败时返回错误
+    pub fn send(&self, message: &Value) -> Result<()> {
+        if let Some(ws) = &self.ws {
+            let text = serde_json::to_string(message)
+                .map_err(|e| helpers::ws_serialize_error(&e.to_string()))?;
+            ws.send_with_str(&text)
+                .map_err(|e| helpers::ws_client_error(&format!("发送消息失败: {e:?}"), "send"))?;
+            Ok(())
+        } else {
+            Err(helpers::ws_client_error("WebSocket 未连接", "connect"))
         }
     }
 }
@@ -581,7 +734,10 @@ impl KnowledgeGraphState {
             .iter()
             .map(|doc| {
                 let id = doc.get("id").and_then(Value::as_str).unwrap_or("");
-                let label = doc.get("title").and_then(Value::as_str).unwrap_or("Untitled");
+                let label = doc
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Untitled");
                 serde_json::json!({
                     "id": id,
                     "label": label,
@@ -611,7 +767,10 @@ impl KnowledgeGraphState {
             .map(|block| {
                 let id = block.get("id").and_then(Value::as_str).unwrap_or("");
                 let start_line = block.get("start_line").and_then(Value::as_u64).unwrap_or(0);
-                let block_type = block.get("block_type").and_then(Value::as_str).unwrap_or("?");
+                let block_type = block
+                    .get("block_type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("?");
                 let label = format!("L{start_line}-{block_type}");
                 serde_json::json!({
                     "id": id,
@@ -638,6 +797,6 @@ fn window_host() -> String {
         .and_then(|w| w.location().host().ok())
         .unwrap_or_else(|| {
             web_sys::console::log_1(&"无法获取 window.location.host，使用默认值".into());
-            "127.0.0.1:3000".to_string()
+            std::option_env!("KNOWLEDGE_WS_HOST").unwrap_or("127.0.0.1:3000").to_string()
         })
 }

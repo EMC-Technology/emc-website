@@ -20,7 +20,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 error-core = { workspace = true, features = ["serde", "uuid", "chrono", "db", "serde-json", "jsonwebtoken"] }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true, features = ["fmt", "env-filter", "json"] }
+tracing-subscriber = { workspace = true }
 opentelemetry = { workspace = true }
 opentelemetry_sdk = { workspace = true }
 opentelemetry-jaeger = { workspace = true }
@@ -36,6 +36,7 @@ chrono = { workspace = true }
 http-body-util = { version = "0.1", default-features = false }
 uuid = { workspace = true }
 futures = { workspace = true }  # 用于 RAG 流式输出 (SSE)
+tokio-stream = { version = "0.1", default-features = false }
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
 argon2 = { version = "0.5", default-features = false, features = ["std"] }
 password-hash = { version = "0.5", default-features = false }
@@ -52,8 +53,8 @@ schemars = { workspace = true }
 petgraph = { workspace = true }
 
 # 企业级 MCP Hub 依赖
-dashmap = { version = "5.5", default-features = false }
-lru = { version = "0.12", default-features = false }
+dashmap = { workspace = true }
+lru = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 
@@ -83,19 +84,16 @@ tokenizers = { version = "0.22", default-features = false, features = ["http"] }
 # HuggingFace Hub模型下载
 hf-hub = { version = "0.4", default-features = false, features = ["tokio"] }
 # SHA256校验（模型下载完整性验证）
-sha2 = { version = "0.10" }
+sha2 = { workspace = true }
 # 目录路径解析（模型缓存目录）
-dirs = { version = "6", default-features = false }
+dirs = { workspace = true }
 
 [features]
-default = []
-# 启用CUDA GPU加速（需安装CUDA toolkit）
+default = ["db"]
+db = ["knowledge-core/db"]
 cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
-# 启用Apple Metal加速（macOS M1/M2/M3）
 metal = ["candle-core/metal", "candle-nn/metal", "candle-transformers/metal"]
-# 启用Flash Attention优化（显著提升长文本性能）
 flash-attn = ["candle-transformers/flash-attn"]
-
 event-driven = ["knowledge-core/event-driven"]
 
 [dev-dependencies]

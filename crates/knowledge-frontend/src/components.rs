@@ -49,7 +49,11 @@ pub fn FileUploader(
     on_file_selected: EventHandler<(String, String)>,
 ) -> Element {
     let mut reading = use_signal(|| false);
-    let input_id = use_signal(|| format!("file-upload-{}", js_sys::Math::random().to_string().replace('.', "")));
+    let input_id = use_signal(|| {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static COUNTER: AtomicU32 = AtomicU32::new(0);
+        format!("file-upload-{}", COUNTER.fetch_add(1, Ordering::Relaxed))
+    });
 
     rsx! {
         div {

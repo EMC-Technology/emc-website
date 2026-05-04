@@ -419,7 +419,7 @@ impl ModelLoader for CandleModelLoader {
     }
 
     async fn unload(&mut self) -> Result<(), ModelLoaderError> {
-        tracing::info!(model = %self.config.model_id, "卸载Candle模型");
+        tracing::info!(model = %self.config.model_id, "卸载Candle模型（无状态加载器，无需清理）");
         Ok(())
     }
 

@@ -27,19 +27,190 @@ pub struct StoredEvent {
     pub timestamp: DateTime<Utc>,
 }
 
+/// 事件触发源 —— 描述"谁触发了这个事件"
+///
+/// 与 `causation_id`（ID 级引用）互补，`triggered_by` 提供类型级别的
+/// 触发源描述，便于审计查询和可观测性，无需回溯 ID 链即可理解因果。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "detail")]
+pub enum TriggeredBy {
+    /// 由命令直接触发（CQRS 写路径的标准场景）
+    Command {
+        /// 命令类型名称（如 `CreateDocument`）
+        command_type: String,
+        /// 命令目标聚合根 ID
+        aggregate_id: String,
+    },
+    /// 由另一个领域事件触发（Saga / Process Manager 场景）
+    Event {
+        /// 触发事件类型名称（如 `DocumentIngested`）
+        event_type: String,
+        /// 触发事件的 ID
+        event_id: String,
+        /// 触发事件所属聚合根 ID
+        aggregate_id: String,
+    },
+    /// 由系统内部调度触发（定时任务、后台 Worker）
+    System {
+        /// 系统组件名称（如 `index-scheduler`）
+        component: String,
+        /// 调度原因描述
+        reason: String,
+    },
+    /// 由外部事件触发（Webhook、消息队列消费）
+    External {
+        /// 外部来源标识（如 `webhook/github`）
+        source: String,
+        /// 外部事件 ID（用于去重和追踪）
+        external_id: Option<String>,
+    },
+}
+
+impl TriggeredBy {
+    /// 从命令创建触发源
+    #[must_use]
+    pub fn from_command(command_type: &str, aggregate_id: &str) -> Self {
+        Self::Command {
+            command_type: command_type.to_string(),
+            aggregate_id: aggregate_id.to_string(),
+        }
+    }
+
+    /// 从事件创建触发源（Saga 链式反应场景）
+    #[must_use]
+    pub fn from_event(event_type: &str, event_id: &str, aggregate_id: &str) -> Self {
+        Self::Event {
+            event_type: event_type.to_string(),
+            event_id: event_id.to_string(),
+            aggregate_id: aggregate_id.to_string(),
+        }
+    }
+
+    /// 从系统组件创建触发源
+    #[must_use]
+    pub fn from_system(component: &str, reason: &str) -> Self {
+        Self::System {
+            component: component.to_string(),
+            reason: reason.to_string(),
+        }
+    }
+
+    /// 从外部来源创建触发源
+    #[must_use]
+    pub fn from_external(source: &str, external_id: Option<&str>) -> Self {
+        Self::External {
+            source: source.to_string(),
+            external_id: external_id.map(std::string::ToString::to_string),
+        }
+    }
+}
+
+/// 因果链上下文 —— 在命令/事件处理链中传播因果信息
+///
+/// # 设计原则
+///
+/// 1. `correlation_id` 在业务流程入口生成，整个流程中不变
+/// 2. `causation_id` 在每个处理步骤中更新为当前命令/事件的 ID
+/// 3. `triggered_by` 在每个步骤中更新为当前触发源
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CausationContext {
+    /// 业务流程关联 ID（流程入口生成，全程不变）
+    pub correlation_id: String,
+    /// 直接因果 ID（每步更新为触发源的 ID）
+    pub causation_id: String,
+    /// 触发源描述
+    pub triggered_by: TriggeredBy,
+    /// 操作用户
+    pub user_id: Option<String>,
+    /// 分布式追踪 ID
+    pub trace_id: Option<String>,
+}
+
+impl CausationContext {
+    /// 从 HTTP 请求入口创建新的因果上下文
+    #[must_use]
+    pub fn new_from_request(
+        command_type: &str,
+        aggregate_id: &str,
+        user_id: Option<String>,
+        trace_id: Option<String>,
+    ) -> Self {
+        let correlation_id = uuid::Uuid::new_v4().to_string();
+        let causation_id = correlation_id.clone();
+        Self {
+            correlation_id,
+            causation_id,
+            triggered_by: TriggeredBy::from_command(command_type, aggregate_id),
+            user_id,
+            trace_id,
+        }
+    }
+
+    /// 从已有事件派生新的因果上下文（Saga 链式反应）
+    #[must_use]
+    pub fn derive_from_event(
+        parent_event_id: &str,
+        parent_event_type: &str,
+        parent_aggregate_id: &str,
+        parent_correlation_id: &str,
+        parent_user_id: Option<String>,
+        parent_trace_id: Option<String>,
+    ) -> Self {
+        Self {
+            correlation_id: parent_correlation_id.to_string(),
+            causation_id: parent_event_id.to_string(),
+            triggered_by: TriggeredBy::from_event(
+                parent_event_type,
+                parent_event_id,
+                parent_aggregate_id,
+            ),
+            user_id: parent_user_id,
+            trace_id: parent_trace_id,
+        }
+    }
+
+    /// 从系统调度创建因果上下文
+    #[must_use]
+    pub fn new_from_system(component: &str, reason: &str) -> Self {
+        let id = uuid::Uuid::new_v4().to_string();
+        Self {
+            correlation_id: id.clone(),
+            causation_id: id,
+            triggered_by: TriggeredBy::from_system(component, reason),
+            user_id: None,
+            trace_id: None,
+        }
+    }
+
+    /// 转换为 EventMetadata
+    #[must_use]
+    pub fn to_metadata(&self) -> EventMetadata {
+        EventMetadata {
+            causation_id: Some(self.causation_id.clone()),
+            correlation_id: Some(self.correlation_id.clone()),
+            triggered_by: Some(self.triggered_by.clone()),
+            user_id: self.user_id.clone(),
+            trace_id: self.trace_id.clone(),
+        }
+    }
+}
+
 /// 事件元数据，用于跨服务追踪和因果链分析
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EventMetadata {
-    /// 因果标识符
+    /// 因果标识符 —— 指向直接触发本事件的命令/事件 ID
     #[serde(skip_serializing_if = "Option::is_none")]
     pub causation_id: Option<String>,
-    /// 关联标识符
+    /// 关联标识符 —— 同一业务流程产生的所有事件共享此 ID
     #[serde(skip_serializing_if = "Option::is_none")]
     pub correlation_id: Option<String>,
+    /// 触发源描述 —— 结构化描述"谁触发了我"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub triggered_by: Option<TriggeredBy>,
     /// 用户标识符
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
-    /// 分布式追踪标识符
+    /// 分布式追踪标识符（OpenTelemetry trace_id）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trace_id: Option<String>,
 }
@@ -140,21 +311,19 @@ impl EventStore for InMemoryEventStore {
         for event in &events {
             if event.aggregate_id != aggregate_id {
                 return Err(helpers::validation_error(
-                    "InvalidAggregateId",
                     &format!(
                         "Event aggregate_id {} does not match requested {}",
                         event.aggregate_id, aggregate_id
                     ),
+                    "InvalidAggregateId",
                 ));
             }
         }
 
-        let mut next_version = current_version + 1;
         let mut validated_events = events.clone();
 
-        for event in &mut validated_events {
+        for (next_version, event) in (current_version + 1..).zip(validated_events.iter_mut()) {
             event.version = next_version;
-            next_version += 1;
 
             if event.timestamp == DateTime::<Utc>::MIN_UTC {
                 event.timestamp = Utc::now();
@@ -276,25 +445,23 @@ impl EventStore for SurrealEventStore {
             }
         }
 
-        let mut next_version = current + 1;
         let mut queries = Vec::with_capacity(events.len());
         let mut bindings = Vec::with_capacity(events.len());
 
         let events_count = events.len();
 
-        for (i, mut event) in events.into_iter().enumerate() {
+        for (next_version, (i, mut event)) in (current + 1..).zip(events.into_iter().enumerate()) {
             if event.aggregate_id != aggregate_id {
                 return Err(helpers::validation_error(
-                    "InvalidAggregateId",
                     &format!(
                         "Event aggregate_id {} does not match requested {}",
                         event.aggregate_id, aggregate_id
                     ),
+                    "InvalidAggregateId",
                 ));
             }
 
             event.version = next_version;
-            next_version += 1;
 
             if event.timestamp == DateTime::<Utc>::MIN_UTC {
                 event.timestamp = Utc::now();
@@ -386,6 +553,111 @@ impl EventStore for SurrealEventStore {
     }
 }
 
+/// 字段级变更记录
+///
+/// 记录单个字段从 `old_value` 到 `new_value` 的变更，
+/// 用于审计追踪和差异对比。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FieldChange {
+    /// 变更前的值（None 表示字段新增）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub old_value: Option<serde_json::Value>,
+    /// 变更后的值（None 表示字段删除）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_value: Option<serde_json::Value>,
+}
+
+impl FieldChange {
+    /// 创建字段变更记录
+    #[must_use]
+    pub fn new(old: Option<serde_json::Value>, new: Option<serde_json::Value>) -> Self {
+        Self {
+            old_value: old,
+            new_value: new,
+        }
+    }
+
+    /// 从旧值和新值创建（值都存在）
+    #[must_use]
+    pub fn changed(old: serde_json::Value, new: serde_json::Value) -> Self {
+        Self {
+            old_value: Some(old),
+            new_value: Some(new),
+        }
+    }
+
+    /// 字段新增
+    #[must_use]
+    pub fn added(new: serde_json::Value) -> Self {
+        Self {
+            old_value: None,
+            new_value: Some(new),
+        }
+    }
+
+    /// 字段删除
+    #[must_use]
+    pub fn removed(old: serde_json::Value) -> Self {
+        Self {
+            old_value: Some(old),
+            new_value: None,
+        }
+    }
+
+    /// 是否为实际变更（排除值相同的伪变更）
+    #[must_use]
+    pub fn is_actual_change(&self) -> bool {
+        match (&self.old_value, &self.new_value) {
+            (Some(old), Some(new)) => old != new,
+            (None, None) => false,
+            _ => true,
+        }
+    }
+}
+
+/// 变更集 —— 多字段的变更汇总
+///
+/// 以字段名为键，记录每个字段的变更前后值。
+/// 仅包含实际发生变更的字段，未变更的字段不出现在集合中。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ChangeSet {
+    /// 字段变更映射
+    pub changes: std::collections::HashMap<String, FieldChange>,
+}
+
+impl ChangeSet {
+    /// 创建空变更集
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 添加字段变更
+    pub fn add_change(&mut self, field: impl Into<String>, change: FieldChange) {
+        if change.is_actual_change() {
+            self.changes.insert(field.into(), change);
+        }
+    }
+
+    /// 是否包含任何变更
+    #[must_use]
+    pub fn has_changes(&self) -> bool {
+        !self.changes.is_empty()
+    }
+
+    /// 获取变更字段数量
+    #[must_use]
+    pub fn change_count(&self) -> usize {
+        self.changes.len()
+    }
+
+    /// 获取指定字段的变更
+    #[must_use]
+    pub fn get_change(&self, field: &str) -> Option<&FieldChange> {
+        self.changes.get(field)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -401,6 +673,10 @@ mod tests {
             metadata: EventMetadata {
                 causation_id: Some(Uuid::new_v4().to_string()),
                 correlation_id: Some(Uuid::new_v4().to_string()),
+                triggered_by: Some(TriggeredBy::Command {
+                    command_type: format!("{event_type}Command"),
+                    aggregate_id: aggregate_id.to_string(),
+                }),
                 user_id: Some("user_001".to_string()),
                 trace_id: Some("trace-123".to_string()),
             },
@@ -676,6 +952,10 @@ mod tests {
         let metadata = EventMetadata {
             causation_id: Some("cmd-123".to_string()),
             correlation_id: Some("corr-456".to_string()),
+            triggered_by: Some(TriggeredBy::Command {
+                command_type: "TestCommand".to_string(),
+                aggregate_id: "doc_001".to_string(),
+            }),
             user_id: Some("user-789".to_string()),
             trace_id: Some("trace-abc".to_string()),
         };

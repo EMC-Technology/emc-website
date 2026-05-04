@@ -259,7 +259,7 @@ impl StsTokenGenerator {
     ) -> crate::Result<String> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|e| error_core::helpers::internal_error(&format!("系统时间获取失败: {e}")))?
+            .map_err(|e| error_core::helpers::io_error(&format!("系统时间获取失败: {e}")))?
             .as_secs();
 
         let ttl = custom_ttl.unwrap_or(self.default_ttl);
@@ -276,7 +276,7 @@ impl StsTokenGenerator {
         };
 
         let token = encode(&Header::default(), &claims, &self.signing_key).map_err(|e| {
-            error_core::helpers::internal_error(&format!("STS Token 编码失败: {e}"))
+            error_core::helpers::crypto_error(&format!("STS Token 编码失败: {e}"))
         })?;
 
         debug!(
@@ -362,8 +362,7 @@ impl ServiceTokenChecks for ServiceTokenClaims {
     fn is_expired(&self) -> bool {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(u64::MAX);
+            .map_or(u64::MAX, |d| d.as_secs());
         now > self.expires_at
     }
 

@@ -145,17 +145,6 @@ enum LayerType {
     FullAttention,
 }
 
-impl LayerType {
-    #[allow(dead_code)]
-    fn from_str(s: &str) -> Self {
-        if s == "sliding_attention" {
-            Self::SlidingAttention
-        } else {
-            Self::FullAttention
-        }
-    }
-}
-
 #[derive(Debug)]
 struct Gemma4Attention {
     q_proj: candle_nn::Linear,

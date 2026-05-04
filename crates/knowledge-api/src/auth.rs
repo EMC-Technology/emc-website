@@ -15,12 +15,14 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::authz::middleware::AuthenticatedPrincipal;
+use crate::error_handler::ApiError;
 use crate::handler::AppState;
 use error_core::helpers;
 use knowledge_core::{AuditEvent, AuditLogger};
 
 /// 用户角色枚举
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
 pub enum Role {
     /// 管理员：拥有所有权限
     Admin,
@@ -140,12 +142,12 @@ impl AuthService {
     pub fn generate_token(&self, username: &str, role: &Role) -> crate::Result<String> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|e| helpers::internal_error(&format!("系统时间获取失败: {e}")))?
+            .map_err(|e| helpers::io_error(&format!("系统时间获取失败: {e}")))?
             .as_secs();
 
         let exp = now + u64::from(self.jwt_expiry_hours) * 3600;
 
-        let jti = hex::encode(rand::random::<[u8; 16]>());
+        let jti = uuid::Uuid::new_v4().to_string();
 
         let claims = Claims {
             sub: username.to_string(),
@@ -218,10 +220,18 @@ pub async fn auth_middleware(
 
     let auth_service = &state.auth_service;
 
-    let role = if let Some(token) = token {
+    let (role, principal) = if let Some(token) = token {
         match auth_service.validate_token(token) {
             Ok(claims) => match auth_service.get_role_from_claims(&claims) {
-                Ok(role) => role,
+                Ok(role) => {
+                    let principal = AuthenticatedPrincipal {
+                        id: claims.sub.clone(),
+                        entity_type: "user".to_string(),
+                        roles: vec![format!("{role:?}")],
+                        attrs: HashMap::new(),
+                    };
+                    (role, Some(principal))
+                },
                 Err(e) => {
                     tracing::warn!(
                         error = %e,
@@ -241,10 +251,13 @@ pub async fn auth_middleware(
             }
         }
     } else {
-        Role::Anonymous
+        (Role::Anonymous, None)
     };
 
     req.extensions_mut().insert(role);
+    if let Some(principal) = principal {
+        req.extensions_mut().insert(principal);
+    }
 
     next.run(req).await
 }
@@ -407,17 +420,17 @@ pub struct LoginResponse {
 /// - 登录频率超限
 /// - 用户名或密码错误
 /// - Token 生成失败
-pub fn login(
+pub async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginRequest>,
-) -> crate::Result<Json<LoginResponse>> {
+) -> Result<Json<LoginResponse>, ApiError> {
     if req.username.is_empty() || req.password.is_empty() {
-        return Err(helpers::auth_error("用户名和密码不能为空", "login"));
+        return Err(ApiError::from(helpers::auth_error("用户名和密码不能为空", "login")));
     }
 
     let rate_limiter = &state.rate_limiter;
     if !rate_limiter.check_and_record(&req.username) {
-        return Err(helpers::auth_error("登录尝试过于频繁，请稍后再试", "login"));
+        return Err(ApiError::from(helpers::auth_error("登录尝试过于频繁，请稍后再试", "login")));
     }
 
     let auth_service = &state.auth_service;
@@ -434,12 +447,13 @@ pub fn login(
             }
         })
         .ok_or_else(|| {
-            helpers::auth_error("用户名或密码错误", "login")
+            ApiError::from(helpers::auth_error("用户名或密码错误", "login"))
         })?;
 
     rate_limiter.record_success(&req.username);
 
-    let token = auth_service.generate_token(username, &role)?;
+    let token = auth_service.generate_token(username, &role)
+        .map_err(ApiError::from)?;
 
     Ok(Json(LoginResponse {
         token,

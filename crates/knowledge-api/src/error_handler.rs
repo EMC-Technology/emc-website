@@ -20,6 +20,7 @@ pub struct ApiError {
     /// 错误唯一标识符
     pub error_id: String,
     /// 内部错误消息
+    #[serde(skip_serializing)]
     pub message: String,
     /// 面向用户的错误消息
     pub user_message: String,
@@ -74,7 +75,17 @@ impl ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let status = StatusCode::from_u16(self.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        let status = if let Ok(s) = StatusCode::from_u16(self.status) {
+            s
+        } else {
+            tracing::warn!(
+                invalid_status = self.status,
+                error_id = %self.error_id,
+                code = %self.code,
+                "无效的HTTP状态码，降级为500; 违反'0黑盒推断'原则的状态码来源需排查"
+            );
+            StatusCode::INTERNAL_SERVER_ERROR
+        };
 
         let body = Json(self);
 
@@ -90,7 +101,7 @@ impl From<ErrorObject> for ApiError {
 
 impl From<Box<dyn std::error::Error + Send + Sync>> for ApiError {
     fn from(err: Box<dyn std::error::Error + Send + Sync>) -> Self {
-        error_core::helpers::internal_error(&err.to_string()).into()
+        error_core::helpers::general_fallback_error(&err.to_string()).into()
     }
 }
 
@@ -150,7 +161,8 @@ mod tests {
 
         let json = serde_json::to_string(&api_err).unwrap();
         assert!(json.contains("\"code\":\"ERR-USR-VAL-001_ERR_O\""));
-        assert!(json.contains("\"message\":\"测试错误\""));
+        assert!(!json.contains("\"message\""), "内部消息不应序列化到客户端");
+        assert!(json.contains("\"user_message\":\"测试\""));
         assert!(json.contains("\"status\":400"));
     }
 }

@@ -14,7 +14,7 @@ use futures::future::join_all;
 use petgraph::Direction;
 use petgraph::graph::{DiGraph, NodeIndex};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex as TokioMutex, RwLock};
+use tokio::sync::{Mutex as TokioMutex, RwLock, Semaphore};
 use tracing::{debug, error, info, instrument, warn};
 
 use super::react_agent::ReactAgent;
@@ -205,16 +205,16 @@ impl WorkflowDefinition {
         // 检查边引用的节点是否存在
         for edge in &self.edges {
             if !node_ids.contains(edge.from.as_str()) {
-                return Err(error_core::helpers::internal_error(&format!(
+                return Err(error_core::helpers::validation_error(&format!(
                     "边引用了不存在的起始节点: {}",
                     edge.from
-                )));
+                ), "validate"));
             }
             if !node_ids.contains(edge.to.as_str()) {
-                return Err(error_core::helpers::internal_error(&format!(
+                return Err(error_core::helpers::validation_error(&format!(
                     "边引用了不存在的目标节点: {}",
                     edge.to
-                )));
+                ), "validate"));
             }
         }
 
@@ -235,7 +235,7 @@ impl WorkflowDefinition {
 
         // 检测环
         if petgraph::algo::is_cyclic_directed(&graph) {
-            Err(error_core::helpers::internal_error("工作流包含循环依赖"))
+            Err(error_core::helpers::validation_error("工作流包含循环依赖", "validate"))
         } else {
             Ok(())
         }
@@ -480,10 +480,10 @@ impl TaskOrchestrator {
         // 添加所有边
         for edge in &definition.edges {
             let from_idx = node_map.get(&edge.from).ok_or_else(|| {
-                error_core::helpers::internal_error(&format!("找不到节点: {}", edge.from))
+                error_core::helpers::validation_error(&format!("找不到节点: {}", edge.from), "workflow_edge")
             })?;
             let to_idx = node_map.get(&edge.to).ok_or_else(|| {
-                error_core::helpers::internal_error(&format!("找不到节点: {}", edge.to))
+                error_core::helpers::validation_error(&format!("找不到节点: {}", edge.to), "workflow_edge")
             })?;
 
             graph.add_edge(*from_idx, *to_idx, edge.clone());
@@ -553,12 +553,12 @@ impl TaskOrchestrator {
             match &state.workflow {
                 Some(wf) if wf.id == workflow_id => {}
                 Some(_) => {
-                    return Err(error_core::helpers::internal_error(&format!(
+                    return Err(error_core::helpers::validation_error(&format!(
                         "当前加载的工作流 ID 不匹配: {workflow_id}"
-                    )));
+                    ), "workflow_id_mismatch"));
                 }
                 None => {
-                    return Err(error_core::helpers::internal_error("未加载任何工作流"));
+                    return Err(error_core::helpers::validation_error("未加载任何工作流", "workflow_not_loaded"));
                 }
             }
 
@@ -597,12 +597,26 @@ impl TaskOrchestrator {
 
             debug!(count = ready_nodes.len(), "发现可执行的节点");
 
-            // 并行执行就绪节点
+            let max_concurrency = {
+                let state = self.shared_state.read().await;
+                state
+                    .workflow
+                    .as_ref()
+                    .map_or(5, |wf| wf.global_config.max_concurrency)
+            };
+            let semaphore = Arc::new(Semaphore::new(max_concurrency));
+
             let futures: Vec<_> = ready_nodes
                 .into_iter()
                 .map(|node_id| {
                     let orchestrator = self;
-                    async move { orchestrator.execute_node(&node_id).await }
+                    let sem = semaphore.clone();
+                    async move {
+                        let _permit = sem.acquire().await.map_err(|_| {
+                            error_core::helpers::agent_workflow_error("Semaphore 已关闭")
+                        })?;
+                        orchestrator.execute_node(&node_id).await
+                    }
                 })
                 .collect();
 
@@ -757,13 +771,48 @@ impl TaskOrchestrator {
         ready
     }
 
-    /// 执行单个节点
+    /// 解析节点配置和对应的 Agent
+    async fn resolve_node_and_agent(
+        &self,
+        node_id: &str,
+    ) -> crate::Result<(TaskNode, Arc<Box<dyn AgentExecutor>>)> {
+        let state = self.shared_state.read().await;
+        let workflow = state
+            .workflow
+            .as_ref()
+            .ok_or_else(|| error_core::helpers::validation_error("工作流未加载", "workflow_not_loaded"))?;
+
+        let node = workflow
+            .nodes
+            .iter()
+            .find(|n| n.id == node_id)
+            .ok_or_else(|| error_core::helpers::not_found("node", node_id))?
+            .clone();
+
+        let agent_name = format!("{}", node.agent_type);
+        let agents = self.agents.lock().await;
+        let agent = agents.get(&agent_name).cloned().ok_or_else(|| {
+            error_core::helpers::not_found("agent", &agent_name)
+        })?;
+
+        Ok((node, agent))
+    }
+
+    /// 计算重试延迟（支持指数退避）
+    fn calculate_retry_delay(base_delay: Duration, retry_count: u32, exponential: bool) -> Duration {
+        if exponential {
+            base_delay.saturating_mul(2u32.saturating_pow(retry_count.saturating_sub(1)))
+        } else {
+            base_delay
+        }
+    }
+
+    /// 执行单个节点（带重试逻辑）
     async fn execute_node(&self, node_id: &str) -> crate::Result<(String, NodeResult)> {
         let start_time = std::time::Instant::now();
 
         info!(node = %node_id, "开始执行节点");
 
-        // 更新状态为 Running
         {
             let mut state = self.shared_state.write().await;
             state
@@ -771,82 +820,95 @@ impl TaskOrchestrator {
                 .insert(node_id.to_string(), NodeStatus::Running);
         }
 
-        // 获取节点定义和对应的 Agent
-        let (node, agent) = {
-            let state = self.shared_state.read().await;
-            let workflow = state
-                .workflow
-                .as_ref()
-                .ok_or_else(|| error_core::helpers::internal_error("工作流未加载"))?;
+        let (node, agent) = self.resolve_node_and_agent(node_id).await?;
 
-            let node = workflow
-                .nodes
-                .iter()
-                .find(|n| n.id == node_id)
-                .ok_or_else(|| {
-                    error_core::helpers::internal_error(&format!("找不到节点: {node_id}"))
-                })?
-                .clone();
+        let mut retry_count: u32 = 0;
+        let max_retries = node.retry_config.max_retries;
+        let base_delay = Duration::from_millis(node.retry_config.retry_delay_ms);
 
-            let agent_name = format!("{}", node.agent_type);
-            let agents = self.agents.lock().await;
-            let agent = agents.get(&agent_name).cloned().ok_or_else(|| {
-                error_core::helpers::internal_error(&format!(
-                    "未注册类型为 '{agent_name}' 的 Agent"
-                ))
-            })?;
+        let result = loop {
+            let execution_result =
+                tokio::time::timeout(node.timeout, agent.execute_task(&node.task)).await;
 
-            (node, agent)
-        };
-
-        // 执行任务（带超时和重试）
-        let execution_result =
-            tokio::time::timeout(node.timeout, agent.execute_task(&node.task)).await;
-
-        let result = match execution_result {
-            Ok(Ok(task_result)) => {
-                info!(node = %node_id, "节点执行成功");
-                NodeResult {
-                    node_id: node_id.to_string(),
-                    status: NodeStatus::Succeeded,
-                    result: Some(task_result),
-                    error: None,
-                    started_at: Utc::now(),
-                    completed_at: Some(Utc::now()),
-                    retry_count: 0,
+            match execution_result {
+                Ok(Ok(task_result)) => {
+                    info!(node = %node_id, "节点执行成功");
+                    break NodeResult {
+                        node_id: node_id.to_string(),
+                        status: NodeStatus::Succeeded,
+                        result: Some(task_result),
+                        error: None,
+                        started_at: Utc::now(),
+                        completed_at: Some(Utc::now()),
+                        retry_count,
+                    };
                 }
-            }
-            Ok(Err(e)) => {
-                error!(node = %node_id, error = %e, "节点执行失败");
-                NodeResult {
-                    node_id: node_id.to_string(),
-                    status: NodeStatus::Failed,
-                    result: None,
-                    error: Some(e.to_string()),
-                    started_at: Utc::now(),
-                    completed_at: Some(Utc::now()),
-                    retry_count: 0,
+                Ok(Err(e)) => {
+                    retry_count += 1;
+                    if retry_count <= max_retries {
+                        let delay = Self::calculate_retry_delay(
+                            base_delay,
+                            retry_count,
+                            node.retry_config.exponential_backoff,
+                        );
+                        warn!(
+                            node = %node_id,
+                            attempt = retry_count,
+                            max_retries,
+                            delay_ms = delay.as_millis(),
+                            error = %e,
+                            "节点执行失败，准备重试"
+                        );
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
+                    error!(node = %node_id, error = %e, "节点执行失败（重试耗尽）");
+                    break NodeResult {
+                        node_id: node_id.to_string(),
+                        status: NodeStatus::Failed,
+                        result: None,
+                        error: Some(e.to_string()),
+                        started_at: Utc::now(),
+                        completed_at: Some(Utc::now()),
+                        retry_count,
+                    };
                 }
-            }
-            Err(_) => {
-                #[allow(clippy::cast_possible_truncation)]
-                let timeout_ms = node.timeout.as_millis() as u64;
-                warn!(node = %node_id, timeout_ms, "节点执行超时");
-                NodeResult {
-                    node_id: node_id.to_string(),
-                    status: NodeStatus::TimedOut,
-                    result: None,
-                    error: Some(format!("执行超时 ({:?})", node.timeout)),
-                    started_at: Utc::now(),
-                    completed_at: Some(Utc::now()),
-                    retry_count: 0,
+                Err(_) => {
+                    retry_count += 1;
+                    if retry_count <= max_retries {
+                        let delay = Self::calculate_retry_delay(
+                            base_delay,
+                            retry_count,
+                            node.retry_config.exponential_backoff,
+                        );
+                        warn!(
+                            node = %node_id,
+                            attempt = retry_count,
+                            max_retries,
+                            "节点执行超时，准备重试"
+                        );
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
+                    #[allow(clippy::cast_possible_truncation)]
+                    let timeout_ms = node.timeout.as_millis() as u64;
+                    warn!(node = %node_id, timeout_ms, "节点执行超时（重试耗尽）");
+                    break NodeResult {
+                        node_id: node_id.to_string(),
+                        status: NodeStatus::TimedOut,
+                        result: None,
+                        error: Some(format!("执行超时 ({:?})", node.timeout)),
+                        started_at: Utc::now(),
+                        completed_at: Some(Utc::now()),
+                        retry_count,
+                    };
                 }
             }
         };
 
         #[allow(clippy::cast_possible_truncation)]
         let duration_ms = start_time.elapsed().as_millis() as u64;
-        debug!(node = %node_id, duration_ms, status = ?result.status, "节点执行完成");
+        debug!(node = %node_id, duration_ms, status = ?result.status, retry_count, "节点执行完成");
 
         Ok((node_id.to_string(), result))
     }
@@ -892,8 +954,9 @@ impl TaskOrchestrator {
         let mut state = self.shared_state.write().await;
 
         if state.status != WorkflowStatus::Running {
-            return Err(error_core::helpers::internal_error(
+            return Err(error_core::helpers::validation_error(
                 "工作流不在运行状态，无法暂停",
+                "workflow_pause",
             ));
         }
 
@@ -917,8 +980,9 @@ impl TaskOrchestrator {
         let mut state = self.shared_state.write().await;
 
         if state.status != WorkflowStatus::Paused {
-            return Err(error_core::helpers::internal_error(
+            return Err(error_core::helpers::validation_error(
                 "工作流不在暂停状态，无法恢复",
+                "workflow_resume",
             ));
         }
 

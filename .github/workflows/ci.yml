@@ -35,7 +35,27 @@ jobs:
           curl -sSf https://install.surrealdb.com | sh
           surreal start --bind 0.0.0.0:8000 --user root --pass root memory &
           sleep 3
-      - run: cargo clippy --workspace --all-features -- -D warnings
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: P0 Type Safety Check
+        run: cargo clippy --workspace --all-targets -- -D clippy::cast_possible_truncation -D clippy::cast_possible_wrap -D clippy::cast_sign_loss -D clippy::absurd_extreme_comparisons -D unused_comparisons
+      - name: P0 Code Organization Check
+        run: cargo clippy --workspace --all-targets -- -D clippy::items_after_test_module -D clippy::redundant_closure_for_method_calls -D clippy::redundant_closure
+
+  clippy-per-feature:
+    name: Clippy (per-feature)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Check error-core without default features
+        run: cargo clippy -p error-core --no-default-features -- -D warnings
+      - name: Check knowledge-core with minimal features
+        run: cargo clippy -p knowledge-core --no-default-features --features "db" -- -D warnings
+      - name: Check knowledge-core with event-driven
+        run: cargo clippy -p knowledge-core --no-default-features --features "db,event-driven" -- -D warnings
 
   test:
     name: Test

@@ -56,7 +56,7 @@ impl PaginationMeta {
     /// 根据总数、偏移量和每页条数创建分页元数据
     #[must_use]
     pub const fn new(total: usize, offset: u32, limit: u32) -> Self {
-        let has_more = ((offset + limit) as usize) < total;
+        let has_more = (offset as usize).saturating_add(limit as usize) < total;
         Self {
             total,
             offset,

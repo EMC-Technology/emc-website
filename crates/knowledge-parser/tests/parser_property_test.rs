@@ -125,7 +125,7 @@ proptest! {
         use knowledge_parser::text_splitter::TextSplitterBlocker;
 
         let blocker = TextSplitterBlocker::new();
-        let result = blocker.split_to_blocks(&input);
+        let result = blocker.split_to_blocks(&input, "proptest://input");
         prop_assert!(result.is_ok(), "分块器不应 panic，输入: {:?}", input);
     }
 }

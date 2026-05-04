@@ -4,22 +4,21 @@ use crate::error::helpers;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use std::any::{Any, TypeId};
+use std::future::Future;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use tracing::{info, instrument, warn};
 
 /// 命令处理器特征，定义处理写操作命令的异步接口
-#[async_trait]
 pub trait CommandHandler<C: Command>: Send + Sync {
     /// 处理给定命令并返回执行结果
-    async fn handle(&self, command: C) -> Result<C::Result>;
+    fn handle(&self, command: C) -> impl Future<Output = Result<C::Result>> + Send;
 }
 
 /// 查询处理器特征，定义处理读操作查询的异步接口
-#[async_trait]
 pub trait QueryHandler<Q: Query>: Send + Sync {
     /// 处理给定查询并返回查询结果
-    async fn handle(&self, query: Q) -> Result<Q::Result>;
+    fn handle(&self, query: Q) -> impl Future<Output = Result<Q::Result>> + Send;
 }
 
 #[async_trait]
@@ -45,7 +44,7 @@ impl<C: Command + 'static, H: CommandHandler<C> + 'static> ErasedCommandHandler
 
     async fn handle_boxed(&self, command: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>> {
         let command = *command.downcast::<C>().map_err(|_| {
-            helpers::internal_error(&format!(
+            helpers::aggregate_invalid_state(&format!(
                 "Command dispatch type mismatch: expected {}",
                 std::any::type_name::<C>()
             ))
@@ -77,7 +76,7 @@ impl<Q: Query + 'static, H: QueryHandler<Q> + 'static> ErasedQueryHandler
 
     async fn handle_boxed(&self, query: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>> {
         let query = *query.downcast::<Q>().map_err(|_| {
-            helpers::internal_error(&format!(
+            helpers::aggregate_invalid_state(&format!(
                 "Query dispatch type mismatch: expected {}",
                 std::any::type_name::<Q>()
             ))
@@ -145,7 +144,7 @@ impl CommandDispatcher {
             .handle_boxed(Box::new(command))
             .await?;
         let result = *result_box.downcast::<C::Result>().map_err(|_| {
-            helpers::internal_error(&format!(
+            helpers::aggregate_invalid_state(&format!(
                 "Command result type mismatch: expected {}",
                 std::any::type_name::<C::Result>()
             ))
@@ -228,7 +227,7 @@ impl QueryDispatcher {
             .handle_boxed(Box::new(query))
             .await?;
         let result = *result_box.downcast::<Q::Result>().map_err(|_| {
-            helpers::internal_error(&format!(
+            helpers::aggregate_invalid_state(&format!(
                 "Query result type mismatch: expected {}",
                 std::any::type_name::<Q::Result>()
             ))
@@ -327,82 +326,95 @@ mod tests {
         ListView,
     };
     use chrono::Utc;
+    use crate::cqrs::aggregate::DocumentStatus;
     use uuid::Uuid;
 
     #[derive(Clone)]
     struct MockCreateDocumentHandler;
 
-    #[async_trait]
+    #[allow(clippy::manual_async_fn)]
     impl CommandHandler<CreateDocumentCommand> for MockCreateDocumentHandler {
-        async fn handle(&self, command: CreateDocumentCommand) -> Result<DocumentCreatedResult> {
-            Ok(DocumentCreatedResult {
-                document_id: command.aggregate_id,
-                version: 1,
-                timestamp: Utc::now(),
-            })
+        #[allow(clippy::manual_async_fn)]
+        fn handle(&self, command: CreateDocumentCommand) -> impl Future<Output = Result<DocumentCreatedResult>> + Send {
+            async move {
+                Ok(DocumentCreatedResult {
+                    document_id: command.aggregate_id,
+                    version: 1,
+                    timestamp: Utc::now(),
+                })
+            }
         }
     }
 
     #[derive(Clone)]
     struct MockUpdateDocumentHandler;
 
-    #[async_trait]
+    #[allow(clippy::manual_async_fn)]
     impl CommandHandler<UpdateDocumentCommand> for MockUpdateDocumentHandler {
-        async fn handle(&self, command: UpdateDocumentCommand) -> Result<DocumentUpdatedResult> {
-            Ok(DocumentUpdatedResult {
-                document_id: command.aggregate_id,
-                version: 6,
-                previous_version: 5,
-                timestamp: Utc::now(),
-            })
+        #[allow(clippy::manual_async_fn)]
+        fn handle(&self, command: UpdateDocumentCommand) -> impl Future<Output = Result<DocumentUpdatedResult>> + Send {
+            async move {
+                Ok(DocumentUpdatedResult {
+                    document_id: command.aggregate_id,
+                    version: 6,
+                    previous_version: 5,
+                    timestamp: Utc::now(),
+                })
+            }
         }
     }
 
     #[derive(Clone)]
     struct MockGetDocumentHandler;
 
-    #[async_trait]
+    #[allow(clippy::manual_async_fn)]
     impl QueryHandler<GetDocumentQuery> for MockGetDocumentHandler {
-        async fn handle(&self, query: GetDocumentQuery) -> Result<Option<DocumentDetailView>> {
-            if query.document_id == "not_found" {
-                return Ok(None);
-            }
+        #[allow(clippy::manual_async_fn)]
+        fn handle(&self, query: GetDocumentQuery) -> impl Future<Output = Result<Option<DocumentDetailView>>> + Send {
+            async move {
+                if query.document_id == "not_found" {
+                    return Ok(None);
+                }
 
-            Ok(Some(DocumentDetailView {
-                document: DocumentView {
-                    id: query.document_id,
-                    title: "Test Document".to_string(),
-                    content_type: "markdown".to_string(),
-                    status: "published".to_string(),
-                    version: 5,
-                    created_at: Utc::now(),
-                    updated_at: Utc::now(),
-                    node_count: 10,
-                    content: Some("# Hello".to_string()),
-                },
-                nodes: vec![],
-                blocks: vec![],
-            }))
+                Ok(Some(DocumentDetailView {
+                    document: DocumentView {
+                        id: query.document_id,
+                        title: "Test Document".to_string(),
+                        content_type: "markdown".to_string(),
+                        status: DocumentStatus::Published,
+                        version: 5,
+                        created_at: Utc::now(),
+                        updated_at: Utc::now(),
+                        node_count: 10,
+                        content: Some("# Hello".to_string()),
+                    },
+                    nodes: vec![],
+                    blocks: vec![],
+                }))
+            }
         }
     }
 
     #[derive(Clone)]
     struct MockListDocumentsHandler;
 
-    #[async_trait]
+    #[allow(clippy::manual_async_fn)]
     impl QueryHandler<ListDocumentsQuery> for MockListDocumentsHandler {
-        async fn handle(&self, _query: ListDocumentsQuery) -> Result<ListView<DocumentListItem>> {
-            Ok(ListView {
-                items: vec![DocumentListItem {
-                    id: "doc_001".to_string(),
-                    title: "Doc 1".to_string(),
-                    source_type: "Markdown".to_string(),
-                    version: 1,
-                    updated_at: Utc::now(),
-                }],
-                total: 1,
-                has_more: false,
-            })
+        #[allow(clippy::manual_async_fn)]
+        fn handle(&self, _query: ListDocumentsQuery) -> impl Future<Output = Result<ListView<DocumentListItem>>> + Send {
+            async move {
+                Ok(ListView {
+                    items: vec![DocumentListItem {
+                        id: "doc_001".to_string(),
+                        title: "Doc 1".to_string(),
+                        source_type: "Markdown".to_string(),
+                        version: 1,
+                        updated_at: Utc::now(),
+                    }],
+                    total: 1,
+                    has_more: false,
+                })
+            }
         }
     }
 

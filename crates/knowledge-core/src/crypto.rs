@@ -29,7 +29,7 @@ pub fn hash_str(s: &str) -> [u8; 32] {
 /// 析构时自动安全擦除内部密钥材料（通过 `ZeroizeOnDrop`）。
 #[derive(ZeroizeOnDrop)]
 pub struct Encryptor {
-    #[zeroize(skip)]
+    #[zeroize(skip)] // Aes256Gcm 未实现 Zeroize trait，密钥材料在析构时不会被安全擦除
     cipher: Aes256Gcm,
 }
 
@@ -62,7 +62,7 @@ impl Encryptor {
 /// 析构时自动安全擦除内部密钥材料（通过 `ZeroizeOnDrop`）。
 #[derive(ZeroizeOnDrop)]
 pub struct Decryptor {
-    #[zeroize(skip)]
+    #[zeroize(skip)] // Aes256Gcm 未实现 Zeroize trait，密钥材料在析构时不会被安全擦除
     cipher: Aes256Gcm,
 }
 
@@ -143,7 +143,7 @@ impl KeyManager {
             let path_str = Path::new(&self.key_path)
                 .canonicalize()?
                 .to_str()
-                .ok_or_else(|| helpers::internal_error("密钥文件路径编码无效"))?
+                .ok_or_else(|| helpers::crypto_error("密钥文件路径编码无效"))?
                 .to_string();
 
             let reset_result = std::process::Command::new("icacls")
@@ -172,7 +172,7 @@ impl KeyManager {
         #[cfg(not(any(unix, windows)))]
         {
             let _ = key;
-            return Err(helpers::internal_error("当前平台不支持密钥文件存储"));
+            return Err(helpers::crypto_error("当前平台不支持密钥文件存储"));
         }
 
         Ok(())
@@ -211,7 +211,7 @@ impl KeyManager {
                 .write(true)
                 .open(path)?;
             let zeros = vec![0u8; usize::try_from(file_len).map_err(|_| {
-                error_core::helpers::internal_error("file too large for memory allocation")
+                error_core::helpers::io_error("file too large for memory allocation")
             })?];
             file.write_all(&zeros)?;
             file.sync_all()?;

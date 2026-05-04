@@ -560,6 +560,7 @@ where
 mod tests {
     use super::*;
     use super::super::types::*;
+    use crate::model::SourceType;
 
     #[tokio::test]
     async fn test_document_handler_accepts_document_events() {
@@ -575,7 +576,7 @@ mod tests {
             DocumentDeletedEvent::new("d", 0, 0, 0, "s")
         )));
         assert!(!handler.accepts(&KnowledgeEvent::NodeCreated(
-            NodeCreatedEvent::new("n", "T", None::<String>, "s")
+            NodeCreatedEvent::new("n", NodeType::Token, None::<String>, "s")
         )));
     }
 
@@ -584,10 +585,10 @@ mod tests {
         let handler = NodeEventHandler::new();
 
         assert!(handler.accepts(&KnowledgeEvent::NodeCreated(
-            NodeCreatedEvent::new("n", "T", None::<String>, "s")
+            NodeCreatedEvent::new("n", NodeType::Token, None::<String>, "s")
         )));
         assert!(handler.accepts(&KnowledgeEvent::NodeLinked(
-            NodeLinkedEvent::new("a", "b", "r", "s")
+            NodeLinkedEvent::new("a", "b", crate::model::RefType::Usage, "s")
         )));
         assert!(!handler.accepts(&KnowledgeEvent::SearchPerformed(
             SearchPerformedEvent::new("q", 0, 0, "s")

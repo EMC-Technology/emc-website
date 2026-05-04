@@ -154,10 +154,10 @@ impl PromptStore for InMemoryPromptStore {
         let versions = store.entry(prompt.id.clone()).or_insert_with(Vec::new);
 
         if versions.iter().any(|v| v.version == prompt.version) {
-            return Err(helpers::internal_error(&format!(
+            return Err(helpers::validation_error(&format!(
                 "版本 {} 已存在",
                 prompt.version
-            )));
+            ), "add_version"));
         }
 
         let id = Uuid::new_v4();
@@ -519,7 +519,7 @@ impl PromptManager {
 
         self.get_version(&prompt_id, version)
             .await?
-            .ok_or_else(|| helpers::internal_error("无法获取 A/B 测试版本"))
+            .ok_or_else(|| helpers::not_found("ABTestVersion", "无法获取 A/B 测试版本"))
     }
 
     /// 清除缓存

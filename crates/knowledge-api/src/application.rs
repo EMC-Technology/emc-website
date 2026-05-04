@@ -50,7 +50,7 @@ impl Application {
 
         let knowledge_vm = Arc::new(
             KnowledgeVM::with_embedding_dim(db_client, config.parser.embedding_dim)
-                .map_err(|e| error_core::helpers::internal_error(&e.to_string()))?
+                .map_err(|e| error_core::helpers::infrastructure_error(&e.to_string()))?
         );
         let ws_manager = Arc::new(WsConnectionManager::new());
 
@@ -101,9 +101,17 @@ impl Application {
 
         let addr: SocketAddr = format!("{}:{}", config.server.host, config.server.port)
             .parse()
-            .map_err(|e| helpers::internal_error(&format!("地址解析失败: {e}")))?;
+            .map_err(|e| helpers::config_error(&format!("地址解析失败: {e}")))?;
 
         info!("服务器启动中: {}", addr);
+
+        if !config.server.tls {
+            tracing::warn!(
+                "⚠️  TLS 已禁用 — 所有 API 通信（包括认证 Token）将以明文传输。\
+                 生产环境请设置 [server] tls = true 并配置证书，\
+                 或设置环境变量 KNOWLEDGE_TLS=true"
+            );
+        }
 
         let listener = tokio::net::TcpListener::bind(addr).await?;
         axum::serve(listener, router)

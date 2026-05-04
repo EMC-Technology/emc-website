@@ -128,6 +128,10 @@ pub struct StreamChunk {
     pub content: String,
     /// 是否为最后一个块
     pub is_final: bool,
+    /// Token 使用统计（仅在最终块 `is_final == true` 时填充）
+    pub usage: Option<TokenUsage>,
+    /// 模型名称（仅在最终块 `is_final == true` 时填充）
+    pub model: Option<String>,
 }
 
 /// 检索结果
@@ -635,6 +639,12 @@ impl LLMClient for MockLLMClient {
         let final_chunk = Ok(StreamChunk {
             content: String::new(),
             is_final: true,
+            usage: Some(TokenUsage {
+                prompt_tokens: 100,
+                completion_tokens: 50,
+                total_tokens: 150,
+            }),
+            model: Some(self.model_name.clone()),
         });
 
         let all_chunks: Vec<Result<StreamChunk>> = full_response
@@ -643,6 +653,8 @@ impl LLMClient for MockLLMClient {
                 Ok(StreamChunk {
                     content: c.to_string(),
                     is_final: false,
+                    usage: None,
+                    model: None,
                 })
             })
             .chain(std::iter::once(final_chunk))

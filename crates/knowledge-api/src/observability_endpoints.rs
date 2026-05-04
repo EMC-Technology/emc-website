@@ -137,6 +137,14 @@ impl ApiError {
     }
 }
 
+impl From<ApiError> for error_core::ErrorObject {
+    fn from(err: ApiError) -> Self {
+        match err {
+            ApiError::Forbidden { message, code } => error_core::helpers::observability_forbidden(&message, &code),
+        }
+    }
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
         let (status, body) = match self {

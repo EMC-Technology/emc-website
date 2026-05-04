@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use thiserror::Error;
 
 /// 嵌入错误类型
@@ -28,6 +29,21 @@ pub enum EmbeddingError {
     /// 文件读写等系统 IO 错误
     #[error("IO错误: {0}")]
     IoError(#[from] std::io::Error),
+}
+
+impl From<EmbeddingError> for error_core::ErrorObject {
+    fn from(err: EmbeddingError) -> Self {
+        use error_core::helpers;
+        match err {
+            EmbeddingError::ConfigError(msg) => helpers::embedding_config_error(&msg),
+            EmbeddingError::ModelNotLoaded(msg) => helpers::embedding_model_not_loaded(&msg),
+            EmbeddingError::ModelLoadFailed(msg) => helpers::embedding_model_load_failed(&msg),
+            EmbeddingError::InferenceFailed(msg) => helpers::embedding_inference_failed(&msg),
+            EmbeddingError::TokenizerError(msg) => helpers::embedding_tokenizer_error(&msg),
+            EmbeddingError::EmptyInput => helpers::embedding_empty_input(),
+            EmbeddingError::IoError(e) => helpers::embedding_io_error(&e.to_string()),
+        }
+    }
 }
 
 /// 嵌入模型类型枚举
@@ -134,6 +150,7 @@ pub struct EmbeddingModelInfo {
 }
 
 /// 嵌入模型 Trait
+#[async_trait::async_trait]
 pub trait EmbeddingModel: Send + Sync {
     /// 生成文本的嵌入向量
     ///
@@ -143,7 +160,18 @@ pub trait EmbeddingModel: Send + Sync {
     /// - `EmbeddingError::ModelNotLoaded`：模型未加载
     /// - `EmbeddingError::InferenceFailed`：推理失败
     /// - `EmbeddingError::TokenizerError`：分词器错误
-    fn embed(&self, text: &str) -> Result<EmbeddingResult, EmbeddingError>;
+    async fn embed(&self, text: &str) -> Result<EmbeddingResult, EmbeddingError>;
+
+    /// 批量生成文本的嵌入向量
+    ///
+    /// # Errors
+    ///
+    /// - `EmbeddingError::EmptyInput`：输入文本为空
+    /// - `EmbeddingError::ModelNotLoaded`：模型未加载
+    /// - `EmbeddingError::InferenceFailed`：推理失败
+    /// - `EmbeddingError::TokenizerError`：分词器错误
+    async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<EmbeddingResult>, EmbeddingError>;
+
 
     /// 获取嵌入维度
     fn embedding_dim(&self) -> usize;
@@ -158,7 +186,7 @@ pub trait EmbeddingModel: Send + Sync {
 
     /// 检查模型是否已初始化
     fn is_initialized(&self) -> bool {
-        true
+        false
     }
 
     /// 初始化模型
@@ -193,10 +221,13 @@ pub trait EmbeddingModel: Send + Sync {
 }
 
 /// 嵌入结果
+///
+/// `vector` 字段使用 `Arc<Vec<f32>>` 包装，使得 Clone 操作仅增加引用计数
+/// 而非深拷贝整个嵌入向量（通常数千维），显著降低内存分配开销。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbeddingResult {
-    /// 嵌入向量
-    pub vector: Vec<f32>,
+    /// 嵌入向量（`Arc` 包装，Clone 为浅拷贝）
+    pub vector: Arc<Vec<f32>>,
     /// 使用的token数量
     pub token_count: usize,
     /// 推理耗时（毫秒）

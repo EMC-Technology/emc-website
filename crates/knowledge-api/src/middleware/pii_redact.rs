@@ -248,8 +248,7 @@ pub async fn pii_redact_middleware(
     next: Next,
 ) -> Response {
     let pii_enabled = std::env::var("PII_REDACTION_ENABLED")
-        .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
-        .unwrap_or(true);
+        .map_or(true, |v| v.eq_ignore_ascii_case("true") || v == "1");
 
     if !pii_enabled {
         return next.run(request).await;

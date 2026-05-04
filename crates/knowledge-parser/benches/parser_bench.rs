@@ -54,139 +54,6 @@ fn generate_large_markdown(size_kb: usize) -> String {
     output
 }
 
-#[allow(dead_code)]
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::literal_string_with_formatting_args)]
-fn generate_code_content(lang: &str, size_kb: usize) -> String {
-    match lang {
-        "rust" => {
-            let fn_template = r#"/// Documentation comment for function_{i}
-pub fn function_{i}(input: &str) -> Result<String, Box<dyn std::error::Error>> {{
-    let processed = input
-        .lines()
-        .filter(|line| !line.trim_start().starts_with("//"))
-        .map(|line| line.trim())
-        .collect::<Vec<_>>()
-        .join("\n");
-    Ok(processed)
-}}
-
-#[cfg(test)]
-mod test_{i} {{
-    use super::*;
-
-    #[test]
-    fn test_function_{i}() {{
-        let result = function_{i}("hello world").unwrap();
-        assert!(!result.is_empty());
-    }}
-}}
-"#;
-            let mut output = String::with_capacity(size_kb * 1024);
-            output.push_str("//! Auto-generated Rust file for benchmarking\n\n");
-            let struct_def = r"#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BenchStruct {
-    pub id: u64,
-    pub name: String,
-    pub data: Vec<u8>,
-    pub metadata: Option<serde_json::Value>,
-}
-";
-            output.push_str(struct_def);
-            for i in 0.. {
-                let fn_code = fn_template.replace("{i}", &i.to_string());
-                if output.len() + fn_code.len() > size_kb * 1024 {
-                    break;
-                }
-                output.push_str(&fn_code);
-            }
-            output
-        }
-        "python" => {
-            let fn_template = r##"""Documentation string for function_{i}."""
-def function_{i}(input: str) -> list[str]:
-    """Process input and return filtered lines."""
-    return [
-        line.strip().rstrip()
-        for line in input.splitlines()
-        if not line.lstrip().startswith("#")
-    ]
-
-
-class TestClass{i}:
-    """Test class {i} for benchmarking."""
-
-    def __init__(self, value: int = 0):
-        self.value = value
-        self._cache: dict[str, Any] = {{}}
-
-    def process(self, data: list[int]) -> int:
-        return sum(x * self.value for x in data if x > 0)
-
-
-if __name__ == "__main__":
-    result = function_{i}("hello from python")
-    print(f"Result: {{result}}")
-"##;
-            let mut output = String::with_capacity(size_kb * 1024);
-            output.push_str("\"\"\"Auto-generated Python file for benchmarking\n\n");
-            for i in 0.. {
-                let fn_code = fn_template.replace("{i}", &i.to_string());
-                if output.len() + fn_code.len() > size_kb * 1024 {
-                    break;
-                }
-                output.push_str(&fn_code);
-            }
-            output
-        }
-        "javascript" => {
-            let fn_template = r"
-/**
- * Documentation for function{i}
- * @param {{string}} input - The input string to process
- * @returns {{string[]}} Filtered lines
- */
-function function{i}(input) {{
-    return input
-        .split('\n')
-        .filter(line => !line.trimStart().startsWith('//'))
-        .map(line => line.trim());
-}}
-
-class TestClass{i}}{{
-    /**
-     * Test class {i}
-     * @param {{number}} value - Initial value
-     */
-    constructor(value = 0) {{
-        this.value = value;
-        this._cache = new Map();
-    }}
-
-    /** Process an array of numbers */
-    process(data) {{
-        return data.filter(x => x > 0).reduce((acc, x) => acc + x * this.value, 0);
-    }}
-}}
-
-// Export for module usage
-module.exports = {{ function{i}, TestClass{i} }};
-";
-            let mut output = String::with_capacity(size_kb * 1024);
-            output.push_str("// Auto-generated JavaScript file for benchmarking\n\n");
-            for i in 0.. {
-                let fn_code = fn_template.replace("{i}", &i.to_string());
-                if output.len() + fn_code.len() > size_kb * 1024 {
-                    break;
-                }
-                output.push_str(&fn_code);
-            }
-            output
-        }
-        _ => panic!("不支持的代码语言: {lang}"),
-    }
-}
-
 fn bench_markdown_parse_comrak(c: &mut Criterion) {
     let mut group = c.benchmark_group("parser_markdown_comrak");
 
@@ -275,7 +142,7 @@ fn bench_text_chunking(c: &mut Criterion) {
                 &text,
                 |b, content| {
                     b.iter(|| {
-                        black_box(config_splitter.split_to_blocks(black_box(content)).unwrap());
+                        black_box(config_splitter.split_to_blocks(black_box(content), "bench://chunk").unwrap());
                     });
                 },
             );
@@ -285,7 +152,7 @@ fn bench_text_chunking(c: &mut Criterion) {
     let large_text = generate_large_markdown(10_000);
     group.throughput(Throughput::Bytes(large_text.len() as u64));
     group.bench_with_input("split_10mb_markdown", &large_text, |b, content| {
-        b.iter(|| { black_box(splitter.split_to_blocks(black_box(content)).unwrap()); });
+        b.iter(|| { black_box(splitter.split_to_blocks(black_box(content), "bench://10mb").unwrap()); });
     });
 
     group.finish();

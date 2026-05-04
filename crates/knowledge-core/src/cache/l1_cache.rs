@@ -1,6 +1,6 @@
 use moka::future::Cache as MokaCache;
 use serde::{Serialize, de::DeserializeOwned};
-use std::sync::RwLock as StdRwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 /// L1 缓存配置
@@ -52,14 +52,14 @@ pub struct L1Cache<V: Serialize + DeserializeOwned + Clone + Send + Sync + 'stat
     /// Moka 并发缓存实例
     inner: MokaCache<String, V>,
     /// 缓存配置（预留：运行时动态调整缓存参数尚未实现，UPCM 流程驱动后实现热更新）
-    #[allow(dead_code)]
+    #[allow(dead_code)] // 预留：缓存策略接口，待集成到上层模块
     config: L1CacheConfig,
     /// 缓存实例名称（用于 metrics 标识）
     name: String,
     /// 命中计数器
-    hits: StdRwLock<u64>,
+    hits: AtomicU64,
     /// 未命中计数器
-    misses: StdRwLock<u64>,
+    misses: AtomicU64,
 }
 
 impl<V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static> L1Cache<V> {
@@ -80,8 +80,8 @@ impl<V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static> L1Cache<V>
             inner: cache,
             config,
             name: name.to_string(),
-            hits: StdRwLock::new(0),
-            misses: StdRwLock::new(0),
+            hits: AtomicU64::new(0),
+            misses: AtomicU64::new(0),
         }
     }
 
@@ -98,16 +98,10 @@ impl<V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static> L1Cache<V>
         let start = std::time::Instant::now();
 
         let result = if let Some(value) = self.inner.get(key).await {
-            *self
-                .hits
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) += 1;
+            self.hits.fetch_add(1, Ordering::Relaxed);
             Some(value)
         } else {
-            *self
-                .misses
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) += 1;
+            self.misses.fetch_add(1, Ordering::Relaxed);
             None
         };
 
@@ -153,14 +147,8 @@ impl<V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static> L1Cache<V>
     /// 清空整个缓存并重置统计信息
     pub fn clear(&self) {
         self.inner.invalidate_all();
-        *self
-            .hits
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = 0;
-        *self
-            .misses
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = 0;
+        self.hits.store(0, Ordering::Relaxed);
+        self.misses.store(0, Ordering::Relaxed);
     }
 
     /// 获取缓存统计信息
@@ -168,14 +156,8 @@ impl<V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static> L1Cache<V>
         CacheStats {
             name: self.name.clone(),
             entries: self.inner.entry_count(),
-            hits: *self
-                .hits
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
-            misses: *self
-                .misses
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            hits: self.hits.load(Ordering::Relaxed),
+            misses: self.misses.load(Ordering::Relaxed),
             hit_rate: self.hit_rate(),
         }
     }
@@ -186,14 +168,8 @@ impl<V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static> L1Cache<V>
     }
 
     fn hit_rate(&self) -> f64 {
-        let hits = *self
-            .hits
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let misses = *self
-            .misses
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let hits = self.hits.load(Ordering::Relaxed);
+        let misses = self.misses.load(Ordering::Relaxed);
         let total = hits + misses;
         if total == 0 {
             0.0

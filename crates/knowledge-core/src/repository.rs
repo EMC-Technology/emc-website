@@ -66,16 +66,13 @@ impl<D: DatabaseClient> DocumentRepository<D> {
 
     /// 创建新文档
     pub async fn create(&self, doc: &Document) -> Result<Document> {
-        let mut doc = doc.clone();
-        let results = self.client.create("document", &doc).await?;
+        let results = self.client.create("document", doc).await?;
 
         let value = results.into_iter().next().ok_or_else(|| {
             helpers::db_error("create document: empty result")
         })?;
 
-        let created: Document = deserialize_value(value)?;
-        doc.id = created.id;
-        Ok(doc)
+        deserialize_value(value)
     }
 
     /// 根据 ID 查找文档
@@ -160,16 +157,13 @@ impl<D: DatabaseClient> BlockRepository<D> {
 
     /// 创建新块
     pub async fn create(&self, block: &Block) -> Result<Block> {
-        let mut block = block.clone();
-        let results = self.client.create("block", &block).await?;
+        let results = self.client.create("block", block).await?;
 
         let value = results.into_iter().next().ok_or_else(|| {
             helpers::db_error("create block: empty result")
         })?;
 
-        let created: Block = deserialize_value(value)?;
-        block.id = created.id;
-        Ok(block)
+        deserialize_value(value)
     }
 
     /// 根据 ID 查找块
@@ -264,16 +258,13 @@ impl<D: DatabaseClient> TokenRepository<D> {
 
     /// 创建新词元
     pub async fn create(&self, token: &Token) -> Result<Token> {
-        let mut token = token.clone();
-        let results = self.client.create("token", &token).await?;
+        let results = self.client.create("token", token).await?;
 
         let value = results.into_iter().next().ok_or_else(|| {
             helpers::db_error("create token: empty result")
         })?;
 
-        let created: Token = deserialize_value(value)?;
-        token.id = created.id;
-        Ok(token)
+        deserialize_value(value)
     }
 
     /// 批量插入词元
@@ -360,16 +351,13 @@ impl<D: DatabaseClient> ReferenceRepository<D> {
 
     /// 创建新引用
     pub async fn create(&self, reference: &Reference) -> Result<Reference> {
-        let mut reference = reference.clone();
-        let results = self.client.create("reference", &reference).await?;
+        let results = self.client.create("reference", reference).await?;
 
         let value = results.into_iter().next().ok_or_else(|| {
             helpers::db_error("create reference: empty result")
         })?;
 
-        let created: Reference = deserialize_value(value)?;
-        reference.id = created.id;
-        Ok(reference)
+        deserialize_value(value)
     }
 
     /// 批量插入引用
@@ -437,7 +425,7 @@ impl<D: DatabaseClient> ReferenceRepository<D> {
         let bindings = match ref_type {
             Some(rt) => {
                 let rt_json = serde_json::to_string(&rt)
-                    .map_err(|e| helpers::internal_error(&format!("RefType 序列化失败: {e}")))?;
+                    .map_err(|e| helpers::serde_error(&format!("RefType 序列化失败: {e}")))?;
                 serde_json::json!({ "id": id.to_string(), "ref_type": rt_json })
             }
             None => serde_json::json!({ "id": id.to_string() }),
@@ -456,7 +444,7 @@ impl<D: DatabaseClient> ReferenceRepository<D> {
         let bindings = match ref_type {
             Some(rt) => {
                 let rt_json = serde_json::to_string(&rt)
-                    .map_err(|e| helpers::internal_error(&format!("RefType 序列化失败: {e}")))?;
+                    .map_err(|e| helpers::serde_error(&format!("RefType 序列化失败: {e}")))?;
                 serde_json::json!({ "id": id.to_string(), "ref_type": rt_json })
             }
             None => serde_json::json!({ "id": id.to_string() }),

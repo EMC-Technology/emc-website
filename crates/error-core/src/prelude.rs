@@ -7,6 +7,7 @@ pub use crate::error_code::ErrorCode;
 pub use crate::error_object::ErrorObject;
 pub use crate::error_capture::ErrorCapture;
 pub use crate::propagation::{ContextFrame, RecoveryHint, RetryConfig};
+#[cfg(feature = "logging")]
 pub use crate::logging::LogEntry;
 pub use crate::recovery::{RecoveryStateMachine, ExponentialBackoff, CircuitBreaker};
 pub use crate::user_prompt::UserPromptManager;

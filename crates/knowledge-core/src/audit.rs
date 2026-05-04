@@ -194,14 +194,11 @@ impl AuditLogger {
             scope: scope.to_string(),
         };
 
-        let json = serde_json::to_string(&entry)?;
+        let json = serde_json::to_vec(&entry)?;
 
-        writeln!(
-            self.writer.lock().map_err(|_| {
-                helpers::internal_error("Mutex poisoned: 审计日志写入器锁获取失败")
-            })?,
-            "{json}"
-        )?;
+        self.writer.lock().map_err(|_| {
+            helpers::io_error("Mutex poisoned: 审计日志写入器锁获取失败")
+        })?.write_all(&json)?;
 
         Ok(())
     }
@@ -254,7 +251,7 @@ impl AuditLogger {
     /// 当缓冲区刷新失败或 Mutex 锁获取失败时返回错误
     pub fn close(&self) -> Result<()> {
         self.writer.lock().map_err(|_| {
-            helpers::internal_error("Mutex poisoned: 审计日志写入器锁获取失败")
+            helpers::io_error("Mutex poisoned: 审计日志写入器锁获取失败")
         })?.flush()?;
         Ok(())
     }

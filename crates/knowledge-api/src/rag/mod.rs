@@ -30,6 +30,8 @@
 
 pub mod engine;
 pub mod stream;
+pub mod ollama_client;
 
 pub use engine::{RAGEngine, RAGRequest, RAGResponse, RAGConfig, LLMClient, Retriever, RetrievalResult, MockRetriever};
 pub use stream::{RAGStreamChunk, ChunkType, SSEFormatter};
+pub use ollama_client::{OllamaLLMClient, OllamaConfig};

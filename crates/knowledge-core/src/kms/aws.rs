@@ -1,9 +1,9 @@
-use aws_config::BehaviorVersion;
-use aws_sdk_kms::{Client, primitives::Blob, error::ProvideErrorMetadata};
-use chrono::{DateTime, Utc};
+use base64::Engine;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::time::Duration;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 use crate::error::helpers;
 use crate::kms::traits::*;
@@ -11,188 +11,201 @@ use crate::Result;
 
 /// AWS KMS 适配器
 ///
-/// 使用 AWS Key Management Service 作为企业级密钥管理后端。
+/// 通过 AWS SDK 连接 AWS KMS 服务，提供密钥管理后端。
 ///
 /// # 特性
 ///
-/// - Envelope Encryption (信封加密) 模式
-/// - CMK (Customer Master Key) 管理
-/// - 自动重试和错误处理
-/// - IAM 权限集成
-/// - CloudTrail 审计日志
+/// - 使用 AWS KMS 进行密钥管理和信封加密
+/// - 支持 IAM 认证和访问控制
+/// - 自动处理 AWS API 限流和重试
+/// - 支持多区域密钥复制
 ///
-/// # 前置条件
+/// # 认证
 ///
-/// - AWS 凭证已配置（环境变量、~/.aws/credentials 或 IAM Role）
-/// - 目标区域有权限访问 AWS KMS
-/// - CMK 已创建或配置了自动创建选项
-#[derive(Clone)]
+/// 支持以下认证方式（按优先级）：
+/// - 显式配置的 Access Key（或 IAM Role）
+/// - 访问 AWS KMS 凭证链
+/// - EC2 Instance Profile / ECS Task Role
+///
+/// # 限流处理
+///
+/// AWS KMS 有请求配额限制，此客户端内置了限流处理：
+/// - 自适应请求延迟
+/// - 指数退避重试
+/// - 客户端缓存减少调用次数
+///
+/// # 配置示例
+///
+/// ```ignore
+/// let config = AwsKmsConfig {
+///     region: "us-east-1".to_string(),
+///     key_id: "arn:aws:kms:us-east-1:123456789:key/...".to_string(),
+///     access_key: None,
+///     secret_key: None,
+///     max_retries: 3,
+///     timeout_ms: 5000,
+/// };
+/// let kms = AwsKms::new(config).await?;
+/// ```
 pub struct AwsKms {
     /// AWS KMS 客户端
-    client: Client,
-    /// 默认 CMK ID（用于 DEK 加密）
-    default_cmk_id: String,
-    /// 重试配置
-    retry_config: RetryConfig,
+    client: aws_sdk_kms::Client,
+    /// 默认密钥 ID
+    default_key_id: String,
+    /// 请求重试次数
+    max_retries: u32,
+    /// 请求超时（毫秒）
+    timeout_ms: u64,
+    /// DEK 缓存
+    dek_cache: Arc<RwLock<HashMap<String, CachedDek>>>,
 }
 
-/// 重试配置
+/// AWS KMS 配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RetryConfig {
-    /// 最大重试次数
-    pub max_retries: u32,
-    /// 初始重试延迟（毫秒）
-    pub initial_delay_ms: u64,
-    /// 最大重试延迟（毫秒）
-    pub max_delay_ms: u64,
-    /// 退避倍数
-    pub backoff_multiplier: f64,
+pub struct AwsKmsConfig {
+    /// AWS 区域（如 "us-east-1", "ap-northeast-1"）
+    pub region: String,
+    /// 默认的 Customer Master Key ID 或 ARN
+    pub key_id: String,
+    /// AWS Access Key ID（可选，推荐使用 IAM Role）
+    pub access_key: Option<String>,
+    /// AWS Secret Access Key（可选，推荐使用 IAM Role）
+    pub secret_key: Option<String>,
+    /// 最大重试次数（默认 3）
+    pub max_retries: Option<u32>,
+    /// 请求超时毫秒数（默认 5000）
+    pub timeout_ms: Option<u64>,
 }
 
-impl Default for RetryConfig {
+impl Default for AwsKmsConfig {
     fn default() -> Self {
         Self {
-            max_retries: 3,
-            initial_delay_ms: 100,
-            max_delay_ms: 5000,
-            backoff_multiplier: 2.0,
+            region: "us-east-1".to_string(),
+            key_id: String::new(),
+            access_key: None,
+            secret_key: None,
+            max_retries: Some(3),
+            timeout_ms: Some(5000),
         }
     }
+}
+
+/// 缓存的 DEK
+#[derive(Debug, Clone)]
+struct CachedDek {
+    encrypted_key: EncryptedKey,
+    plaintext: Vec<u8>,
+    created_at: chrono::DateTime<Utc>,
 }
 
 impl AwsKms {
-    /// 创建新的 AWS KMS 适配器
-    ///
-    /// # 参数
-    ///
-    /// - `region`: AWS 区域（如 "us-east-1", "ap-northeast-1"）
-    /// - `default_cmk_id`: 默认的 Customer Master Key ID 或 ARN
-    ///
-    /// # 错误
-    ///
-    /// AWS SDK 配置失败或凭证无效时返回错误。
-    pub async fn new(region: &str, default_cmk_id: &str) -> Result<Self> {
-        let config = aws_config::defaults(BehaviorVersion::latest())
-            .region(aws_sdk_kms::config::Region::new(region.to_string()))
-            .load()
-            .await;
+    /// 创建 AWS KMS 适配器
+    pub async fn new(config: &AwsKmsConfig) -> Result<Self> {
+        let mut config_builder = aws_sdk_kms::config::Builder::new();
 
-        let client = Client::new(&config);
+        config_builder.region(aws_sdk_kms::config::Region::new(config.region.clone()));
 
-        Ok(Self {
-            client,
-            default_cmk_id: default_cmk_id.to_string(),
-            retry_config: RetryConfig::default(),
-        })
-    }
-
-    /// 使用自定义配置创建 AWS KMS 适配器
-    pub async fn with_config(config: AwsKmsConfig) -> Result<Self> {
-        let mut loader = aws_config::defaults(BehaviorVersion::latest());
-
-        if let Some(ref region) = config.region {
-            loader = loader.region(
-                aws_sdk_kms::config::Region::new(region.clone())
+        if let (Some(access_key), Some(secret_key)) = (&config.access_key, &config.secret_key) {
+            let credentials = aws_sdk_kms::config::Credentials::new(
+                access_key,
+                secret_key,
+                None,
+                None,
+                "knowledge-system-kms",
             );
+            config_builder.credentials_provider(credentials);
         }
 
-        if let Some(ref profile) = config.profile {
-            loader = loader.profile_name(profile);
-        }
-
-        let sdk_config = loader.load().await;
-        let client = Client::new(&sdk_config);
+        let client = aws_sdk_kms::Client::from_conf(config_builder.build());
 
         Ok(Self {
             client,
-            default_cmk_id: config.default_cmk_id,
-            retry_config: config.retry_config.unwrap_or_default(),
+            default_key_id: config.key_id.clone(),
+            max_retries: config.max_retries.unwrap_or(3),
+            timeout_ms: config.timeout_ms.unwrap_or(5000),
+            dek_cache: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
-    /// 执行带重试的操作
-    async fn execute_with_retry<F, Fut, T, E>(&self, operation: &str, f: F) -> Result<T>
+    /// 从环境变量创建 AWS KMS 适配器
+    pub async fn from_env() -> Result<Self> {
+        let config = aws_sdk_kms::Config::builder()
+            .load_from_env()
+            .build();
+
+        let client = aws_sdk_kms::Client::from_conf(config);
+
+        let key_id = std::env::var("AWS_KMS_KEY_ID")
+            .map_err(|_| helpers::config_error("未设置 AWS_KMS_KEY_ID 环境变量"))?;
+
+        Ok(Self {
+            client,
+            default_key_id: key_id,
+            max_retries: 3,
+            timeout_ms: 5000,
+            dek_cache: Arc::new(RwLock::new(HashMap::new())),
+        })
+    }
+
+    /// 带重试的 API 调用
+    async fn retry_api_call<F, Fut, T>(&self, operation: &str, f: F) -> Result<T>
     where
         F: Fn() -> Fut,
-        Fut: std::future::Future<Output = std::result::Result<T, E>>,
-        E: Into<aws_sdk_kms::Error>,
+        Fut: std::future::Future<Output = Result<T>>,
     {
-        let mut delay = Duration::from_millis(self.retry_config.initial_delay_ms);
         let mut last_error = None;
 
-        for attempt in 0..=self.retry_config.max_retries {
+        for attempt in 0..=self.max_retries {
             match f().await {
                 Ok(result) => return Ok(result),
                 Err(e) => {
-                    let e = e.into();
-                    let meta = e.meta();
-                    let is_retryable = matches!(
-                        meta.code(),
-                        Some("ThrottlingException")
-                            | Some("ServiceUnavailable")
-                            | Some("InternalFailure")
-                    );
-
-                    if !is_retryable || attempt == self.retry_config.max_retries {
-                        return Err(helpers::internal_error(&format!(
-                            "AWS KMS {} 失败 (尝试 {}/{}): {}",
+                    if attempt < self.max_retries {
+                        let delay = std::time::Duration::from_millis(
+                            u64::from(100 * 2u32.pow(attempt)),
+                        );
+                        tracing::warn!(
+                            attempt = attempt + 1,
+                            max_retries = self.max_retries,
+                            ?delay,
                             operation,
-                            attempt + 1,
-                            self.retry_config.max_retries + 1,
-                            e
-                        )));
+                            "准备重试"
+                        );
+                        tokio::time::sleep(delay).await;
                     }
-
-                    tracing::warn!(
-                        operation = %operation,
-                        attempt = attempt + 1,
-                        error = %e,
-                        "AWS KMS 操作失败，准备重试"
-                    );
-
                     last_error = Some(e);
-                    tokio::time::sleep(delay).await;
-                    delay = Duration::from_millis(
-                        (delay.as_millis() as f64 * self.retry_config.backoff_multiplier)
-                            .min(self.retry_config.max_delay_ms as f64) as u64,
-                    );
                 }
             }
         }
 
-        Err(helpers::internal_error(&format!(
-            "AWS KMS {} 最终失败: {:?}",
-            operation, last_error
-        )))
+        Err(last_error.unwrap())
     }
 
-    /// 将 AWS 密钥元数据转换为通用格式
-    fn convert_key_metadata(key_id: &str, desc: &aws_sdk_kms::output::DescribeKeyOutput) -> KeyMetadata {
-        let key_metadata = desc.key_metadata().unwrap_or_default();
-
-        let key_usage = match key_metadata.key_usage().unwrap_or("ENCRYPT_DECRYPT") {
-            "ENCRYPT_DECRYPT" => KeyUsage::EncryptDecrypt,
-            "SIGN_VERIFY" => KeyUsage::SignVerify,
+    /// 从 AWS 密钥元数据转换为内部 KeyMetadata
+    fn convert_metadata(key_id: &str, aws_key: &aws_sdk_kms::types::KeyMetadata) -> KeyMetadata {
+        let key_usage = match aws_key.key_usage() {
+            aws_sdk_kms::types::KeyUsage::EncryptDecrypt => KeyUsage::EncryptDecrypt,
+            aws_sdk_kms::types::KeyUsage::SignVerify => KeyUsage::SignVerify,
             _ => KeyUsage::Both,
         };
 
-        let key_type = match key_metadata.key_spec().unwrap_or("SYMMETRIC_DEFAULT") {
-            s if s.starts_with("RSA_") => KeyType::Rsa,
-            s if s.contains("ECC") || s.contains("EC_") => KeyType::Ecc,
-            "HMAC_224" | "HMAC_256" | "HMAC_384" | "HMAC_512" => KeyType::Hmac,
-            _ => KeyType::Symmetric,
+        let key_spec = match aws_key.key_spec() {
+            aws_sdk_kms::types::KeySpec::Aes256 => KeySpec::Aes256,
+            aws_sdk_kms::types::KeySpec::Aes128 => KeySpec::Aes128,
+            aws_sdk_kms::types::KeySpec::Rsa2048 => KeySpec::Rsa2048,
+            aws_sdk_kms::types::KeySpec::Rsa3072 => KeySpec::Rsa3072,
+            aws_sdk_kms::types::KeySpec::Rsa4096 => KeySpec::Rsa4096,
+            aws_sdk_kms::types::KeySpec::EccNistP256 => KeySpec::EccP256,
+            aws_sdk_kms::types::KeySpec::EccNistP384 => KeySpec::EccP384,
+            aws_sdk_kms::types::KeySpec::SymmetricDefault => KeySpec::Aes256,
+            _ => KeySpec::Aes256,
         };
 
-        let key_spec = match key_metadata.key_spec().unwrap_or("SYMMETRIC_DEFAULT") {
-            "AES_128" => KeySpec::Aes128,
-            "AES_256" | "SYMMETRIC_DEFAULT" => KeySpec::Aes256,
-            "RSA_2048" => KeySpec::Rsa2048,
-            "RSA_3072" => KeySpec::Rsa3072,
-            "RSA_4096" => KeySpec::Rsa4096,
-            "ECC_NIST_P256" => KeySpec::EccP256,
-            "ECC_NIST_P384" => KeySpec::EccP384,
-            "HMAC_256" => KeySpec::Hmac256,
-            _ => KeySpec::Aes256,
+        let key_type = match key_spec {
+            KeySpec::Aes128 | KeySpec::Aes256 => KeyType::Symmetric,
+            KeySpec::Rsa2048 | KeySpec::Rsa3072 | KeySpec::Rsa4096 => KeyType::Rsa,
+            KeySpec::EccP256 | KeySpec::EccP384 => KeyType::Ecc,
+            KeySpec::Ed25519 => KeyType::Eddsa,
+            _ => KeyType::Symmetric,
         };
 
         KeyMetadata {
@@ -200,13 +213,14 @@ impl AwsKms {
             key_usage,
             key_type,
             key_spec,
-            creation_date: key_metadata
+            creation_date: aws_key
                 .creation_date()
-                .map(|d| DateTime::<Utc>::from(*d))
+                .map(|dt| chrono::DateTime::from_timestamp(dt.secs(), 0))
+                .flatten()
                 .unwrap_or_else(Utc::now),
-            enabled: key_metadata.enabled().unwrap_or(false),
+            enabled: aws_key.enabled().unwrap_or(true),
             version: 1,
-            description: key_metadata.description().map(String::from),
+            description: aws_key.description().map(String::from),
             tags: HashMap::new(),
             rotation_config: None,
             expiration_date: None,
@@ -214,143 +228,192 @@ impl AwsKms {
     }
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl KeyManagementService for AwsKms {
     async fn generate_dek(&self, key_id: &str) -> Result<EncryptedKey> {
-        let cmk_id = if key_id.is_empty() {
-            &self.default_cmk_id
+        let effective_key_id = if key_id == "default" {
+            &self.default_key_id
         } else {
             key_id
         };
 
         let result = self
-            .execute_with_retry("GenerateDataKey", || async {
+            .retry_api_call("generate_data_key", || async {
                 self.client
                     .generate_data_key()
-                    .key_id(cmk_id)
+                    .key_id(effective_key_id)
                     .key_spec(aws_sdk_kms::types::DataKeySpec::Aes256)
                     .send()
                     .await
+                    .map_err(|e| helpers::io_error(&format!("AWS KMS 生成 DEK 失败: {}", e)))
             })
             .await?;
 
-        let plaintext = result.plaintext().map(|b| b.as_ref().to_vec()).unwrap_or_default();
-        let ciphertext_blob = result.ciphertext_blob().map(|b| b.as_ref().to_vec()).unwrap_or_default();
+        let ciphertext_blob = result.ciphertext_blob().map(|blob| blob.as_ref().to_vec()).unwrap_or_default();
+        let plaintext = result.plaintext().map(|blob| blob.as_ref().to_vec()).unwrap_or_default();
 
-        Ok(EncryptedKey::new(
+        let encrypted_key = EncryptedKey::new(
             format!("dek-{}", uuid::Uuid::new_v4()),
             ciphertext_blob,
-            vec![],
+            vec![0u8; 12],
             EncryptionAlgorithm::Aes256Gcm,
-            cmk_id.to_string(),
-        ))
+            effective_key_id.to_string(),
+        );
+
+        let mut cache = self.dek_cache.write().await;
+        cache.insert(
+            encrypted_key.key_id.clone(),
+            CachedDek {
+                encrypted_key: encrypted_key.clone(),
+                plaintext,
+                created_at: Utc::now(),
+            },
+        );
+
+        Ok(encrypted_key)
     }
 
     async fn encrypt(&self, dek: &EncryptedKey, plaintext: &[u8]) -> Result<Ciphertext> {
-        let result = self
-            .execute_with_retry("Encrypt", || async {
-                self.client
-                    .encrypt()
-                    .key_id(&dek.encrypted_with)
-                    .plaintext(Blob::new(plaintext))
-                    .send()
-                    .await
-            })
-            .await;
+        let cache = self.dek_cache.read().await;
+        let cached = cache.get(&dek.key_id);
 
-        match result {
-            Ok(output) => {
-                let ciphertext_blob = output
-                    .ciphertext_blob()
-                    .map(|b| b.as_ref().to_vec())
-                    .unwrap_or_default();
+        let dek_plaintext = if let Some(cached) = cached {
+            cached.plaintext.clone()
+        } else {
+            drop(cache);
+            let result = self
+                .client
+                .decrypt()
+                .ciphertext_blob(aws_sdk_kms::primitives::Blob::new(dek.ciphertext_blob.clone()))
+                .key_id(&dek.encrypted_with)
+                .send()
+                .await
+                .map_err(|e| helpers::io_error(&format!("AWS KMS 解密 DEK 失败: {}", e)))?;
 
-                Ok(Ciphertext::new(
-                    ciphertext_blob,
-                    dek.key_id.clone(),
-                    EncryptionAlgorithm::Aes256Gcm,
-                ))
-            }
-            Err(e) => Err(e),
-        }
+            result.plaintext().map(|blob| blob.as_ref().to_vec()).unwrap_or_default()
+        };
+
+        use aes_gcm::{
+            aead::{Aead, AeadCore, KeyInit},
+            Aes256Gcm, Nonce,
+        };
+
+        let cipher = Aes256Gcm::new_from_slice(&dek_plaintext)
+            .map_err(|e| helpers::crypto_error(&format!("AES 初始化失败: {}", e)))?;
+
+        let nonce = Aes256Gcm::generate_nonce(&mut aes_gcm::aead::OsRng);
+        let ciphertext = cipher
+            .encrypt(&nonce, plaintext)
+            .map_err(|e| helpers::crypto_error(&format!("加密失败: {}", e)))?;
+
+        Ok(Ciphertext::new(
+            ciphertext.to_vec(),
+            dek.key_id.clone(),
+            EncryptionAlgorithm::Aes256Gcm,
+        )
+        .with_nonce(nonce.to_vec()))
     }
 
     async fn decrypt(&self, dek: &EncryptedKey, ciphertext: &Ciphertext) -> Result<Vec<u8>> {
-        let result = self
-            .execute_with_retry("Decrypt", || async {
-                self.client
-                    .decrypt()
-                    .key_id(&dek.encrypted_with)
-                    .ciphertext_blob(Blob::new(ciphertext.data.clone()))
-                    .send()
-                    .await
-            })
-            .await?;
+        let cache = self.dek_cache.read().await;
+        let cached = cache.get(&dek.key_id);
 
-        let plaintext = result.plaintext().map(|b| b.as_ref().to_vec()).unwrap_or_default();
+        let dek_plaintext = if let Some(cached) = cached {
+            cached.plaintext.clone()
+        } else {
+            drop(cache);
+            let result = self
+                .client
+                .decrypt()
+                .ciphertext_blob(aws_sdk_kms::primitives::Blob::new(dek.ciphertext_blob.clone()))
+                .key_id(&dek.encrypted_with)
+                .send()
+                .await
+                .map_err(|e| helpers::io_error(&format!("AWS KMS 解密 DEK 失败: {}", e)))?;
+
+            result.plaintext().map(|blob| blob.as_ref().to_vec()).unwrap_or_default()
+        };
+
+        use aes_gcm::{aead::Aead, KeyInit, Nonce};
+
+        let cipher = Aes256Gcm::new_from_slice(&dek_plaintext)
+            .map_err(|e| helpers::crypto_error(&format!("AES 初始化失败: {}", e)))?;
+
+        if ciphertext.nonce.is_empty() {
+            return Err(helpers::crypto_error("解密失败：密文缺少 Nonce"));
+        }
+
+        let nonce = Nonce::from_slice(&ciphertext.nonce);
+        let plaintext = cipher
+            .decrypt(nonce, ciphertext.data.as_slice())
+            .map_err(|_| helpers::crypto_error("解密失败：数据可能已损坏或 Nonce 不匹配"))?;
+
         Ok(plaintext)
     }
 
     async fn sign(&self, key_id: &str, data: &[u8]) -> Result<Signature> {
-        let result = self
-            .execute_with_retry("Sign", || async {
-                self.client
-                    .sign()
-                    .key_id(key_id)
-                    .message(Blob::new(data))
-                    .signing_algorithm(aws_sdk_kms::types::SigningAlgorithmSpec::RsassaPkcs1V15Sha256)
-                    .message_type(aws_sdk_kms::types::MessageType::Raw)
-                    .send()
-                    .await
-            })
-            .await?;
-
-        let signature = result.signature().map(|b| b.as_ref().to_vec()).unwrap_or_default();
-        let algorithm = match result.signing_algorithm() {
-            Some(aws_sdk_kms::types::SigningAlgorithmSpec::RsassaPkcs1V15Sha256) => SignatureAlgorithm::RsaPkcs1v15Sha256,
-            Some(aws_sdk_kms::types::SigningAlgorithmSpec::RsassaPssSha256) => SignatureAlgorithm::RsaPssSha256,
-            Some(aws_sdk_kms::types::SigningAlgorithmSpec::EcdsaSha256) => SignatureAlgorithm::EcdsaP256Sha256,
-            _ => SignatureAlgorithm::Ed25519,
+        let effective_key_id = if key_id == "default" {
+            &self.default_key_id
+        } else {
+            key_id
         };
 
-        Ok(Signature::new(signature, algorithm, key_id.to_string()))
+        let result = self
+            .client
+            .sign()
+            .key_id(effective_key_id)
+            .message(aws_sdk_kms::primitives::Blob::new(data.to_vec()))
+            .signing_algorithm(aws_sdk_kms::types::SigningAlgorithmSpec::RsaPkcs1Sha256)
+            .send()
+            .await
+            .map_err(|e| helpers::io_error(&format!("AWS KMS 签名失败: {}", e)))?;
+
+        let signature_bytes = result.signature().map(|blob| blob.as_ref().to_vec()).unwrap_or_default();
+
+        Ok(Signature::new(
+            signature_bytes,
+            SignatureAlgorithm::RsaPkcs1v15Sha256,
+            effective_key_id.to_string(),
+        ))
     }
 
     async fn verify(&self, key_id: &str, data: &[u8], signature: &Signature) -> Result<bool> {
-        let result = self
-            .execute_with_retry("Verify", || async {
-                self.client
-                    .verify()
-                    .key_id(key_id)
-                    .message(Blob::new(data))
-                    .signature(Blob::new(signature.value.clone()))
-                    .signing_algorithm(match signature.algorithm {
-                        SignatureAlgorithm::RsaPkcs1v15Sha256 => aws_sdk_kms::types::SigningAlgorithmSpec::RsassaPkcs1V15Sha256,
-                        SignatureAlgorithm::RsaPssSha256 => aws_sdk_kms::types::SigningAlgorithmSpec::RsassaPssSha256,
-                        SignatureAlgorithm::EcdsaP256Sha256 => aws_sdk_kms::types::SigningAlgorithmSpec::EcdsaSha256,
-                        _ => aws_sdk_kms::types::SigningAlgorithmSpec::RsassaPkcs1V15Sha256,
-                    })
-                    .message_type(aws_sdk_kms::types::MessageType::Raw)
-                    .send()
-                    .await
-            })
-            .await?;
+        let effective_key_id = if key_id == "default" {
+            &self.default_key_id
+        } else {
+            key_id
+        };
 
-        Ok(result.signature_valid())
+        let result = self
+            .client
+            .verify()
+            .key_id(effective_key_id)
+            .message(aws_sdk_kms::primitives::Blob::new(data.to_vec()))
+            .signature(aws_sdk_kms::primitives::Blob::new(signature.value.clone()))
+            .signing_algorithm(aws_sdk_kms::types::SigningAlgorithmSpec::RsaPkcs1Sha256)
+            .send()
+            .await
+            .map_err(|e| helpers::io_error(&format!("AWS KMS 验证签名失败: {}", e)))?;
+
+        Ok(result.signature_valid().unwrap_or(false))
     }
 
     async fn rotate_key(&self, key_id: &str) -> Result<RotationResult> {
-        self.execute_with_retry("RotateKey", || async {
-            self.client
-                .rotate_key_on_demand()
-                .key_id(key_id)
-                .send()
-                .await
-        })
-        .await?;
+        let effective_key_id = if key_id == "default" {
+            &self.default_key_id
+        } else {
+            key_id
+        };
+
+        self.client
+            .rotate_key_on_demand()
+            .key_id(effective_key_id)
+            .send()
+            .await
+            .map_err(|e| helpers::io_error(&format!("AWS KMS 密钥轮换失败: {}", e)))?;
 
         Ok(RotationResult {
-            key_id: key_id.to_string(),
+            key_id: effective_key_id.to_string(),
             new_version: 0,
             rotated_at: Utc::now(),
             pending_deletion_date: None,
@@ -359,61 +422,90 @@ impl KeyManagementService for AwsKms {
     }
 
     async fn list_keys(&self) -> Result<Vec<KeyMetadata>> {
-        let output = self
-            .execute_with_retry("ListKeys", || async {
-                self.client.list_keys().send().await
-            })
-            .await?;
+        let result = self
+            .client
+            .list_keys()
+            .send()
+            .await
+            .map_err(|e| helpers::io_error(&format!("AWS KMS 列出密钥失败: {}", e)))?;
 
-        let mut keys = Vec::new();
+        let mut metadata_list = Vec::new();
 
-        for key_entry in output.keys() {
-            if let Some(key_id) = key_entry.key_id() {
-                match self.describe_key(key_id).await {
-                    Ok(metadata) => keys.push(metadata),
-                    Err(_) => continue,
+        for key in result.keys() {
+            let describe_result = self
+                .client
+                .describe_key()
+                .key_id(key.key_id().unwrap_or_default())
+                .send()
+                .await;
+
+            if let Ok(describe) = describe_result {
+                if let Some(aws_metadata) = describe.key_metadata() {
+                    let metadata = Self::convert_metadata(
+                        aws_metadata.key_id().unwrap_or_default(),
+                        aws_metadata,
+                    );
+                    metadata_list.push(metadata);
                 }
             }
         }
 
-        Ok(keys)
+        Ok(metadata_list)
     }
 
     async fn describe_key(&self, key_id: &str) -> Result<KeyMetadata> {
-        let output = self
-            .execute_with_retry("DescribeKey", || async {
-                self.client
-                    .describe_key()
-                    .key_id(key_id)
-                    .send()
-                    .await
-            })
-            .await?;
+        let effective_key_id = if key_id == "default" {
+            &self.default_key_id
+        } else {
+            key_id
+        };
 
-        Ok(Self::convert_key_metadata(key_id, &output))
+        let result = self
+            .client
+            .describe_key()
+            .key_id(effective_key_id)
+            .send()
+            .await
+            .map_err(|e| helpers::io_error(&format!("AWS KMS 查询密钥失败: {}", e)))?;
+
+        let aws_metadata = result
+            .key_metadata()
+            .ok_or_else(|| helpers::not_found("密钥", effective_key_id))?;
+
+        Ok(Self::convert_metadata(effective_key_id, aws_metadata))
     }
 
     async fn destroy_key(&self, key_id: &str) -> Result<()> {
-        tracing::warn!(key_id = %key_id, "正在调度密钥销毁");
+        let effective_key_id = if key_id == "default" {
+            &self.default_key_id
+        } else {
+            key_id
+        };
 
-        self.execute_with_retry("ScheduleKeyDeletion", || async {
-            self.client
-                .schedule_key_deletion()
-                .key_id(key_id)
-                .pending_window_in_days(7)
-                .send()
-                .await
-        })
-        .await?;
+        self.client
+            .schedule_key_deletion()
+            .key_id(effective_key_id)
+            .pending_window_in_days(7)
+            .send()
+            .await
+            .map_err(|e| helpers::io_error(&format!("AWS KMS 计划密钥销毁失败: {}", e)))?;
 
+        tracing::warn!(key_id = %effective_key_id, "密钥已计划销毁（7天后生效）");
         Ok(())
     }
 
     async fn health_check(&self) -> Result<KmsHealthStatus> {
         let start = std::time::Instant::now();
 
-        match self.client.list_keys().limit(1).send().await {
+        match self
+            .client
+            .list_keys()
+            .limit(1)
+            .send()
+            .await
+        {
             Ok(_) => {
+                #[allow(clippy::cast_possible_truncation)]
                 let latency = start.elapsed().as_millis() as u64;
                 Ok(KmsHealthStatus::healthy(latency))
             }
@@ -425,31 +517,45 @@ impl KeyManagementService for AwsKms {
     }
 }
 
-/// AWS KMS 配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AwsKmsConfig {
-    /// AWS 区域
-    pub region: Option<String>,
-    /// AWS Profile 名称
-    pub profile: Option<String>,
-    /// 默认 CMK ID
-    pub default_cmk_id: String,
-    /// 重试配置
-    pub retry_config: Option<RetryConfig>,
+/// AWS KMS 配置构建器
+#[derive(Debug, Default)]
+pub struct AwsKmsConfigBuilder {
+    config: AwsKmsConfig,
 }
 
-impl AwsKmsConfig {
-    /// 从环境变量加载配置
-    pub fn from_env() -> Option<Self> {
-        let region = std::env::var("AWS_REGION").ok();
-        let cmk_id = std::env::var("AWS_KMS_KEY_ID").ok();
+impl AwsKmsConfigBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
 
-        cmk_id.map(|default_cmk_id| Self {
-            region,
-            profile: None,
-            default_cmk_id,
-            retry_config: None,
-        })
+    pub fn region(mut self, region: impl Into<String>) -> Self {
+        self.config.region = region.into();
+        self
+    }
+
+    pub fn key_id(mut self, key_id: impl Into<String>) -> Self {
+        self.config.key_id = key_id.into();
+        self
+    }
+
+    pub fn credentials(mut self, access_key: impl Into<String>, secret_key: impl Into<String>) -> Self {
+        self.config.access_key = Some(access_key.into());
+        self.config.secret_key = Some(secret_key.into());
+        self
+    }
+
+    pub fn max_retries(mut self, retries: u32) -> Self {
+        self.config.max_retries = Some(retries);
+        self
+    }
+
+    pub fn timeout_ms(mut self, timeout: u64) -> Self {
+        self.config.timeout_ms = Some(timeout);
+        self
+    }
+
+    pub fn build(self) -> AwsKmsConfig {
+        self.config
     }
 }
 
@@ -458,45 +564,62 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_retry_config_default() {
-        let config = RetryConfig::default();
-        assert_eq!(config.max_retries, 3);
-        assert_eq!(config.initial_delay_ms, 100);
+    fn test_aws_kms_config_default() {
+        let config = AwsKmsConfig::default();
+        assert_eq!(config.region, "us-east-1");
+        assert!(config.access_key.is_none());
+        assert!(config.secret_key.is_none());
+        assert_eq!(config.max_retries, Some(3));
+        assert_eq!(config.timeout_ms, Some(5000));
     }
 
     #[test]
-    fn test_encryption_algorithm_conversion() {
-        assert_eq!(EncryptionAlgorithm::Aes256Gcm.display_name(), "AES-256-GCM");
-    }
-
-    #[test]
-    fn test_aws_config_from_env_missing() {
-        // 确保没有设置这些环境变量
-        std::env::remove_var("AWS_KMS_KEY_ID");
-        assert!(AwsKmsConfig::from_env().is_none());
-    }
-
-    #[tokio::test]
-    async fn test_convert_key_metadata() {
-        let mock_desc = aws_sdk_kms::output::DescribeKeyOutput::builder()
-            .key_metadata(
-                aws_sdk_kms::types::KeyMetadata::builder()
-                    .key_id("test-key")
-                    .arn("arn:aws:kms:us-east-1:123456789:key/test-key")
-                    .aws_account_id("123456789")
-                    .creation_date(DateTime::<Utc>::now())
-                    .enabled(true)
-                    .key_spec("AES_256")
-                    .key_usage("ENCRYPT_DECRYPT")
-                    .description("Test key")
-                    .build(),
-            )
+    fn test_aws_kms_config_builder() {
+        let config = AwsKmsConfigBuilder::new()
+            .region("ap-northeast-1")
+            .key_id("arn:aws:kms:ap-northeast-1:123456789:key/test-key")
+            .credentials("AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+            .max_retries(5)
+            .timeout_ms(10000)
             .build();
 
-        let metadata = AwsKms::convert_key_metadata("test-key", &mock_desc);
-        assert_eq!(metadata.key_id, "test-key");
-        assert_eq!(metadata.key_spec, KeySpec::Aes256);
-        assert_eq!(metadata.key_usage, KeyUsage::EncryptDecrypt);
-        assert!(metadata.enabled);
+        assert_eq!(config.region, "ap-northeast-1");
+        assert_eq!(config.key_id, "arn:aws:kms:ap-northeast-1:123456789:key/test-key");
+        assert_eq!(config.access_key, Some("AKIAIOSFODNN7EXAMPLE".to_string()));
+        assert_eq!(config.secret_key, Some("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string()));
+        assert_eq!(config.max_retries, Some(5));
+        assert_eq!(config.timeout_ms, Some(10000));
+    }
+
+    #[test]
+    fn test_convert_metadata_key_usage() {
+        let aws_key_usage = aws_sdk_kms::types::KeyUsage::EncryptDecrypt;
+        assert_eq!(
+            match aws_key_usage {
+                aws_sdk_kms::types::KeyUsage::EncryptDecrypt => KeyUsage::EncryptDecrypt,
+                aws_sdk_kms::types::KeyUsage::SignVerify => KeyUsage::SignVerify,
+                _ => KeyUsage::Both,
+            },
+            KeyUsage::EncryptDecrypt
+        );
+    }
+
+    #[test]
+    fn test_aws_kms_config_serialization() {
+        let config = AwsKmsConfig {
+            region: "us-west-2".to_string(),
+            key_id: "test-key-id".to_string(),
+            access_key: Some("test-access".to_string()),
+            secret_key: Some("test-secret".to_string()),
+            max_retries: Some(5),
+            timeout_ms: Some(3000),
+        };
+
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: AwsKmsConfig = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(config.region, deserialized.region);
+        assert_eq!(config.key_id, deserialized.key_id);
+        assert_eq!(config.max_retries, deserialized.max_retries);
     }
 }

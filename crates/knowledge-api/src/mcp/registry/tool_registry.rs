@@ -457,7 +457,7 @@ impl ToolRegistry {
         let handler = self
             .handlers
             .get(name)
-            .ok_or_else(|| helpers::internal_error(&format!("工具 '{name}' 缺少处理器")))?;
+            .ok_or_else(|| helpers::not_found("ToolHandler", &format!("工具 '{name}' 缺少处理器")))?;
 
         handler.validate_args(&definition.input_schema, &arguments)?;
 

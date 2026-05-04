@@ -761,7 +761,7 @@ impl ComplianceReporter {
             })
             .collect();
 
-        top_users.sort_by(|a, b| b.action_count.cmp(&a.action_count));
+        top_users.sort_by_key(|b| std::cmp::Reverse(b.action_count));
         top_users.truncate(10);
 
         UserActivityStats {
@@ -797,7 +797,7 @@ impl ComplianceReporter {
             })
             .collect();
 
-        top_resources.sort_by(|a, b| b.access_count.cmp(&a.access_count));
+        top_resources.sort_by_key(|b| std::cmp::Reverse(b.access_count));
         top_resources.truncate(20);
 
         ResourceAccessHeatmap {
@@ -888,7 +888,7 @@ impl ComplianceReporter {
             }
         }
 
-        alerts.sort_by(|a, b| b.severity.cmp(&a.severity));
+        alerts.sort_by_key(|b| std::cmp::Reverse(b.severity));
         Ok(alerts)
     }
 

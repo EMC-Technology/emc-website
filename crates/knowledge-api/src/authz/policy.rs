@@ -231,6 +231,40 @@ impl std::hash::Hash for LiteralValue {
     }
 }
 
+impl LiteralValue {
+    /// 将枚举值以确定性字节序列写入 BLAKE3 哈希器
+    ///
+    /// 每个变体前缀类型标签（`S`/`B`/`I`/`D`/`V`），确保不同类型的相同底层值
+    /// 产生不同的哈希（如 `Integer(1)` 与 `Bool(true)` 不会碰撞）。
+    /// 浮点数使用 `to_bits()` 避免NaN语义问题，符合"0 随机性"设计哲学。
+    pub fn update_hasher(&self, hasher: &mut blake3::Hasher) {
+        match self {
+            Self::String(s) => {
+                hasher.update(b"S");
+                hasher.update(s.as_bytes());
+            }
+            Self::Bool(b) => {
+                hasher.update(b"B");
+                hasher.update(&[u8::from(*b)]);
+            }
+            Self::Integer(i) => {
+                hasher.update(b"I");
+                hasher.update(&i.to_le_bytes());
+            }
+            Self::Decimal(d) => {
+                hasher.update(b"D");
+                hasher.update(&d.to_bits().to_le_bytes());
+            }
+            Self::Set(v) => {
+                hasher.update(b"V");
+                for item in v {
+                    item.update_hasher(hasher);
+                }
+            }
+        }
+    }
+}
+
 // ========== 授权请求 / 响应 ==========
 
 /// 授权决策请求

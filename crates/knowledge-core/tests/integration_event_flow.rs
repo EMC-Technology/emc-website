@@ -16,6 +16,7 @@ use knowledge_core::event::{
     AsyncEventHandler,
 };
 use knowledge_core::event::types::*;
+use knowledge_core::model::{SourceType, RefType};
 
 /// 测试辅助：创建一个伪造的文档摄入事件
 fn make_ingest_event() -> KnowledgeEvent {
@@ -23,7 +24,7 @@ fn make_ingest_event() -> KnowledgeEvent {
         "doc-integration-001",
         "/integration-test/sample.md",
         2048,
-        "Markdown",
+        SourceType::Markdown,
         &"deadbeef".repeat(8),
         "integration-test",
     ))
@@ -44,7 +45,7 @@ fn make_parsed_event() -> KnowledgeEvent {
 fn make_node_created_event() -> KnowledgeEvent {
     KnowledgeEvent::NodeCreated(NodeCreatedEvent::new(
         "node-integration-001",
-        "Block",
+        NodeType::Block,
         Some("doc-integration-001"),
         "graph-builder",
     ))
@@ -183,17 +184,17 @@ async fn test_all_events_serialization_for_persistence() {
         KnowledgeEvent::DocumentIndexed(DocumentIndexedEvent::new("d", 3, 10, "s")),
         KnowledgeEvent::DocumentDeleted(DocumentDeletedEvent::new("d", 3, 30, 5, "s")),
         make_node_created_event(),
-        KnowledgeEvent::NodeUpdated(NodeUpdatedEvent::new("n", vec!["content".to_string()], "s")),
-        KnowledgeEvent::NodeDeleted(NodeDeletedEvent::new("n", "Block", "s")),
-        KnowledgeEvent::NodeLinked(NodeLinkedEvent::new("a", "b", "Usage", "s")),
-        KnowledgeEvent::EdgeCreated(EdgeCreatedEvent::new("e", "Definition", "a", "b", "s")),
-        KnowledgeEvent::EdgeDeleted(EdgeDeletedEvent::new("e", "Link", "s")),
+        KnowledgeEvent::NodeUpdated(NodeUpdatedEvent::new("n", knowledge_core::cqrs::event_store::ChangeSet::new(), "s")),
+        KnowledgeEvent::NodeDeleted(NodeDeletedEvent::new("n", NodeType::Block, "s")),
+        KnowledgeEvent::NodeLinked(NodeLinkedEvent::new("a", "b", RefType::Usage, "s")),
+        KnowledgeEvent::EdgeCreated(EdgeCreatedEvent::new("e", RefType::Definition, "a", "b", "s")),
+        KnowledgeEvent::EdgeDeleted(EdgeDeletedEvent::new("e", RefType::Link, "s")),
         KnowledgeEvent::SearchPerformed(SearchPerformedEvent::new("rust event bus", 10, 5, "s")),
-        KnowledgeEvent::QueryExecuted(QueryExecutedEvent::new("graph", "MATCH ...", 2, 15, "s")),
+        KnowledgeEvent::QueryExecuted(QueryExecutedEvent::new(QueryType::Traversal, "MATCH ...", 2, 15, "s")),
         make_embedding_generated_event(),
-        KnowledgeEvent::EmbeddingCached(EmbeddingCachedEvent::new("e", "Block", "k", "s")),
+        KnowledgeEvent::EmbeddingCached(EmbeddingCachedEvent::new("e", EmbeddingEntityType::Block, "k", "s")),
         KnowledgeEvent::UserAction(UserActionEvent::new("user-1", "upload", Some("document"), Some("d"), "api")),
-        KnowledgeEvent::SystemHealthCheck(SystemHealthEvent::new("db", "healthy", None::<String>, "monitor")),
+        KnowledgeEvent::SystemHealthCheck(SystemHealthEvent::new("db", HealthStatus::Healthy, None::<String>, "monitor")),
     ];
 
     for (i, event) in events.iter().enumerate() {

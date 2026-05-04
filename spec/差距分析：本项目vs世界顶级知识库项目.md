@@ -1,6 +1,6 @@
 # 文本全结构化知识系统 vs 世界顶级知识库项目：差距分析报告
 
-> 版本：5.0 | 日期：2026-04-26
+> 版本：5.1 | 日期：2026-04-27
 
 ---
 
@@ -112,9 +112,11 @@
 |------|--------|------|
 | **语言/运行时** | Rust 2024 Edition (全栈) | ⭐⭐⭐⭐⭐ |
 | **架构模式** | CQRS + Event Sourcing + 四层节点模型 | ⭐⭐⭐⭐ |
-| **实现完备性** | 14 模块中 10 REAL / 4 PARTIAL / 0 STUB | ⭐⭐⭐⭐ |
+| **实现完备性** | 16 模块中 14 REAL / 2 PARTIAL / 0 STUB | ⭐⭐⭐⭐⭐ |
+| **方法覆盖** | 78 方法全部实现（5 SDD 规格） | ⭐⭐⭐⭐⭐ |
+| **用例覆盖** | 54 用例全部实现 | ⭐⭐⭐⭐⭐ |
 | **设计文档** | V4.0 详细设计 + 项目宪章 + ADR 体系 | ⭐⭐⭐⭐⭐ |
-| **测试覆盖** | 513 单元测试全通过 | ⭐⭐⭐ |
+| **测试覆盖** | 914 单元测试全通过（607 同步 + 307 异步） | ⭐⭐⭐⭐ |
 | **生产就绪度** | Pre-alpha (0.1.0) | ⭐⭐ |
 
 ### 模块实现完备性明细
@@ -125,16 +127,18 @@
 | 2 | Vector Store (HNSW) | PARTIAL | 内存适配器是暴力搜索 stub（HNSW 参数未使用）；Qdrant 适配器是真实生产级实现 |
 | 3 | BM25 Search | REAL | 完整的 BM25 算法 + 倒排索引，参数符合标准 |
 | 4 | Hybrid Search | REAL | 加权 RRF 融合算法完整，符合 Cormack 2009 论文 |
-| 5 | Cross-Encoder Reranker | PARTIAL | 管道架构完整，但交叉编码器只有 Mock（Jaccard 相似度），无真实神经网络 |
+| 5 | Cross-Encoder Reranker | **REAL** | Candle Cross-Encoder 真实推理管线（M-038~M-048），含 CandleRerankerModel 加载器、CandleReranker 推理引擎、LlmJudger LLM 判决器；三阶段重排序管道完整 |
 | 6 | Community Detection | REAL | 完整的 Leiden 算法（局部移动 + 细化 + 递归聚合），确定性结果 |
-| 7 | Knowledge Graph Construction | REAL | 结构化实体-关系提取 + BLAKE3 幂等键 + SymbolResolver 引用解析 |
-| 8 | CQRS Event Store | REAL | 内存 + SurrealDB 双实现，乐观锁、版本控制、因果链追踪均完整 |
-| 9 | SurrealDB Repository | REAL | 5 个仓储 + 聚合仓储，真实 SurrealQL 查询，含向量搜索和事务级联删除 |
-| 10 | PII Scanner | REAL | 11 种正则模式 + 5 种脱敏策略 + JSON 递归扫描 + 自定义模式 |
-| 11 | Crypto Module | REAL | AES-256-GCM 加解密 + BLAKE3 哈希 + 密钥管理（跨平台安全存储） |
-| 12 | MCP Server | REAL | 7 Tool + 2 Prompt + Resources，基于 rmcp crate 的完整 MCP 协议实现 |
-| 13 | ABAC Engine | REAL | Cedar 风格自研策略引擎，Deny-Override + LRU 缓存 + 批量评估 + 热更新 + 审计 |
-| 14 | Frontend | PARTIAL | Dioxus WASM 前端，CRUD 功能完整，图谱可视化基础，WebSocket 简单 |
+| 7 | Community Summarizer | **REAL** | 完整的社区摘要生成引擎（M-067~M-078），含 SummarizationConfig、CommunitySummarizer、SummarizationPromptTemplate、CommunitySummaryStore；支持增量更新 |
+| 8 | RAG Evaluation Framework | **REAL** | 完整的 RAGAS 评估框架（M-049~M-066），含 5 种评估指标（Faithfulness/AnswerRelevancy/ContextRecall/ContextPrecision/AnswerSimilarity）、UllmJudge/MockJudge、GoldenDataset、EvaluationEngine、MetricAggregator、MarkdownExporter |
+| 9 | Knowledge Graph Construction | REAL | 结构化实体-关系提取 + BLAKE3 幂等键 + SymbolResolver 引用解析 |
+| 10 | CQRS Event Store | REAL | 内存 + SurrealDB 双实现，乐观锁、版本控制、因果链追踪均完整 |
+| 11 | SurrealDB Repository | REAL | 5 个仓储 + 聚合仓储，真实 SurrealQL 查询，含向量搜索和事务级级删除 |
+| 12 | PII Scanner | REAL | 11 种正则模式 + 5 种脱敏策略 + JSON 递归扫描 + 自定义模式 |
+| 13 | Crypto Module | REAL | AES-256-GCM 加解密 + BLAKE3 哈希 + 密钥管理（跨平台安全存储） |
+| 14 | MCP Server | REAL | 7 Tool + 2 Prompt + Resources，基于 rmcp crate 的完整 MCP 协议实现 |
+| 15 | ABAC Engine | REAL | Cedar 风格自研策略引擎，Deny-Override + LRU 缓存 + 批量评估 + 热更新 + 审计 |
+| 16 | Frontend | PARTIAL | Dioxus WASM 前端，CRUD 功能完整，图谱可视化基础，WebSocket 简单 |
 
 ---
 
@@ -260,16 +264,17 @@
 
 | 对标 | 能力 | 本项目 | 差距 |
 |------|------|--------|------|
-| Cohere Rerank | 真正的 Cross-Encoder 神经网络 | MockCrossEncoder（Jaccard 相似度） | 🔴 严重 |
-| Meta LLM Judge | LLM 评估忠实度/相关性/完整性 | MockLLMJudger | 🔴 严重 |
-| bge-reranker | 开源 Cross-Encoder（BAAI） | 无 | 🔴 严重 |
+| Cohere Rerank | 真正的 Cross-Encoder 神经网络 | Candle Cross-Encoder 真实推理管线 | ✅ 已对齐 |
+| Meta LLM Judge | LLM 评估忠实度/相关性/完整性 | LlmJudger（支持 ullm 集成） | ✅ 已对齐 |
+| bge-reranker | 开源 Cross-Encoder（BAAI） | CandleRerankerModel 加载器 + CandleReranker 推理 | ✅ 已对齐 |
 
-**根因**：重排序管道的架构设计是完整的（三阶段：检索 → 精排 → LLM 判决），但核心推理引擎只有 Mock 实现。
+**差距评级**：✅ 已对齐
 
-**改进方向**：
-1. 基于 Candle 加载 bge-reranker-v2-m3 或 Jina-reranker-v2 的 ONNX/Safetensors 权重
-2. 复用已有的 Gemma4 推理管线架构（CandleModelLoader），扩展为 Cross-Encoder 推理
-3. LLM Judge 可接入 Gemma4 或外部 API
+本项目已实现完整的 Candle Cross-Encoder 真实推理管线（SDD-003，M-038~M-048）：
+- `CandleRerankerModel`：safetensors 权重加载 + tokenizer 集成
+- `CandleReranker`：Cross-Encoder 推理引擎，支持 batch 推理
+- `LlmJudger`：LLM 判决器，支持 ullm 集成
+- `RerankingPipeline`：三阶段管道（检索 → 精排 → LLM 判决）
 
 ---
 
@@ -339,16 +344,19 @@
 | 对标 | 能力 | 本项目 | 差距 |
 |------|------|--------|------|
 | LangSmith | 端到端 LLM 调用追踪 + 评估 | tracing 日志 + Prometheus 指标 | 🟡 中等 |
-| Meta LLM-as-Judge | 忠实度/相关性/完整性评估 | 无评估框架 | 🔴 严重 |
-| Haystack | 内置评估组件 | 无 | 🔴 严重 |
+| Meta LLM-as-Judge | 忠实度/相关性/完整性评估 | RAGAS 评估框架 + UllmJudge/MockJudge | ✅ 已对齐 |
+| Haystack | 内置评估组件 | knowledge-evaluator 完整评估框架 | ✅ 已对齐 |
 
-**差距评级**：🔴 严重
+**差距评级**：🟡 中等（评估框架已实现，端到端追踪待增强）
 
-**改进方向**：
-1. 实现 RAGAS 评估指标（Faithfulness, Relevancy, Context Recall, Answer Similarity）
-2. 集成 LLM-as-Judge 评估管道
-3. 构建 Golden Dataset 基准测试集
-4. 添加检索质量 A/B 测试框架
+本项目已实现完整的 RAGAS 评估框架（SDD-004，M-049~M-066）：
+- **5 种评估指标**：Faithfulness、AnswerRelevancy、ContextRecall、ContextPrecision、AnswerSimilarity
+- **LLM-as-Judge**：UllmJudge（支持 ullm 集成）+ MockJudge（测试用）
+- **Golden Dataset**：GoldenDataset + GoldenSample，支持 JSON/YAML 加载
+- **评估引擎**：EvaluationEngine，支持批量评估和增量更新
+- **报告生成**：MetricAggregator（聚合统计）+ MarkdownExporter（报告导出）
+
+**待增强**：端到端 LLM 调用追踪（类似 LangSmith）
 
 ---
 
@@ -383,9 +391,9 @@ CQRS 架构天然支持事件追加，但知识图谱的社区结构更新仍需
 | 维度 | 独立差距 | 姐妹项目覆盖后有效差距 | 权重 | 优先级 |
 |------|---------|---------------------|------|--------|
 | 🔴 语义理解深度 | 严重 | 🟡 中等（ullm API 层已就绪） | 高 | P0 |
-| 🔴 重排序质量 | 严重 | 🔴 严重（无覆盖） | 高 | P0 |
+| ✅ 重排序质量 | 已对齐 | ✅ 已对齐（Candle Cross-Encoder 真实推理） | 高 | — |
 | 🔴 数据连接器生态 | 严重 | 🟡 中等（knowledge-infra 覆盖代码源） | 中 | P1 |
-| 🔴 RAG 评估框架 | 严重 | 🔴 严重（无覆盖） | 高 | P0 |
+| ✅ RAG 评估框架 | 已对齐 | ✅ 已对齐（RAGAS 评估框架完整实现） | 高 | — |
 | 🟡 检索策略丰富度 | 中等 | 🟡 中等 | 高 | P1 |
 | 🟡 向量索引性能 | 中等 | 🟡 中等 | 中 | P2 |
 | 🟡 Agent 编排能力 | 中等 | 🟡 中等（ullm 工具调用闭环可复用） | 中 | P2 |
@@ -393,7 +401,7 @@ CQRS 架构天然支持事件追加，但知识图谱的社区结构更新仍需
 | 🟡 多租户 | 中等 | 🟡 中等 | 低 | P3 |
 | ✅ 安全与合规 | 对齐/超越 | ✅ 对齐/超越 | 高 | — |
 
-**关键发现**：姐妹项目的存在使两个维度从"严重"降级为"中等"——语义理解深度（ullm 提供 LLM API 层）和数据连接器生态（knowledge-infra 覆盖代码知识源）。真正无法被姐妹项目覆盖的 P0 短板仅剩**重排序质量**和**RAG 评估框架**。
+**关键发现**：本项目已实现 Candle Cross-Encoder 真实推理管线（SDD-003）和 RAGAS 评估框架（SDD-004），两个原本的 P0 短板已补齐。当前仅剩**语义理解深度**（需 ullm 集成）和**数据连接器生态**（需 knowledge-infra 集成）两个待补齐维度。
 
 ---
 
@@ -472,18 +480,18 @@ Document → Block → Token → Community
 
 ## 六、改进路线图
 
-### Phase 1：补齐核心短板 + 姐妹项目集成 + 错误驱动奠基（P0 — 3-6 个月）
+### Phase 1：补齐核心短板 + 姐妹项目集成 + 错误驱动奠基（P0 — 已完成核心部分）
 
-| 任务 | 对标参考 | 姐妹项目协同 | 预期效果 |
-|------|---------|-------------|---------|
-| 集成 ullm LanguageModel trait | GraphRAG Stage 1 | **ullm** 提供 14 提供商/61+ 模型统一 API | 从结构化引用图升级为语义知识图谱 |
-| Cross-Encoder 真实推理 | bge-reranker-v2-m3 via Candle | — | 重排序质量从 Mock 提升到生产级 |
-| RAG 评估框架 | RAGAS + LLM-as-Judge | **ullm** 提供 LLM Judge 调用能力 | 量化检索/生成质量，建立改进基线 |
-| 社区摘要生成 | GraphRAG Stage 2 | **ullm** 提供摘要生成能力 | 解锁全局性查询能力 |
-| 集成 knowledge-infra Git 知识源 | LlamaHub Git Connector | **knowledge-infra** `GitProviderClient` | Git 仓库作为知识源 |
-| 集成 knowledge-infra 代码管理 | LlamaIndex Code Index | **knowledge-infra** `CodeManager`(tree-sitter) | 代码知识图谱自动构建 |
-| error-core no_std 支持 | — | — | 从嵌入式到云原生的全栈统一错误基础设施 |
-| error-core 错误驱动开发文档 | — | — | 向社区展示错误驱动开发的完整范式 |
+| 任务 | 对标参考 | 姐妹项目协同 | 状态 | 预期效果 |
+|------|---------|-------------|------|---------|
+| 集成 ullm LanguageModel trait | GraphRAG Stage 1 | **ullm** 提供 14 提供商/61+ 模型统一 API | 待集成 | 从结构化引用图升级为语义知识图谱 |
+| Cross-Encoder 真实推理 | bge-reranker-v2-m3 via Candle | — | ✅ **已完成** | 重排序质量从 Mock 提升到生产级 |
+| RAG 评估框架 | RAGAS + LLM-as-Judge | **ullm** 提供 LLM Judge 调用能力 | ✅ **已完成** | 量化检索/生成质量，建立改进基线 |
+| 社区摘要生成 | GraphRAG Stage 2 | **ullm** 提供摘要生成能力 | ✅ **已完成** | 解锁全局性查询能力 |
+| 集成 knowledge-infra Git 知识源 | LlamaHub Git Connector | **knowledge-infra** `GitProviderClient` | 待集成 | Git 仓库作为知识源 |
+| 集成 knowledge-infra 代码管理 | LlamaIndex Code Index | **knowledge-infra** `CodeManager`(tree-sitter) | 待集成 | 代码知识图谱自动构建 |
+| error-core no_std 支持 | — | — | 规划中 | 从嵌入式到云原生的全栈统一错误基础设施 |
+| error-core 错误驱动开发文档 | — | — | 规划中 | 向社区展示错误驱动开发的完整范式 |
 
 ### Phase 2：扩展生态与智能 + UPCM 先行验证（P1 — 6-12 个月）
 
@@ -863,9 +871,9 @@ UPCM 流程执行 ──→ 节点执行失败 ──→ error-core 统一错误
 
 ## 十一、核心结论
 
-本项目的架构设计已与业界最佳实践对齐，在安全合规方面甚至超越对标项目。核心差距不在"设计"而在"实现深度"——特别是语义理解（LLM 抽取）、重排序质量（真实模型）和生态广度（数据连接器）三个维度。
+本项目的架构设计已与业界最佳实践对齐，在安全合规方面甚至超越对标项目。核心差距已大幅收窄——**Cross-Encoder 真实推理（SDD-003）、RAGAS 评估框架（SDD-004）、社区摘要生成（SDD-005）三大核心短板已全部实现**。当前仅剩语义理解（需 ullm 集成）和数据连接器生态（需 knowledge-infra 集成）两个待补齐维度。
 
-**Rust 全栈 + 四层节点模型 + CQRS 审计链 + GEMMA4 纯 Rust 推理 + error-core 统一错误处理 + UPCM 流程驱动** 构成了所有 Python 生态项目无法复制的结构性护城河。当核心短板补齐后，本项目有潜力成为知识库领域的"Rust 版 GraphRAG + Weaviate"——兼具语义深度与生产级性能。
+**Rust 全栈 + 四层节点模型 + CQRS 审计链 + GEMMA4 纯 Rust 推理 + Candle Cross-Encoder + RAGAS 评估框架 + error-core 统一错误处理 + UPCM 流程驱动** 构成了所有 Python 生态项目无法复制的结构性护城河。当 ullm 集成完成后，本项目有潜力成为知识库领域的"Rust 版 GraphRAG + Weaviate"——兼具语义深度与生产级性能。
 
 作为开源基线产品，本项目向全球展示纯 Rust 知识库的可行性边界，同时为自研内存堆图对象数据库的 drop-in replacement 铺路。SurrealDB 的 200+ 传递依赖问题将在自研数据库替代后彻底解决，实现供应链完全收敛。
 
@@ -887,13 +895,15 @@ UPCM 流程执行 ──→ 节点执行失败 ──→ error-core 统一错误
 |------|----------|-----------|----------|----------|-----------|-----------|----------|--------|
 | 核心定位 | 图增强RAG | 数据框架 | 管道框架 | 向量数据库 | 图数据库+LLM | Agent编排 | 轻量图RAG | 全结构化知识系统 |
 | 语言 | Python | Python | Python | Go | Java/Python | Python | Python | **Rust** |
-| 图能力 | 强(Leiden) | 中(PropertyGraph) | 弱(无原生) | 中(交叉引用) | 最强(Cypher) | 弱(依赖外部) | 中(简单图) | 中(Leiden+引用图) |
+| 图能力 | 强(Leiden) | 中(PropertyGraph) | 弱(无原生) | 中(交叉引用) | 最强(Cypher) | 弱(依赖外部) | 中(简单图) | 强(Leiden+社区摘要) |
 | 向量搜索 | 无原生 | 依赖后端 | 依赖后端 | 原生HNSW | 原生(5.11+) | 依赖后端 | 无原生 | Qdrant+暴力 |
 | 混合检索 | 否 | 是 | 是 | 原生 | 是 | 是 | 部分 | 是(RRF) |
 | 增量更新 | DRIFT(有限) | 是 | 是 | 是 | 是 | 是 | 原生 | 事件追加 |
 | 多租户 | 否 | 否 | 否 | 原生 | Enterprise | 否 | 否 | 否 |
 | 安全模型 | Azure | 无 | Cloud版 | API+RBAC | RBAC+审计 | 无 | 无 | **ABAC+PII+审计** |
 | Agent | 否 | 是 | 有限 | 否 | 否 | 最强 | 否 | ReAct |
+| Reranker | 无原生 | 依赖后端 | 依赖后端 | 无原生 | 无原生 | 依赖后端 | 无 | **Candle Cross-Encoder** |
+| 评估框架 | 无 | 无 | RAGAS | 无 | 无 | 无 | 无 | **RAGAS+LLM-as-Judge** |
 | 索引成本 | 极高 | 中 | 中 | 低 | 高 | 低 | 低 | 中 |
 | 查询延迟 | 3-30s | 0.5-3s | 0.5-3s | <50ms | 10-200ms | 0.2-5s | 1-3s | 潜力<10ms |
 | 生产就绪 | 中 | 高 | 高 | 高 | 高 | 中 | 低 | Pre-alpha |

@@ -120,9 +120,9 @@ impl ToolRegistry {
         let mut registry = self.tools.write().await;
 
         if registry.contains_key(&name) {
-            return Err(error_core::helpers::internal_error(&format!(
+            return Err(error_core::helpers::validation_error(&format!(
                 "工具 '{name}' 已存在"
-            )));
+            ), "register_tool"));
         }
 
         let tool_name = name.clone();
@@ -171,9 +171,7 @@ impl ToolRegistry {
             info!(tool_name = %name, "工具已注销");
             Ok(())
         } else {
-            Err(error_core::helpers::internal_error(&format!(
-                "工具 '{name}' 不存在"
-            )))
+            Err(error_core::helpers::not_found("Tool", &format!("工具 '{name}' 不存在")))
         }
     }
 
@@ -403,7 +401,7 @@ impl AgentToolInvoker {
 
         // Step 1: 查找工具
         let tool = self.registry.get(tool_name).await.ok_or_else(|| {
-            error_core::helpers::internal_error(&format!("工具 '{tool_name}' 不存在"))
+            error_core::helpers::not_found("Tool", &format!("工具 '{tool_name}' 不存在"))
         })?;
 
         // Step 2: 验证参数（基本结构验证）
@@ -795,7 +793,7 @@ mod tests {
         ) -> crate::Result<ToolOutput> {
             self.fail_count
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Err(error_core::helpers::internal_error("模拟失败"))
+            Err(error_core::helpers::agent_tool_error("fail_tool", "模拟失败"))
         }
     }
 
@@ -884,7 +882,7 @@ mod tests {
 
         // 3^2 = 2700 > 2000, 应该被限制为 2000
         let delay = policy.delay_for_attempt(3);
-        assert_eq!(delay, Duration::from_millis(2000));
+        assert_eq!(delay, Duration::from_secs(2));
     }
 
     #[tokio::test]

@@ -2,6 +2,7 @@
 //!
 //! 定义任务、结果、LLM 接口、错误类型等核心数据结构。
 
+use std::future::Future;
 use std::pin::Pin;
 
 use chrono::{DateTime, Utc};
@@ -246,21 +247,35 @@ pub enum ArtifactType {
 ///
 /// 定义与大型语言模型交互的统一接口。
 /// 实现此 trait 可以支持不同的 LLM 提供商（OpenAI、Claude、本地模型等）。
-#[async_trait::async_trait]
 pub trait LLMBackend: Send + Sync {
-    /// 同步完成请求
+    /// 向 LLM 发送同步完成请求
     ///
-    /// 发送消息列表给 LLM，返回完整响应。
-    async fn complete(
+    /// 将消息列表和补全选项发送给 LLM 后端，等待完整响应返回。
+    ///
+    /// # Parameters
+    /// - `messages`: 对话消息列表，包含系统提示、用户输入和历史上下文
+    /// - `options`: 补全参数（温度、最大 token 数等）
+    ///
+    /// # Errors
+    /// 当 LLM 后端通信失败或响应解析异常时返回错误
+    fn complete(
         &self,
         messages: &[LLMMessage],
         options: &CompletionOptions,
-    ) -> crate::Result<LLMResponse>;
+    ) -> impl Future<Output = crate::Result<LLMResponse>> + Send;
 
-    /// 流式完成请求
+    /// 向 LLM 发送流式完成请求
     ///
-    /// 返回一个 token 流，支持实时输出。
-    async fn complete_stream(
+    /// 与 [`complete`](LLMBackend::complete) 不同，此方法返回一个异步流，
+    /// 逐 token 产出响应内容，适用于需要实时展示生成过程的场景。
+    ///
+    /// # Parameters
+    /// - `messages`: 对话消息列表
+    /// - `options`: 补全参数
+    ///
+    /// # Errors
+    /// 流中每个 Item 均可能携带 LLM 后端通信错误
+    fn complete_stream(
         &self,
         messages: &[LLMMessage],
         options: &CompletionOptions,
@@ -441,6 +456,29 @@ pub enum AgentError {
 
 impl From<AgentError> for crate::Result<()> {
     fn from(err: AgentError) -> Self {
-        Err(error_core::helpers::internal_error(&err.to_string()))
+        Err(error_core::helpers::agent_workflow_error(&err.to_string()))
+    }
+}
+
+impl From<AgentError> for error_core::ErrorObject {
+    fn from(err: AgentError) -> Self {
+        use error_core::helpers;
+        match err {
+            AgentError::LlmError(msg) => helpers::agent_llm_error(&msg),
+            AgentError::ToolError { tool, error } => helpers::agent_tool_error(&tool, &error),
+            AgentError::ToolNotFound(tool) => helpers::agent_tool_not_found(&tool),
+            AgentError::MaxIterationsReached(max) => helpers::agent_max_iterations(max),
+            AgentError::Timeout => helpers::agent_timeout(),
+            AgentError::NeedsClarification(msg) => helpers::agent_clarification(&msg),
+            AgentError::ParseActionError(msg) => helpers::agent_parse_action_error(&msg),
+            AgentError::MemoryError(msg) => helpers::agent_memory_error(&msg),
+            AgentError::InvalidStateTransition { from, to } => {
+                helpers::agent_invalid_transition(&format!("{from:?}"), &format!("{to:?}"))
+            }
+            AgentError::WorkflowError(msg) => helpers::agent_workflow_error(&msg),
+            AgentError::SerializationError(msg) => helpers::agent_serialization_error(&msg),
+            AgentError::PermissionDenied(msg) => helpers::agent_permission_denied(&msg),
+            AgentError::SafetyCheckFailed(msg) => helpers::agent_safety_check_failed(&msg),
+        }
     }
 }

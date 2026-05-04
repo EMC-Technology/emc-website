@@ -84,21 +84,33 @@ impl DagEngine {
         }
 
         if result.len() != self.stages.len() {
-            let missing_deps: Vec<String> = result
-                .iter()
-                .filter(|name| !self.stages.contains_key(name.as_str()))
+            let registered: std::collections::HashSet<&str> =
+                self.stages.keys().map(std::string::String::as_str).collect();
+            let missing_deps: Vec<String> = self
+                .adjacency
+                .values()
+                .flatten()
+                .filter(|dep| !registered.contains(dep.as_str()))
                 .cloned()
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
                 .collect();
 
             if !missing_deps.is_empty() {
-                return Err(helpers::internal_error(&format!(
-                    "DAG 包含缺失的依赖阶段: {}（已注册阶段: {}）",
-                    missing_deps.join(", "),
-                    self.stages.keys().cloned().collect::<Vec<_>>().join(", ")
-                )));
+                return Err(helpers::validation_error(
+                    &format!(
+                        "DAG 包含缺失的依赖阶段: {}（已注册阶段: {}）",
+                        missing_deps.join(", "),
+                        self.stages.keys().cloned().collect::<Vec<_>>().join(", ")
+                    ),
+                    "dag_validate",
+                ));
             }
 
-            return Err(helpers::internal_error("检测到循环依赖，DAG 无效"));
+            return Err(helpers::validation_error(
+                "检测到循环依赖，DAG 无效",
+                "dag_validate",
+            ));
         }
         Ok(result)
     }

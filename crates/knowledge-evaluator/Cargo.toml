@@ -1,0 +1,30 @@
+[package]
+name = "knowledge-evaluator"
+description = "RAG evaluation framework — RAGAS metrics, LLM-as-Judge, Golden Dataset management, and report generation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords = ["rag", "evaluation", "ragas", "llm-judge", "benchmark"]
+categories = ["text-processing", "science"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { version = "0.9", default-features = false }
+thiserror = { workspace = true }
+error-core = { workspace = true, features = ["serde-json"] }
+tokio = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+blake3 = { workspace = true }
+futures = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+tempfile = "3.10"

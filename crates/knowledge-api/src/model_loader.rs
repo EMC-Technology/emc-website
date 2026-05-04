@@ -97,6 +97,25 @@ impl From<super::hf_downloader::ModelDownloadError> for ModelLoaderError {
     }
 }
 
+impl From<ModelLoaderError> for error_core::ErrorObject {
+    fn from(err: ModelLoaderError) -> Self {
+        use error_core::helpers;
+        match err {
+            ModelLoaderError::UnsupportedModel(msg) => helpers::embedding_config_error(&format!("不支持的模型: {msg}")),
+            ModelLoaderError::UnsupportedBackend(msg) => helpers::embedding_config_error(&format!("不支持的后端: {msg}")),
+            ModelLoaderError::ModelNotFound(path) => helpers::not_found("model", &path.display().to_string()),
+            ModelLoaderError::LoadFailed(msg) => helpers::embedding_model_load_failed(&msg),
+            ModelLoaderError::TokenizerFailed(msg) => helpers::embedding_tokenizer_error(&msg),
+            ModelLoaderError::InferenceFailed(msg) => helpers::embedding_inference_failed(&msg),
+            ModelLoaderError::DeviceInitFailed(msg) => helpers::embedding_model_load_failed(&format!("设备初始化失败: {msg}")),
+            ModelLoaderError::ConfigError(msg) => helpers::embedding_config_error(&msg),
+            ModelLoaderError::Io(e) => helpers::embedding_io_error(&e.to_string()),
+            ModelLoaderError::Serialization(e) => helpers::serde_error(&e.to_string()),
+            ModelLoaderError::DownloadFailed(msg) => helpers::net_api_error(&msg),
+        }
+    }
+}
+
 /// 推理后端类型
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ModelBackend {
@@ -371,6 +390,27 @@ pub trait LoadedModel: Send + Sync {
     ) -> Result<Vec<f32>, ModelLoaderError> {
         let result = self.infer(text).await?;
         Ok(self.extract_embedding(&result, pooling_strategy))
+    }
+
+    /// 批量提取句子嵌入
+    ///
+    /// 从批量推理结果中提取固定维度的句子表示。
+    /// 常用策略：
+    /// - [EOS] token位置的隐藏状态
+    /// - 平均池化（Mean Pooling）
+    /// - 最大池化（Max Pooling）
+    async fn embed_batch(
+        &self,
+        texts: &[&str],
+        pooling_strategy: PoolingStrategy,
+    ) -> Result<Vec<Vec<f32>>, ModelLoaderError> {
+        let texts: Vec<String> = texts.iter().map(|&s| s.to_string()).collect();
+        let results = self.infer_batch(&texts).await?;
+        let mut embeddings = Vec::with_capacity(results.len());
+        for result in results {
+            embeddings.push(self.extract_embedding(&result, pooling_strategy));
+        }
+        Ok(embeddings)
     }
 
     /// 从推理结果中提取嵌入向量

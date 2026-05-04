@@ -1,0 +1,35 @@
+[package]
+name = "knowledge-extractor"
+description = "Semantic extraction engine — LLM-driven entity/relation extraction, disambiguation, deduplication, and pipeline orchestration"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords = ["knowledge-graph", "extraction", "llm", "disambiguation", "deduplication"]
+categories = ["text-processing", "database"]
+
+[features]
+default = ["db"]
+db = ["knowledge-core/db", "dep:surrealdb"]
+
+[dependencies]
+knowledge-core = { path = "../knowledge-core", default-features = false }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+error-core = { workspace = true, features = ["serde-json"] }
+tokio = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+chrono = { workspace = true }
+strsim = { version = "0.11", default-features = false }
+surrealdb = { version = "1.3", optional = true, default-features = false, features = ["kv-mem", "protocol-ws"] }
+
+[dev-dependencies]
+tokio = { workspace = true }
+surrealdb = { version = "1.3", default-features = false, features = ["kv-mem", "protocol-ws"] }

@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, watch};
 use tracing::{Level, debug, error, info, instrument, span, warn};
 use uuid::Uuid;
 
@@ -107,6 +107,10 @@ impl AgentConfigBuilder {
 }
 
 /// Agent 当前状态
+///
+/// 包含运行时状态和领域状态的完整快照。
+/// 运行时状态（`status`、`current_iteration`）是瞬时的、可变的；
+/// 领域状态（`history`、`result`）是不可变的、仅通过事件追加构建。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentState {
     /// 任务 ID
@@ -125,6 +129,42 @@ pub struct AgentState {
     pub started_at: chrono::DateTime<Utc>,
     /// 完成时间（可选）
     pub completed_at: Option<chrono::DateTime<Utc>>,
+}
+
+/// Agent 状态快照（轻量级，用于外部观察）
+///
+/// 通过 `watch` channel 广播，外部观察者可订阅状态变更
+/// 而无需持有 `RwLock`。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentStateSnapshot {
+    /// 任务 ID
+    pub task_id: Uuid,
+    /// 执行状态
+    pub status: ExecutionStatus,
+    /// 当前迭代次数
+    pub current_iteration: usize,
+    /// 总迭代次数
+    pub max_iterations: usize,
+    /// 最后一步思考摘要
+    pub last_thought: Option<String>,
+    /// 开始时间
+    pub started_at: chrono::DateTime<Utc>,
+    /// 完成时间
+    pub completed_at: Option<chrono::DateTime<Utc>>,
+}
+
+impl From<&AgentState> for AgentStateSnapshot {
+    fn from(state: &AgentState) -> Self {
+        Self {
+            task_id: state.task_id,
+            status: state.status,
+            current_iteration: state.current_iteration,
+            max_iterations: 0,
+            last_thought: state.history.last().map(|s| s.thought.clone()),
+            started_at: state.started_at,
+            completed_at: state.completed_at,
+        }
+    }
 }
 
 /// 执行状态枚举
@@ -146,6 +186,36 @@ pub enum ExecutionStatus {
     Timeout,
     /// 达到最大迭代次数
     MaxIterationsReached,
+}
+
+impl ExecutionStatus {
+    /// 验证状态转换是否合法
+    ///
+    /// 合法转换：
+    /// - `Idle` → `Running`
+    /// - `Running` → `Thinking` / `WaitingForTool` / `Completed` / `Failed` / `Timeout` / `MaxIterationsReached`
+    /// - `Thinking` → `WaitingForTool` / `Completed` / `Failed` / `Timeout` / `MaxIterationsReached` / `Running`
+    /// - `WaitingForTool` → `Running` / `Failed` / `Timeout`
+    /// - 终态（`Completed` / `Failed` / `Timeout` / `MaxIterationsReached`）不可转换
+    #[must_use]
+    pub fn can_transition_to(&self, target: &Self) -> bool {
+        matches!(
+            (self, target),
+            (Self::Idle, Self::Running)
+            | (Self::Running, Self::Thinking | Self::WaitingForTool | Self::Completed | Self::Failed | Self::Timeout | Self::MaxIterationsReached)
+            | (Self::Thinking, Self::WaitingForTool | Self::Completed | Self::Failed | Self::Timeout | Self::MaxIterationsReached | Self::Running)
+            | (Self::WaitingForTool, Self::Running | Self::Failed | Self::Timeout)
+        )
+    }
+
+    /// 是否为终态
+    #[must_use]
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            Self::Completed | Self::Failed | Self::Timeout | Self::MaxIterationsReached
+        )
+    }
 }
 
 /// `ReAct` 推理步骤
@@ -215,10 +285,19 @@ enum ActionParsed {
 /// 3. **Observation**: 获取工具执行的反馈
 /// 4. **循环**: 将 `Observation` 加入上下文，重复上述过程
 ///
+/// # 状态管理
+///
+/// Agent 内部状态分为两层：
+/// - **运行时状态**（`ExecutionStatus`、`current_iteration`）：瞬时的、可变的，
+///   通过 `watch` channel 广播给外部观察者
+/// - **领域状态**（`history`、`result`）：不可变的、仅通过事件追加构建，
+///   通过 `RwLock<AgentState>` 保护
+///
 /// # 线程安全
 ///
-/// `ReactAgent` 内部使用 `Arc<RwLock<>>` 保护可变状态，
-/// 可以安全地在多个异步任务间共享。
+/// `ReactAgent` 可以安全地在多个异步任务间共享。
+/// 外部观察者通过 `subscribe()` 获取 `watch::Receiver`，
+/// 无需竞争 `RwLock` 即可实时追踪 Agent 进度。
 ///
 /// # Examples
 ///
@@ -240,8 +319,12 @@ pub struct ReactAgent<L: LLMBackend> {
     memory: Arc<RwLock<MemorySystem>>,
     /// Agent 配置
     config: AgentConfig,
-    /// 运行时状态
+    /// 领域状态（history、result）
     state: Arc<RwLock<AgentState>>,
+    /// 状态广播通道发送端
+    state_tx: watch::Sender<AgentStateSnapshot>,
+    /// 状态广播通道接收端（保留用于 subscribe）
+    state_rx: watch::Receiver<AgentStateSnapshot>,
     /// 当前用户身份（零信任：工具调用需携带用户上下文）
     user_id: Option<String>,
 }
@@ -261,21 +344,27 @@ impl<L: LLMBackend + 'static> ReactAgent<L> {
     /// let agent = ReactAgent::new(llm_backend, tool_invoker, AgentConfig::default());
     /// ```
     pub fn new(llm: L, tools: AgentToolInvoker, config: AgentConfig) -> Self {
+        let initial_state = AgentState {
+            task_id: Uuid::nil(),
+            status: ExecutionStatus::Idle,
+            current_iteration: 0,
+            history: Vec::new(),
+            result: None,
+            error: None,
+            started_at: Utc::now(),
+            completed_at: None,
+        };
+        let initial_snapshot = AgentStateSnapshot::from(&initial_state);
+        let (state_tx, state_rx) = watch::channel(initial_snapshot);
+
         Self {
             llm: Arc::new(llm),
             tools: Arc::new(tools),
             memory: Arc::new(RwLock::new(MemorySystem::default())),
             config,
-            state: Arc::new(RwLock::new(AgentState {
-                task_id: Uuid::nil(),
-                status: ExecutionStatus::Idle,
-                current_iteration: 0,
-                history: Vec::new(),
-                result: None,
-                error: None,
-                started_at: Utc::now(),
-                completed_at: None,
-            })),
+            state: Arc::new(RwLock::new(initial_state)),
+            state_tx,
+            state_rx,
             user_id: None,
         }
     }
@@ -297,22 +386,28 @@ impl<L: LLMBackend + 'static> ReactAgent<L> {
         config: AgentConfig,
         memory: MemorySystem,
     ) -> Self {
+        let initial_state = AgentState {
+            task_id: Uuid::nil(),
+            status: ExecutionStatus::Idle,
+            current_iteration: 0,
+            history: Vec::new(),
+            result: None,
+            error: None,
+            started_at: Utc::now(),
+            completed_at: None,
+        };
+        let initial_snapshot = AgentStateSnapshot::from(&initial_state);
+        let (state_tx, state_rx) = watch::channel(initial_snapshot);
+
         Self {
             llm: Arc::new(llm),
             tools: Arc::new(tools),
             memory: Arc::new(RwLock::new(memory)),
             config,
+            state: Arc::new(RwLock::new(initial_state)),
+            state_tx,
+            state_rx,
             user_id: None,
-            state: Arc::new(RwLock::new(AgentState {
-                task_id: Uuid::nil(),
-                status: ExecutionStatus::Idle,
-                current_iteration: 0,
-                history: Vec::new(),
-                result: None,
-                error: None,
-                started_at: Utc::now(),
-                completed_at: None,
-            })),
         }
     }
 
@@ -354,10 +449,10 @@ impl<L: LLMBackend + 'static> ReactAgent<L> {
             // 检查超时
             if start_time.elapsed() > self.config.timeout {
                 self.set_status(ExecutionStatus::Timeout).await;
-                return Err(error_core::helpers::internal_error(&format!(
-                    "执行超时: {:?}",
-                    self.config.timeout
-                )));
+                return Err(error_core::helpers::validation_error(
+                    &format!("执行超时: {:?}", self.config.timeout),
+                    "agent_timeout",
+                ));
             }
 
             // Step 1: Thought - LLM 思考下一步行动
@@ -457,9 +552,10 @@ impl<L: LLMBackend + 'static> ReactAgent<L> {
                 ActionParsed::AskClarification(question) => {
                     info!(question = %question, "需要用户澄清");
                     self.set_status(ExecutionStatus::Failed).await;
-                    return Err(error_core::helpers::internal_error(&format!(
-                        "需要澄清: {question}"
-                    )));
+                    return Err(error_core::helpers::validation_error(
+                        &format!("需要澄清: {question}"),
+                        "agent_clarification",
+                    ));
                 }
             }
 
@@ -476,11 +572,14 @@ impl<L: LLMBackend + 'static> ReactAgent<L> {
 
         // 尝试生成部分结果
         let _partial_result = self.generate_partial_result(task).await;
-        Err(error_core::helpers::internal_error(&format!(
-            "达到最大迭代次数: {}, 已完成 {} 步",
-            self.config.max_iterations,
-            self.state.read().await.current_iteration
-        )))
+        Err(error_core::helpers::validation_error(
+            &format!(
+                "达到最大迭代次数: {}, 已完成 {} 步",
+                self.config.max_iterations,
+                self.state.read().await.current_iteration
+            ),
+            "agent_max_iterations",
+        ))
     }
 
     /// 初始化 Agent 状态
@@ -520,11 +619,9 @@ impl<L: LLMBackend + 'static> ReactAgent<L> {
         };
 
         // 调用 LLM
-        let response = self
-            .llm
-            .complete(&messages, &options)
-            .await
-            .map_err(|e| error_core::helpers::internal_error(&format!("LLM 调用失败: {e}")))?;
+        let response = self.llm.complete(&messages, &options).await.map_err(|e| {
+            error_core::helpers::llm_api_error(&format!("LLM 调用失败: {e}"), "think")
+        })?;
 
         // 记录 token 使用情况
         {
@@ -654,9 +751,10 @@ Action: {{"action_type": "Finish", "output": {{...}}, "summary": "..."}}
 
                     let action_value: serde_json::Value =
                         serde_json::from_str(json_str).map_err(|e| {
-                            error_core::helpers::internal_error(&format!(
-                                "解析 Action JSON 失败: {e}, 内容: {json_str}"
-                            ))
+                            error_core::helpers::llm_api_error(
+                                &format!("解析 Action JSON 失败: {e}, 内容: {json_str}"),
+                                "parse_action",
+                            )
                         })?;
 
                     let action_type = action_value
@@ -707,18 +805,21 @@ Action: {{"action_type": "Finish", "output": {{...}}, "summary": "..."}}
                                 .to_string();
                             Ok(ActionParsed::AskClarification(question))
                         }
-                        _ => Err(error_core::helpers::internal_error(&format!(
-                            "未知的动作类型: {action_type}"
-                        ))),
+                        _ => Err(error_core::helpers::llm_api_error(
+                            &format!("未知的动作类型: {action_type}"),
+                            "parse_action",
+                        )),
                     }
                 } else {
-                    Err(error_core::helpers::internal_error(
+                    Err(error_core::helpers::llm_api_error(
                         "未找到完整的 Action JSON",
+                        "parse_action",
                     ))
                 }
             } else {
-                Err(error_core::helpers::internal_error(
+                Err(error_core::helpers::llm_api_error(
                     "Action 字段中没有 JSON 数据",
+                    "parse_action",
                 ))
             }
         } else {
@@ -743,7 +844,9 @@ Action: {{"action_type": "Finish", "output": {{...}}, "summary": "..."}}
         self.tools
             .invoke(&action.tool_name, action.arguments, &ctx)
             .await
-            .map_err(|e| error_core::helpers::internal_error(&format!("工具调用失败: {e}")))
+            .map_err(|e| {
+                error_core::helpers::llm_api_error(&format!("工具调用失败: {e}"), "execute_action")
+            })
             .map(|r| r.result)
     }
 
@@ -838,16 +941,25 @@ Action: {{"action_type": "Finish", "output": {{...}}, "summary": "..."}}
         })
     }
 
-    /// 设置 Agent 状态
+    /// 设置 Agent 状态并广播快照
+    ///
+    /// 内部使用 FSM 验证确保状态转换合法性。
+    /// 非法转换会被记录为警告但不会 panic（防御性编程）。
     async fn set_status(&self, status: ExecutionStatus) {
-        let mut state = self.state.write().await;
-        state.status = status;
-    }
-
-    /// 检查是否超时
-    #[allow(dead_code)]
-    fn check_timeout(&self, started_at: Instant) -> bool {
-        started_at.elapsed() > self.config.timeout
+        let snapshot = {
+            let mut state = self.state.write().await;
+            if !state.status.can_transition_to(&status) && !state.status.is_terminal() {
+                tracing::warn!(
+                    from = ?state.status,
+                    to = ?status,
+                    "非法的 ExecutionStatus 状态转换，已忽略"
+                );
+                return;
+            }
+            state.status = status;
+            AgentStateSnapshot::from(&*state)
+        };
+        let _ = self.state_tx.send(snapshot);
     }
 
     /// 中断当前执行
@@ -870,8 +982,13 @@ Action: {{"action_type": "Finish", "output": {{...}}, "summary": "..."}}
                 info!("Agent 已被中断");
                 Ok(())
             }
-            _ => Err(error_core::helpers::internal_error(
+            ExecutionStatus::Idle
+            | ExecutionStatus::Completed
+            | ExecutionStatus::Failed
+            | ExecutionStatus::Timeout
+            | ExecutionStatus::MaxIterationsReached => Err(error_core::helpers::validation_error(
                 "Agent 未处于运行状态，无法中断",
+                "interrupt",
             )),
         }
     }
@@ -879,6 +996,21 @@ Action: {{"action_type": "Finish", "output": {{...}}, "summary": "..."}}
     /// 获取当前状态（只读快照）
     pub async fn get_state(&self) -> AgentState {
         self.state.read().await.clone()
+    }
+
+    /// 获取当前状态快照（轻量级，无需 `RwLock`）
+    #[must_use]
+    pub fn snapshot(&self) -> AgentStateSnapshot {
+        self.state_rx.borrow().clone()
+    }
+
+    /// 订阅状态变更（返回 watch Receiver）
+    ///
+    /// 外部观察者可通过返回的 `watch::Receiver` 实时追踪 Agent 进度，
+    /// 无需竞争 `RwLock`。适用于 UI 实时显示、进度监控等场景。
+    #[must_use]
+    pub fn subscribe(&self) -> watch::Receiver<AgentStateSnapshot> {
+        self.state_rx.clone()
     }
 
     /// 获取执行历史
@@ -908,24 +1040,27 @@ mod tests {
     // Mock LLM Backend 用于测试
     struct MockLlmBackend;
 
-    #[async_trait::async_trait]
+    #[allow(clippy::manual_async_fn)]
     impl LLMBackend for MockLlmBackend {
-        async fn complete(
+        #[allow(clippy::manual_async_fn)]
+        fn complete(
             &self,
             _messages: &[LLMMessage],
             _options: &CompletionOptions,
-        ) -> crate::Result<LLMResponse> {
-            Ok(LLMResponse {
-                content: "Thought: 我需要查询一些信息\nAction: {\"action_type\": \"Finish\", \"output\": {\"result\": \"测试成功\"}, \"summary\": \"测试完成\"}".to_string(),
-                tool_calls: None,
-                prompt_tokens: 10,
-                completion_tokens: 20,
-                total_tokens: 30,
-                finish_reason: FinishReason::Stop,
-            })
+        ) -> impl Future<Output = crate::Result<LLMResponse>> + Send {
+            async move {
+                Ok(LLMResponse {
+                    content: "Thought: 我需要查询一些信息\nAction: {\"action_type\": \"Finish\", \"output\": {\"result\": \"测试成功\"}, \"summary\": \"测试完成\"}".to_string(),
+                    tool_calls: None,
+                    prompt_tokens: 10,
+                    completion_tokens: 20,
+                    total_tokens: 30,
+                    finish_reason: FinishReason::Stop,
+                })
+            }
         }
 
-        async fn complete_stream(
+        fn complete_stream(
             &self,
             _messages: &[LLMMessage],
             _options: &CompletionOptions,

@@ -151,6 +151,9 @@ impl TerminalUIPromptAdapter {
     }
     
     fn format_terminal_prompt(severity: Severity, prompt: &str) -> String {
+        // NOTE: ANSI 转义序列在 Windows 旧版终端上可能不显示颜色。
+        // Windows 10+ 需启用虚拟终端处理 (ENABLE_VIRTUAL_TERMINAL_PROCESSING)。
+        // 跨平台方案应考虑使用 `console` 或 `termcolor` crate。
         let prefix = match severity {
             Severity::CRITICAL => "\x1b[31m[CRITICAL]\x1b[0m",
             Severity::ERROR => "\x1b[31m[ERROR]\x1b[0m",

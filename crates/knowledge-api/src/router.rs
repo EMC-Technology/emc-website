@@ -14,17 +14,17 @@ use axum::{
 };
 use tower_http::cors::CorsLayer;
 
-use crate::auth::{Role, auth_middleware, permission_middleware};
+use crate::auth::{Role, auth_middleware, permission_middleware, login};
 use crate::authz::middleware::authorization_middleware;
 use crate::error_handler::error_handler_middleware;
 use crate::handler::{
     AppState, delete_document, full_text_search, get_block, get_block_tokens, get_document,
-    get_document_blocks, health_check, list_documents, trace_references, upload_document,
+    get_document_blocks, get_token, health_check, list_documents, trace_references, upload_document,
     vector_search,
 };
 use crate::logging_middleware::logging_middleware;
 use crate::middleware::{
-    pii_redact::pii_redact_middleware, tracing_middleware::tracing_middleware,
+    pii_redact::pii_redact_middleware, security_headers::security_headers_middleware, tracing_middleware::tracing_middleware,
 };
 use crate::observability_endpoints::{metrics_endpoint, tracing_debug_endpoint};
 
@@ -70,6 +70,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/documents/{id}/blocks", get(get_document_blocks))
         .route("/blocks/{id}", get(get_block))
         .route("/blocks/{id}/tokens", get(get_block_tokens))
+        .route("/tokens/{id}", get(get_token))
         .route("/tokens/{id}/references", get(trace_references))
         .route("/search/vector", post(vector_search))
         .route("/search/fulltext", get(full_text_search));
@@ -82,7 +83,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/documents/{id}", delete(delete_document))
         .layer(middleware::from_fn(permission_middleware));
 
-    let api_routes = Router::new()
+    let protected_routes = Router::new()
         .merge(read_routes)
         .merge(write_routes)
         .merge(delete_routes)
@@ -95,6 +96,10 @@ pub fn build_router(state: AppState) -> Router {
             state.clone(),
             auth_middleware,
         ));
+
+    let api_routes = Router::new()
+        .route("/login", post(login))
+        .merge(protected_routes);
 
     // ========== 健康检查与可观测性端点 ==========
 
@@ -110,7 +115,14 @@ pub fn build_router(state: AppState) -> Router {
         .unwrap_or_else(|_| "http://localhost:3000,http://localhost:5173".to_string());
     let origins: Vec<_> = allowed_origins
         .split(',')
-        .filter_map(|s| s.trim().parse().ok())
+        .filter_map(|s| {
+            let trimmed = s.trim();
+            if trimmed == "*" {
+                tracing::warn!("CORS 通配符 '*' 被拒绝，请使用具体域名");
+                return None;
+            }
+            trimmed.parse().ok()
+        })
         .collect();
 
     let allow_methods = [
@@ -157,9 +169,10 @@ pub fn build_router(state: AppState) -> Router {
     // 中间件链（从外到内，请求先经过最外层的中间件）：
     // 1. CORS - 跨域处理
     // 2. Tracing Middleware - 创建 HTTP Span
-    // 3. PII Redaction - 敏感信息检测与脱敏
-    // 4. Logging Middleware - 结构化日志记录
-    // 5. Error Handler - 统一错误响应
+    // 3. Security Headers - 添加安全头
+    // 4. PII Redaction - 敏感信息检测与脱敏
+    // 5. Logging Middleware - 结构化日志记录
+    // 6. Error Handler - 统一错误响应
 
     Router::new()
         .nest("/api/v1", api_routes.merge(observability_routes))
@@ -173,6 +186,7 @@ pub fn build_router(state: AppState) -> Router {
             logging_middleware,
         ))
         .layer(middleware::from_fn(pii_redact_middleware))
+        .layer(middleware::from_fn(security_headers_middleware))
         .layer(middleware::from_fn(tracing_middleware))
         .layer(cors)
         .with_state(state)

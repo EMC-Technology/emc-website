@@ -31,7 +31,7 @@ impl ContextFrame {
         Self {
             source: source.to_string(),
             #[cfg(feature = "chrono")]
-            timestamp: Utc::now(),
+            timestamp: Utc::now(), // 确定性例外：时间戳记录事件发生时刻，需真实时间而非可复现值
             data,
         }
     }

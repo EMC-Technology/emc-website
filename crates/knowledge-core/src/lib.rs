@@ -7,6 +7,7 @@
     clippy::missing_errors_doc,
     clippy::missing_panics_doc,
     clippy::doc_markdown,
+    clippy::manual_async_fn,
 )]
 #![warn(missing_docs, unused_imports)]
 //! 知识系统核心数据模型与错误类型
@@ -84,7 +85,9 @@ pub mod reranker;
 pub mod record_id;
 
 pub use crypto::{Encryptor, Decryptor, KeyManager, hash, hash_str};
-pub use search::{Bm25Index, InvertedIndex, HybridSearchResult, RRF_DEFAULT_K, reciprocal_rank_fusion};
+pub use search::{Bm25Index, InvertedIndex, HybridSearchResult, RRF_DEFAULT_K};
+#[cfg(feature = "db")]
+pub use search::reciprocal_rank_fusion;
 pub use staleness::{StalenessChecker, StalenessStatus};
 pub use registry::{Registry, RegistryEntry};
 
@@ -104,8 +107,6 @@ pub use pii::PIIScanner;
 pub use event::{
     SystemEvent, KnowledgeEvent, EventBus, EventBusConfig, EventError, global_event_bus,
     Handler, HandleResult,
-    DocumentEventHandler, NodeEventHandler, SearchEventHandler, EmbeddingEventHandler,
-    AsyncEventHandler,
 };
 
 #[cfg(feature = "db")]
@@ -116,12 +117,13 @@ pub use schema_manager::SchemaManager;
 
 #[cfg(feature = "db")]
 pub use repository::{
-    BlockRepository,
-    CommunityRepository,
     DocumentRepository,
-    ProcessRepository,
-    ReferenceRepository,
+    BlockRepository,
     TokenRepository,
+    ReferenceRepository,
+    CommunityRepository,
+    ProcessRepository,
+    KnowledgeRepository,
     surreal_value_to_json,
     deserialize_value,
 };
@@ -133,25 +135,20 @@ pub use record_id::SafeRecordId;
 pub use cqrs::{
     Command, Query,
     CommandHandler, QueryHandler, CommandDispatcher, QueryDispatcher,
-    EventStore, StoredEvent, EventMetadata, SurrealEventStore,
-    Aggregate, AggregateRepository, SnapshotStore, MemorySnapshotStore,
-    DocumentAggregate, DocumentCommand, DocumentEvent, AggregateError,
-    CreateDocumentCommand, UpdateDocumentCommand, DeleteDocumentCommand,
-    CreateNodeCommand, LinkNodesCommand, IngestFileCommand, ReindexCommand,
-    GetDocumentQuery, SearchDocumentsQuery, GetNodeQuery, ListDocumentsQuery, GetGraphStatsQuery,
+    EventStore, Aggregate, AggregateRepository, AggregateError,
 };
 
 #[cfg(feature = "db")]
 pub use audit::{AuditLogger, AuditEvent};
 
 #[cfg(feature = "db")]
-pub use cache::{L1Cache, L1CacheConfig, CacheStats, L2Cache, CacheManager, CacheLookupResult};
+pub use cache::{L1Cache, L1CacheConfig, CacheStats, CacheManager, CacheLookupResult};
 
 #[cfg(feature = "db")]
 pub use vector_store::{VectorStore, SearchResult, VectorPoint, CollectionInfo, CollectionStatus};
 
 #[cfg(feature = "db")]
-pub use reranker::{CrossEncoderModel, RerankingPipeline, ScoredDocument};
+pub use reranker::{CrossEncoderModel, RerankingPipeline, ScoredDocument, Document, RerankedResults, PipelineStats, HybridRetriever, LLMJudger};
 
 /// 统一结果类型别名，委托至 [`error_core::Result`]
 pub type Result<T> = error_core::Result<T>;

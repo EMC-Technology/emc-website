@@ -1,4 +1,4 @@
-#![allow(clippy::result_large_err)]
+#![allow(clippy::result_large_err, clippy::manual_async_fn)] // ErrorObject 含因果链+上下文帧，体积较大但语义完整
 //! 文本解析流水线（DAG 驱动）
 //!
 //! 本 crate 实现从原始文本到结构化知识的完整解析链路：
@@ -72,6 +72,11 @@ pub mod execution_flow;
 /// - **自适应大小**：根据内容密度动态调整
 pub mod semantic_chunker;
 
+/// 社区摘要生成模块
+///
+/// 为 Leiden 社区检测产出的每个社区生成自然语言摘要，支持 GraphRAG Global Search
+pub mod summarizer;
+
 /// 事件发射辅助（event-driven feature 启用时通过 EventBus 发射事件）
 #[cfg(feature = "event-driven")]
 pub mod event_emitter;
@@ -87,9 +92,30 @@ pub use text_splitter::TextSplitterBlocker;
 pub use community_detector::{CommunityDetector, SymbolGraph, ProcessCommunitiesStage};
 pub use execution_flow::{ExecutionFlowTracer, ProcessExecutionFlowsStage};
 pub use ast_cache::{LruAstCache, AstCache};
+pub use summarizer::{
+    CommunitySummarizer, CommunityInput, SummarizerConfig, LanguageModel,
+    CommunitySummaryStore, InMemoryStore,
+};
+
+#[cfg(feature = "db")]
+pub use summarizer::SurrealSummaryStore;
 
 /// 当前 crate 统一结果类型别名
 pub type Result<T> = error_core::Result<T>;
 
-/// 解析流水线版本标识
-pub const PARSER_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// `str::floor_char_boundary` 的 MSRV 兼容实现
+///
+/// 标准库 `floor_char_boundary` 自 Rust 1.91.0 起稳定，
+/// 本项目 MSRV 为 1.85.0，因此提供此 polyfill。
+pub(crate) fn floor_char_boundary(s: &str, mut i: usize) -> usize {
+    if i >= s.len() {
+        s.len()
+    } else {
+        while !s.is_char_boundary(i) {
+            i -= 1;
+        }
+        i
+    }
+}
+
+

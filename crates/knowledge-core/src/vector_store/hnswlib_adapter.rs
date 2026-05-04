@@ -6,7 +6,7 @@ use crate::error::{Error, Result};
 use crate::vector_store::store::{VectorStore, VectorPoint, CollectionInfo, CollectionStatus};
 use crate::vector_store::types::*;
 use std::collections::HashMap;
-use std::sync::RwLock;
+use tokio::sync::RwLock;
 use tracing::debug;
 use uuid::Uuid;
 
@@ -106,7 +106,7 @@ impl HnswlibAdapter {
 impl VectorStore for HnswlibAdapter {
     async fn init_collection(&self, name: &str, dimension: usize, distance: DistanceMetric) -> Result<()> {
         debug!(collection = name, dim = dimension, "init collection");
-        let mut cols = self.collections.write().map_err(|e| Error::new("LOCK_ERROR").context(e.to_string()))?;
+        let mut cols = self.collections.write().await;
         if !cols.contains_key(name) {
             cols.insert(name.to_string(), InMemoryCollection { points: HashMap::new(), distance, dimension });
         }
@@ -115,7 +115,7 @@ impl VectorStore for HnswlibAdapter {
 
     async fn upsert(&self, collection: &str, points: Vec<VectorPoint>) -> Result<Vec<Uuid>> {
         if points.is_empty() { return Ok(vec![]); }
-        let mut cols = self.collections.write().map_err(|e| Error::new("LOCK_ERROR").context(e.to_string()))?;
+        let mut cols = self.collections.write().await;
         let col = cols.get_mut(collection).ok_or_else(|| Error::new("NOT_FOUND").context(collection))?;
         let ids: Vec<Uuid> = points.iter().map(|p| p.id).collect();
         for p in &points {
@@ -125,7 +125,7 @@ impl VectorStore for HnswlibAdapter {
     }
 
     async fn similarity_search(&self, collection: &str, query_vector: &[f32], options: SearchOptions) -> Result<Vec<SearchResult>> {
-        let cols = self.collections.read().map_err(|e| Error::new("LOCK_ERROR").context(e.to_string()))?;
+        let cols = self.collections.read().await;
         let col = cols.get(collection).ok_or_else(|| Error::new("NOT_FOUND").context(collection))?;
         Ok(self.brute_force_search(col, query_vector, &options))
     }
@@ -135,7 +135,7 @@ impl VectorStore for HnswlibAdapter {
     }
 
     async fn get_by_ids(&self, collection: &str, ids: &[Uuid]) -> Result<Vec<SearchResult>> {
-        let cols = self.collections.read().map_err(|e| Error::new("LOCK_ERROR").context(e.to_string()))?;
+        let cols = self.collections.read().await;
         match cols.get(collection) {
             Some(col) => Ok(ids.iter().filter_map(|id| col.points.get(id).map(|p| SearchResult { id: *id, score: 1.0, payload: p.payload.clone(), vector: None, metadata: extract_metadata(&p.payload) })).collect()),
             None => Err(Error::new("NOT_FOUND").context(collection)),
@@ -144,13 +144,13 @@ impl VectorStore for HnswlibAdapter {
 
     async fn delete(&self, collection: &str, ids: &[Uuid]) -> Result<()> {
         if ids.is_empty() { return Ok(()); }
-        let mut cols = self.collections.write().map_err(|e| Error::new("LOCK_ERROR").context(e.to_string()))?;
+        let mut cols = self.collections.write().await;
         if let Some(col) = cols.get_mut(collection) { for id in ids { col.points.remove(id); } }
         Ok(())
     }
 
     async fn collection_info(&self, collection: &str) -> Result<CollectionInfo> {
-        let cols = self.collections.read().map_err(|e| Error::new("LOCK_ERROR").context(e.to_string()))?;
+        let cols = self.collections.read().await;
         match cols.get(collection) {
             Some(col) => Ok(CollectionInfo { name: collection.to_string(), vectors_count: col.points.len() as u64, dimension: col.dimension, status: CollectionStatus::Green }),
             None => Err(Error::new("NOT_FOUND").context(collection)),
@@ -158,7 +158,7 @@ impl VectorStore for HnswlibAdapter {
     }
 
     async fn close(&self) -> Result<()> {
-        let mut cols = self.collections.write().map_err(|e| Error::new("LOCK_ERROR").context(e.to_string()))?;
+        let mut cols = self.collections.write().await;
         cols.clear();
         Ok(())
     }

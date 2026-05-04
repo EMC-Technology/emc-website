@@ -20,15 +20,20 @@ icu_segmenter = { workspace = true }
 tree-sitter = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 tracing = { workspace = true }
 blake3 = { workspace = true }
 surrealdb = { workspace = true }
-rand = { workspace = true }
 rayon = { workspace = true, optional = true }
+futures = { workspace = true }
+chrono = { workspace = true }
 error-core = { workspace = true, features = ["serde", "uuid", "chrono"] }
 
 # 内部依赖：引用 knowledge-core 的数据模型与错误类型
 knowledge-core = { path = "../knowledge-core", default-features = false }
+
+# Ollama LLM 适配器（可选，用于社区摘要生成）
+reqwest = { version = "0.12", default-features = false, features = ["json"], optional = true }
 
 # ============================================================================
 # tree-sitter 语言 Grammar（通过 feature flag 按需启用）
@@ -70,6 +75,8 @@ default = ["db", "lang-rust", "lang-python"]
 parallel = ["dep:rayon"]
 
 db = ["knowledge-core/db"]
+
+llm = ["dep:reqwest"]
 
 event-driven = ["knowledge-core/event-driven"]
 

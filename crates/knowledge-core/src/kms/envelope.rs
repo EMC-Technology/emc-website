@@ -1,13 +1,9 @@
-use base64::Engine;
-use chrono::Utc;
 use lru::LruCache;
-use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
-use std::time::Duration;
 
-use crate::kms::traits::*;
 use crate::Result;
+use crate::kms::traits::{DecryptedDek, EncryptionContext, EnvelopedData, KeyManagementService};
 
 /// 信封加密 (Envelope Encryption) 实现
 ///
@@ -26,7 +22,7 @@ use crate::Result;
 /// # 使用示例
 ///
 /// ```ignore
-/// let envelope = EnvelopeEncryption::new(kms, Duration::from_secs(300), 100);
+/// let envelope = EnvelopeEncryption::new(kms, 100);
 /// let encrypted = envelope.encrypt_data(b"sensitive data", &context).await?;
 /// let decrypted = envelope.decrypt_data(&encrypted).await?;
 /// ```
@@ -35,8 +31,6 @@ pub struct EnvelopeEncryption<KMS: KeyManagementService> {
     kms: Arc<KMS>,
     /// DEK 缓存（减少 KMS 调用）
     dek_cache: Arc<tokio::sync::RwLock<LruCache<String, DecryptedDek>>>,
-    /// 缓存 TTL
-    cache_ttl: Duration,
 }
 
 impl<KMS: KeyManagementService> EnvelopeEncryption<KMS> {
@@ -45,24 +39,23 @@ impl<KMS: KeyManagementService> EnvelopeEncryption<KMS> {
     /// # 参数
     ///
     /// - `kms`: KMS 服务实例
-    /// - `cache_ttl`: DEK 缓存有效期
     /// - `cache_size`: 最大缓存条目数
-    pub fn new(kms: KMS, cache_ttl: Duration, cache_size: usize) -> Self {
-        let cache_size = NonZeroUsize::new(cache_size.max(1)).expect("1 is non-zero; max(1) guarantees this");
+    pub fn new(kms: KMS, cache_size: usize) -> Self {
+        let cache_size =
+            NonZeroUsize::new(cache_size.max(1)).expect("1 is non-zero; max(1) guarantees this");
         Self {
             kms: Arc::new(kms),
             dek_cache: Arc::new(tokio::sync::RwLock::new(LruCache::new(cache_size))),
-            cache_ttl,
         }
     }
 
     /// 从 Arc<KMS> 创建实例
-    pub fn from_arc(kms: Arc<KMS>, cache_ttl: Duration, cache_size: usize) -> Self {
-        let cache_size = NonZeroUsize::new(cache_size.max(1)).expect("1 is non-zero; max(1) guarantees this");
+    pub fn from_arc(kms: Arc<KMS>, cache_size: usize) -> Self {
+        let cache_size =
+            NonZeroUsize::new(cache_size.max(1)).expect("1 is non-zero; max(1) guarantees this");
         Self {
             kms,
             dek_cache: Arc::new(tokio::sync::RwLock::new(LruCache::new(cache_size))),
-            cache_ttl,
         }
     }
 
@@ -85,8 +78,7 @@ impl<KMS: KeyManagementService> EnvelopeEncryption<KMS> {
         let kek_id = context
             .context
             .get("kek_id")
-            .map(String::as_str)
-            .unwrap_or("default");
+            .map_or("default", String::as_str);
 
         let encrypted_dek = self.kms.generate_dek(kek_id).await?;
 
@@ -135,10 +127,7 @@ impl<KMS: KeyManagementService> EnvelopeEncryption<KMS> {
     }
 
     /// 批量解密
-    pub async fn decrypt_batch(
-        &self,
-        enveloped_list: &[EnvelopedData],
-    ) -> Result<Vec<Vec<u8>>> {
+    pub async fn decrypt_batch(&self, enveloped_list: &[EnvelopedData]) -> Result<Vec<Vec<u8>>> {
         let mut results = Vec::with_capacity(enveloped_list.len());
 
         for enveloped in enveloped_list {
@@ -151,13 +140,15 @@ impl<KMS: KeyManagementService> EnvelopeEncryption<KMS> {
 
     /// 清除缓存中的所有 DEK
     pub async fn clear_cache(&self) {
-        let mut cache: tokio::sync::RwLockWriteGuard<'_, LruCache<String, DecryptedDek>> = self.dek_cache.write().await;
+        let mut cache: tokio::sync::RwLockWriteGuard<'_, LruCache<String, DecryptedDek>> =
+            self.dek_cache.write().await;
         cache.clear();
     }
 
     /// 获取当前缓存大小
     pub async fn cache_size(&self) -> usize {
-        let cache: tokio::sync::RwLockReadGuard<'_, LruCache<String, DecryptedDek>> = self.dek_cache.read().await;
+        let cache: tokio::sync::RwLockReadGuard<'_, LruCache<String, DecryptedDek>> =
+            self.dek_cache.read().await;
         cache.len()
     }
 
@@ -199,7 +190,10 @@ pub struct ChunkedEncryptor<KMS: KeyManagementService> {
 impl<KMS: KeyManagementService> ChunkedEncryptor<KMS> {
     /// 创建分块加密器
     pub fn new(envelope: EnvelopeEncryption<KMS>, chunk_size: usize) -> Self {
-        Self { envelope, chunk_size }
+        Self {
+            envelope,
+            chunk_size,
+        }
     }
 
     /// 加密大型数据（自动分块）
@@ -234,10 +228,7 @@ impl<KMS: KeyManagementService> ChunkedEncryptor<KMS> {
     }
 
     /// 解密分块数据
-    pub async fn decrypt_large(
-        &self,
-        encrypted: &ChunkedEncryptedData,
-    ) -> Result<Vec<u8>> {
+    pub async fn decrypt_large(&self, encrypted: &ChunkedEncryptedData) -> Result<Vec<u8>> {
         let mut result = Vec::with_capacity(encrypted.original_size);
 
         for chunk in &encrypted.chunks {
@@ -262,7 +253,11 @@ pub struct ChunkedEncryptedData {
 
 /// 数据加密工具函数集合
 pub mod utils {
-    use super::*;
+    use super::EnvelopeEncryption;
+    use crate::Result;
+    use crate::error::helpers;
+    use crate::kms::traits::{EncryptionContext, EnvelopedData, KeyManagementService};
+    use base64::Engine;
 
     /// 快速加密字符串为 Base64 编码的 EnvelopedData JSON
     pub async fn encrypt_to_base64<KMS: KeyManagementService>(
@@ -280,18 +275,24 @@ pub mod utils {
         envelope: &EnvelopeEncryption<KMS>,
         encoded: &str,
     ) -> Result<String> {
-        let json_bytes =
-            base64::engine::general_purpose::STANDARD.decode(encoded).map_err(|e| crate::error::helpers::internal_error(&format!("Base64 解码失败: {}", e)))?;
+        let json_bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .map_err(|e| {
+                crate::error::helpers::validation_error(
+                    &format!("Base64 解码失败: {e}"),
+                    "decrypt_from_base64",
+                )
+            })?;
 
         let json_str = String::from_utf8(json_bytes)
-            .map_err(|e| helpers::internal_error(&format!("UTF-8 解码失败: {}", e)))?;
+            .map_err(|e| helpers::serde_error(&format!("UTF-8 解码失败: {e}")))?;
 
         let enveloped: EnvelopedData = serde_json::from_str(&json_str)
-            .map_err(|e| helpers::internal_error(&format!("JSON 反序列化失败: {}", e)))?;
+            .map_err(|e| helpers::serde_error(&format!("JSON 反序列化失败: {e}")))?;
 
         let plaintext = envelope.decrypt_data(&enveloped).await?;
         String::from_utf8(plaintext)
-            .map_err(|e| helpers::internal_error(&format!("UTF-8 解码失败: {}", e)))
+            .map_err(|e| helpers::serde_error(&format!("UTF-8 解码失败: {e}")))
     }
 
     /// 检查 EnvelopedData 是否有效
@@ -302,24 +303,25 @@ pub mod utils {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{ChunkedEncryptor, EnvelopeConfig, EnvelopeEncryption, utils};
     use crate::kms::local::LocalKms;
-    use tempfile::tempdir;
+    use crate::kms::traits::EncryptionContext;
+    use tempfile::TempDir;
 
-    async fn create_test_kms() -> LocalKms {
-        let dir = tempdir().unwrap();
+    async fn create_test_kms() -> (LocalKms, TempDir) {
+        let dir = tempfile::tempdir().unwrap();
         let master_key = crate::kms::local::LocalKms::generate_master_key();
         let kms = LocalKms::new(master_key, dir.path()).unwrap();
         kms.create_key("test-kek", crate::kms::traits::KeySpec::Aes256, None)
             .await
             .unwrap();
-        kms
+        (kms, dir)
     }
 
     #[tokio::test]
     async fn test_encrypt_decrypt_roundtrip() {
-        let kms = create_test_kms().await;
-        let envelope = EnvelopeEncryption::new(kms, Duration::from_secs(60), 10);
+        let (kms, _dir) = create_test_kms().await;
+        let envelope = EnvelopeEncryption::new(kms, 10);
 
         let context = EncryptionContext::empty().add("purpose", "test");
         let plaintext = b"Hello, Envelope Encryption!";
@@ -333,8 +335,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_encrypt_with_context() {
-        let kms = create_test_kms().await;
-        let envelope = EnvelopeEncryption::new(kms, Duration::from_secs(60), 10);
+        let (kms, _dir) = create_test_kms().await;
+        let envelope = EnvelopeEncryption::new(kms, 10);
 
         let context = EncryptionContext::empty()
             .add("department", "engineering")
@@ -353,8 +355,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_batch_encryption() {
-        let kms = create_test_kms().await;
-        let envelope = EnvelopeEncryption::new(kms, Duration::from_secs(60), 10);
+        let (kms, _dir) = create_test_kms().await;
+        let envelope = EnvelopeEncryption::new(kms, 10);
 
         let data_list: Vec<&[u8]> = vec![b"data1", b"data2", b"data3"];
         let context = EncryptionContext::empty();
@@ -370,8 +372,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_chunked_encryption() {
-        let kms = create_test_kms().await;
-        let envelope = EnvelopeEncryption::new(kms, Duration::from_secs(60), 10);
+        let (kms, _dir) = create_test_kms().await;
+        let envelope = EnvelopeEncryption::new(kms, 10);
         let chunked = ChunkedEncryptor::new(envelope, 10);
 
         let large_data: Vec<u8> = (0..100u8).collect();
@@ -387,8 +389,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_base64_roundtrip() {
-        let kms = create_test_kms().await;
-        let envelope = EnvelopeEncryption::new(kms, Duration::from_secs(60), 10);
+        let (kms, _dir) = create_test_kms().await;
+        let envelope = EnvelopeEncryption::new(kms, 10);
         let context = EncryptionContext::empty();
 
         let encoded = utils::encrypt_to_base64(&envelope, "test message", &context)
@@ -406,17 +408,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_clear_cache() {
-        let kms = create_test_kms().await;
-        let envelope = EnvelopeEncryption::new(kms, Duration::from_secs(60), 10);
+        let (kms, _dir) = create_test_kms().await;
+        let envelope = EnvelopeEncryption::new(kms, 10);
         let context = EncryptionContext::empty();
 
-        envelope
-            .encrypt_data(b"cache me", &context)
-            .await
-            .unwrap();
+        envelope.encrypt_data(b"cache me", &context).await.unwrap();
 
         let size_before = envelope.cache_size().await;
-        assert!(size_before >= 0);
+        assert!(size_before > 0);
 
         envelope.clear_cache().await;
         let size_after = envelope.cache_size().await;

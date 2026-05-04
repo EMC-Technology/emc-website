@@ -2,7 +2,7 @@
 
 use super::embedding_model::{EmbeddingConfig, EmbeddingModelType, EmbeddingModel as EmbeddingModelTrait};
 use super::gemma_embedding::GemmaEmbedding;
-use super::EmbeddingError;
+use crate::embedding_model::EmbeddingError;
 
 /// 嵌入模型工厂，根据配置创建对应的嵌入模型实例
 pub struct EmbeddingFactory;

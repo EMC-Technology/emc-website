@@ -293,7 +293,7 @@ mod tests {
 
         let result: crate::Result<i32> = tracer
             .execute("INVALID QUERY", || async {
-                Err(error_core::helpers::internal_error("模拟 DB 错误"))
+                Err(error_core::helpers::db_error("模拟 DB 错误"))
             })
             .await;
 

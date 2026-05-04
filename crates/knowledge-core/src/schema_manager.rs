@@ -37,7 +37,7 @@ impl<D: DatabaseClient> SchemaManager<D> {
         let statements = parse_statements(&ddl);
         for stmt in &statements {
             let start = Instant::now();
-            self.client.query(stmt, serde_json::json!({})).await.map_err(|e| helpers::db_error(&e.to_string()))?;
+            self.client.query(stmt, serde_json::json!({})).await.map_err(|e| helpers::db_error(&format!("Schema 操作失败: {e}")))?;
             #[allow(clippy::cast_possible_truncation)]
             log_slow_op(stmt, start.elapsed().as_millis() as u64);
         }
@@ -47,16 +47,16 @@ impl<D: DatabaseClient> SchemaManager<D> {
 
     /// 获取当前数据库 Schema 版本
     pub async fn get_version(&self) -> Result<String> {
-        let results = self.client.query("SELECT version FROM schema_version ORDER BY applied_at DESC LIMIT 1", serde_json::json!({})).await.map_err(|e| helpers::db_error(&e.to_string()))?;
+        let results = self.client.query("SELECT version FROM schema_version ORDER BY applied_at DESC LIMIT 1", serde_json::json!({})).await.map_err(|e| helpers::db_error(&format!("Schema 操作失败: {e}")))?;
         if results.is_empty() { return Err(helpers::not_found("schema_version", "latest")); }
         if let Some(surrealdb::sql::Value::Object(obj)) = results.first() {
             if let Some(v) = obj.get("version") { return Ok(v.to_string().trim_matches(|c| c == '"' || c == '\'').to_string()); }
         }
-        Err(helpers::internal_error("无法解析 schema_version 记录"))
+        Err(helpers::parse_error("无法解析 schema_version 记录"))
     }
 
     async fn record_version(&self) -> Result<()> {
-        self.client.create("schema_version", serde_json::json!({"version": SCHEMA_VERSION})).await.map_err(|e| helpers::db_error(&e.to_string()))?;
+        self.client.create("schema_version", serde_json::json!({"version": SCHEMA_VERSION})).await.map_err(|e| helpers::db_error(&format!("Schema 操作失败: {e}")))?;
         Ok(())
     }
 }

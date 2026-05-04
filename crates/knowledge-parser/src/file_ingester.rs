@@ -155,7 +155,7 @@ impl FileIngester {
             read_and_hash_sync(&path_owned)
         })
         .await
-        .map_err(|e| helpers::internal_error(&format!("任务执行被取消: {e}")))??;
+        .map_err(|e| helpers::io_error(&format!("任务执行被取消: {e}")))??;
 
         Ok(IngestedFile {
             path: path.to_path_buf(),
@@ -189,14 +189,14 @@ impl FileIngester {
     async fn ingest_directory_inner(&self, dir: &Path) -> Result<Vec<IngestedFile>> {
         let mut entries = tokio::fs::read_dir(dir)
             .await
-            .map_err(|e| helpers::internal_error(&format!("无法读取目录 {}: {e}", dir.display())))?;
+            .map_err(|e| helpers::io_error(&format!("无法读取目录 {}: {e}", dir.display())))?;
 
         let mut results = Vec::new();
 
         while let Some(entry) = entries
             .next_entry()
             .await
-            .map_err(|e| helpers::internal_error(&format!("读取目录条目失败: {e}")))?
+            .map_err(|e| helpers::io_error(&format!("读取目录条目失败: {e}")))?
         {
             let path = entry.path();
 
@@ -230,7 +230,7 @@ fn read_and_hash_sync(path: &Path) -> Result<(String, String)> {
     use std::io::Read;
 
     let file = File::open(path).map_err(|e| {
-        helpers::internal_error(&format!("无法打开文件 {}: {e}", path.display()))
+        helpers::io_error(&format!("无法打开文件 {}: {e}", path.display()))
     })?;
 
     let mut reader = BufReader::with_capacity(READ_BUFFER_SIZE, file);
@@ -240,7 +240,7 @@ fn read_and_hash_sync(path: &Path) -> Result<(String, String)> {
     let mut buffer = vec![0u8; READ_BUFFER_SIZE];
     loop {
         let bytes_read = reader.read(&mut buffer).map_err(|e| {
-            helpers::internal_error(&format!("读取文件 {} 失败: {e}", path.display()))
+            helpers::io_error(&format!("读取文件 {} 失败: {e}", path.display()))
         })?;
         if bytes_read == 0 {
             break;

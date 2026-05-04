@@ -1,9 +1,9 @@
+use std::future::Future;
 use std::sync::Arc;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use chrono::{DateTime, Utc};
-use async_trait::async_trait;
 use tracing::{info, warn, instrument};
-use crate::cqrs::event_store::{EventStore, StoredEvent, EventMetadata};
+use crate::cqrs::event_store::{EventStore, StoredEvent, EventMetadata, CausationContext, ChangeSet, FieldChange};
 use crate::Result;
 use crate::error::helpers;
 
@@ -17,6 +17,24 @@ pub enum DocumentStatus {
     Published,
     /// 已归档
     Archived,
+}
+
+impl DocumentStatus {
+    /// 验证状态转换是否合法
+    ///
+    /// 合法转换路径：
+    /// - `Draft` → `Published`
+    /// - `Draft` → `Archived`
+    /// - `Published` → `Archived`
+    ///
+    /// 非法转换：
+    /// - 任何状态 → `Draft`（不可回退）
+    /// - `Archived` → 任何状态（终态）
+    /// - `Published` → `Draft`（不可回退）
+    #[must_use]
+    pub fn can_transition_to(&self, target: &Self) -> bool {
+        matches!((self, target), (Self::Draft, Self::Published | Self::Archived) | (Self::Published, Self::Archived))
+    }
 }
 
 /// 聚合根操作错误
@@ -51,6 +69,8 @@ pub enum DocumentCommand {
     Create(CreateDocumentData),
     /// 更新文档
     Update(UpdateDocumentData),
+    /// 发布文档（Draft → Published）
+    Publish,
     /// 删除文档
     Delete(DeleteDocumentData),
 }
@@ -97,6 +117,8 @@ pub enum DocumentEvent {
     Created(DocumentCreatedData),
     /// 文档已更新
     Updated(DocumentUpdatedData),
+    /// 文档已发布
+    Published(DocumentPublishedData),
     /// 文档已删除
     Deleted(DocumentDeletedData),
 }
@@ -119,19 +141,27 @@ pub struct DocumentCreatedData {
 }
 
 /// 文档更新事件携带的数据
+///
+/// 使用 `ChangeSet` 记录字段级变更（old_value → new_value），
+/// 支持审计差异对比和精确的状态回放。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentUpdatedData {
     /// 文档唯一标识
     pub document_id: String,
-    /// 更新后的标题，None 表示未修改
-    pub title: Option<String>,
-    /// 更新后的内容，None 表示未修改
-    pub content: Option<String>,
-    /// 更新后的内容类型，None 表示未修改
-    pub content_type: Option<String>,
-    /// 更新后的元数据，None 表示未修改
-    pub metadata: Option<serde_json::Value>,
+    /// 字段级变更集（仅包含实际变更的字段）
+    pub changes: ChangeSet,
     /// 事件发生时间（事件溯源：重放时使用此时间戳，而非 Utc::now()）
+    pub occurred_at: DateTime<Utc>,
+}
+
+/// 文档发布事件携带的数据
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentPublishedData {
+    /// 文档唯一标识
+    pub document_id: String,
+    /// 发布前状态
+    pub previous_status: DocumentStatus,
+    /// 事件发生时间
     pub occurred_at: DateTime<Utc>,
 }
 
@@ -242,7 +272,8 @@ impl Aggregate for DocumentAggregate {
     fn execute(&self, command: Self::Command) -> std::result::Result<Vec<Self::Event>, Self::Error> {
         match command {
             DocumentCommand::Create(data) => self.handle_create(data),
-            DocumentCommand::Update(data) => self.handle_update(data),
+            DocumentCommand::Update(data) => self.handle_update(&data),
+            DocumentCommand::Publish => self.handle_publish(),
             DocumentCommand::Delete(data) => self.handle_delete(data),
         }
     }
@@ -260,19 +291,42 @@ impl Aggregate for DocumentAggregate {
                 self.updated_at = data.occurred_at;
             }
             DocumentEvent::Updated(data) => {
-                if let Some(title) = &data.title {
-                    self.title.clone_from(title);
-                }
-                if let Some(content) = &data.content {
-                    self.content.clone_from(content);
-                }
-                if let Some(content_type) = &data.content_type {
-                    self.content_type.clone_from(content_type);
-                }
-                if let Some(metadata) = &data.metadata {
-                    self.metadata.clone_from(metadata);
+                for (field, change) in &data.changes.changes {
+                    match field.as_str() {
+                        "title" => {
+                            if let Some(ref new) = change.new_value {
+                                self.title = new.as_str().unwrap_or_default().to_string();
+                            }
+                        }
+                        "content" => {
+                            if let Some(ref new) = change.new_value {
+                                self.content = new.as_str().unwrap_or_default().to_string();
+                            }
+                        }
+                        "content_type" => {
+                            if let Some(ref new) = change.new_value {
+                                self.content_type = new.as_str().unwrap_or_default().to_string();
+                            }
+                        }
+                        "metadata" => {
+                            if let Some(ref new) = change.new_value {
+                                self.metadata = new.clone();
+                            }
+                        }
+                        _ => {
+                            tracing::warn!(
+                                field = %field,
+                                "Unknown field change in DocumentUpdated event, skipping"
+                            );
+                        }
+                    }
                 }
                 self.updated_at = data.occurred_at;
+            }
+            DocumentEvent::Published(data) => {
+                self.status = DocumentStatus::Published;
+                self.updated_at = data.occurred_at;
+                let _ = &data.previous_status;
             }
             DocumentEvent::Deleted(data) => {
                 self.status = DocumentStatus::Archived;
@@ -317,7 +371,7 @@ impl DocumentAggregate {
 
     /// # Errors
     /// 当文档不存在或已归档时返回 `AggregateError`
-    pub fn handle_update(&self, data: UpdateDocumentData) -> std::result::Result<Vec<DocumentEvent>, AggregateError> {
+    pub fn handle_update(&self, data: &UpdateDocumentData) -> std::result::Result<Vec<DocumentEvent>, AggregateError> {
         if self.id.is_empty() {
             return Err(AggregateError::NotFound("Document does not exist".to_string()));
         }
@@ -334,12 +388,66 @@ impl DocumentAggregate {
             ));
         }
 
+        let mut changes = ChangeSet::new();
+
+        if let Some(ref new_title) = data.title {
+            changes.add_change("title", FieldChange::changed(
+                serde_json::Value::String(self.title.clone()),
+                serde_json::Value::String(new_title.clone()),
+            ));
+        }
+
+        if let Some(ref new_content) = data.content {
+            changes.add_change("content", FieldChange::changed(
+                serde_json::Value::String(self.content.clone()),
+                serde_json::Value::String(new_content.clone()),
+            ));
+        }
+
+        if let Some(ref new_content_type) = data.content_type {
+            changes.add_change("content_type", FieldChange::changed(
+                serde_json::Value::String(self.content_type.clone()),
+                serde_json::Value::String(new_content_type.clone()),
+            ));
+        }
+
+        if let Some(ref new_metadata) = data.metadata {
+            changes.add_change("metadata", FieldChange::changed(
+                self.metadata.clone(),
+                new_metadata.clone(),
+            ));
+        }
+
+        if !changes.has_changes() {
+            return Ok(Vec::new());
+        }
+
         Ok(vec![DocumentEvent::Updated(DocumentUpdatedData {
             document_id: self.id.clone(),
-            title: data.title,
-            content: data.content,
-            content_type: data.content_type,
-            metadata: data.metadata,
+            changes,
+            occurred_at: Utc::now(),
+        })])
+    }
+
+    /// 发布文档（Draft → Published）
+    ///
+    /// # Errors
+    /// 当文档不存在、已归档或不在 Draft 状态时返回 `AggregateError`
+    pub fn handle_publish(&self) -> std::result::Result<Vec<DocumentEvent>, AggregateError> {
+        if self.id.is_empty() {
+            return Err(AggregateError::NotFound("Document does not exist".to_string()));
+        }
+
+        if !self.status.can_transition_to(&DocumentStatus::Published) {
+            return Err(AggregateError::InvalidState(format!(
+                "Cannot publish document in {:?} state, only Draft can be published",
+                self.status
+            )));
+        }
+
+        Ok(vec![DocumentEvent::Published(DocumentPublishedData {
+            document_id: self.id.clone(),
+            previous_status: self.status.clone(),
             occurred_at: Utc::now(),
         })])
     }
@@ -402,12 +510,11 @@ impl DocumentAggregate {
 }
 
 /// 聚合根快照存储特征，用于加速事件溯源中的状态重建
-#[async_trait]
 pub trait SnapshotStore: Send + Sync {
     /// 保存聚合根快照
-    async fn save_snapshot<A: Aggregate>(&self, aggregate: &A) -> Result<()>;
+    fn save_snapshot<A: Aggregate>(&self, aggregate: &A) -> impl Future<Output = Result<()>> + Send;
     /// 加载聚合根快照，返回聚合根实例及其版本号
-    async fn load_snapshot<A: Aggregate>(&self, aggregate_id: &str) -> Result<Option<(A, u64)>>;
+    fn load_snapshot<A: Aggregate>(&self, aggregate_id: &str) -> impl Future<Output = Result<Option<(A, u64)>>> + Send;
 }
 
 /// 基于内存的快照存储实现，适用于测试和开发环境
@@ -431,27 +538,33 @@ impl Default for MemorySnapshotStore {
     }
 }
 
-#[async_trait]
+#[allow(clippy::manual_async_fn)]
 impl SnapshotStore for MemorySnapshotStore {
-    async fn save_snapshot<A: Aggregate>(&self, aggregate: &A) -> Result<()> {
-        let json = serde_json::to_value(aggregate).map_err(error_core::ErrorObject::from)?;
-        self.snapshots.write().await.insert(aggregate.id().to_string(), (json.to_string(), aggregate.version()));
-        Ok(())
+    #[allow(clippy::manual_async_fn)]
+    fn save_snapshot<A: Aggregate>(&self, aggregate: &A) -> impl Future<Output = Result<()>> + Send {
+        async move {
+            let json = serde_json::to_value(aggregate).map_err(error_core::ErrorObject::from)?;
+            self.snapshots.write().await.insert(aggregate.id().to_string(), (json.to_string(), aggregate.version()));
+            Ok(())
+        }
     }
 
-    async fn load_snapshot<A: Aggregate>(&self, aggregate_id: &str) -> Result<Option<(A, u64)>> {
-        let guard = self.snapshots.read().await;
-        
-        match guard.get(aggregate_id) {
-            Some((json_str, version)) => {
-                let json_str = json_str.clone();
-                let version = *version;
-                drop(guard);
-                let aggregate: A =
-                    serde_json::from_str(&json_str).map_err(|e| helpers::internal_error(&format!("Failed to deserialize snapshot: {e}")))?;
-                Ok(Some((aggregate, version)))
+    #[allow(clippy::manual_async_fn)]
+    fn load_snapshot<A: Aggregate>(&self, aggregate_id: &str) -> impl Future<Output = Result<Option<(A, u64)>>> + Send {
+        async move {
+            let guard = self.snapshots.read().await;
+            
+            match guard.get(aggregate_id) {
+                Some((json_str, version)) => {
+                    let json_str = json_str.clone();
+                    let version = *version;
+                    drop(guard);
+                    let aggregate: A =
+                        serde_json::from_str(&json_str).map_err(|e| helpers::aggregate_serialization_error(&format!("Failed to deserialize snapshot: {e}")))?;
+                    Ok(Some((aggregate, version)))
+                }
+                None => Ok(None),
             }
-            None => Ok(None),
         }
     }
 }
@@ -506,7 +619,7 @@ impl<A: Aggregate> AggregateRepository<A> {
         if let Some(mut agg) = aggregate {
             for event_data in &events {
                 let event: A::Event = serde_json::from_value(event_data.data.clone())
-                    .map_err(|e| helpers::internal_error(&format!("Failed to deserialize event: {e}")))?;
+                    .map_err(|e| helpers::aggregate_serialization_error(&format!("Failed to deserialize event: {e}")))?;
                 agg.apply(&event);
             }
             info!(
@@ -521,7 +634,7 @@ impl<A: Aggregate> AggregateRepository<A> {
                 .iter()
                 .map(|e| {
                     serde_json::from_value(e.data.clone())
-                        .map_err(|err| helpers::internal_error(&format!("Event deserialization failed: {err}")))
+                        .map_err(|err| helpers::aggregate_serialization_error(&format!("Event deserialization failed: {err}")))
                 })
                 .collect::<Result<Vec<_>>>()?;
 
@@ -545,11 +658,38 @@ impl<A: Aggregate> AggregateRepository<A> {
     /// 当聚合加载失败或命令执行失败时返回错误
     #[instrument(skip(self, command), fields(aggregate_id = %aggregate_id))]
     pub async fn execute(&self, aggregate_id: &str, command: A::Command) -> Result<Vec<StoredEvent>> {
+        self.execute_with_metadata(aggregate_id, command, EventMetadata::default()).await
+    }
+
+    /// 带因果上下文的命令执行
+    ///
+    /// 通过 `CausationContext` 自动传播 `correlation_id`、`causation_id`、
+    /// `triggered_by` 等因果元数据，确保事件链可审计可追溯。
+    ///
+    /// # Errors
+    /// 当聚合加载失败或命令执行失败时返回错误
+    #[instrument(skip(self, command, context), fields(aggregate_id = %aggregate_id))]
+    pub async fn execute_with_context(
+        &self,
+        aggregate_id: &str,
+        command: A::Command,
+        context: CausationContext,
+    ) -> Result<Vec<StoredEvent>> {
+        self.execute_with_metadata(aggregate_id, command, context.to_metadata()).await
+    }
+
+    /// 带自定义元数据的命令执行（内部实现）
+    async fn execute_with_metadata(
+        &self,
+        aggregate_id: &str,
+        command: A::Command,
+        metadata: EventMetadata,
+    ) -> Result<Vec<StoredEvent>> {
         let aggregate = self.load(aggregate_id).await?;
 
         let current_version = aggregate.version();
         let events = aggregate.execute(command).map_err(|e| {
-            helpers::internal_error(&format!("Command execution failed: {e}"))
+            helpers::aggregate_business_rule(&format!("Command execution failed: {e}"))
         })?;
 
         if events.is_empty() {
@@ -561,7 +701,7 @@ impl<A: Aggregate> AggregateRepository<A> {
             .enumerate()
             .map(|(i, event)| {
                 let event_json = serde_json::to_value(&event)
-                    .map_err(|e| helpers::internal_error(&format!("事件序列化失败: {e}")))?;
+                    .map_err(|e| helpers::aggregate_serialization_error(&format!("事件序列化失败: {e}")))?;
                 
                 Ok(StoredEvent {
                     id: format!("event:{}:{}", aggregate_id, current_version + i as u64 + 1),
@@ -577,7 +717,7 @@ impl<A: Aggregate> AggregateRepository<A> {
                         .unwrap_or("Unknown")
                         .to_string(),
                     data: event_json,
-                    metadata: EventMetadata::default(),
+                    metadata: metadata.clone(),
                     version: current_version + i as u64 + 1,
                     timestamp: DateTime::<Utc>::MIN_UTC,
                 })
@@ -695,8 +835,8 @@ mod tests {
 
         match &events[0] {
             DocumentEvent::Updated(data) => {
-                assert_eq!(data.title.as_deref(), Some("Updated Title"));
-                assert!(data.content.is_none());
+                assert!(data.changes.get_change("title").is_some());
+                assert!(data.changes.get_change("content").is_none());
             }
             _ => panic!("Expected Updated event"),
         }
@@ -766,10 +906,18 @@ mod tests {
         
         aggregate.apply(&DocumentEvent::Updated(DocumentUpdatedData {
             document_id: "doc_004".to_string(),
-            title: Some("Modified".to_string()),
-            content: Some("New Content".to_string()),
-            content_type: None,
-            metadata: None,
+            changes: {
+                let mut cs = ChangeSet::new();
+                cs.add_change("title", FieldChange::changed(
+                    serde_json::Value::String("Original".to_string()),
+                    serde_json::Value::String("Modified".to_string()),
+                ));
+                cs.add_change("content", FieldChange::changed(
+                    serde_json::Value::String("Original Content".to_string()),
+                    serde_json::Value::String("New Content".to_string()),
+                ));
+                cs
+            },
             occurred_at: Utc::now(),
         }));
 
@@ -814,10 +962,14 @@ mod tests {
             }),
             DocumentEvent::Updated(DocumentUpdatedData {
                 document_id: "doc_006".to_string(),
-                title: Some("Replayed Updated".to_string()),
-                content: None,
-                content_type: None,
-                metadata: None,
+                changes: {
+                    let mut cs = ChangeSet::new();
+                    cs.add_change("title", FieldChange::changed(
+                        serde_json::Value::String("Replayed Doc".to_string()),
+                        serde_json::Value::String("Replayed Updated".to_string()),
+                    ));
+                    cs
+                },
                 occurred_at: Utc::now(),
             }),
         ];

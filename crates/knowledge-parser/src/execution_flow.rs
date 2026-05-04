@@ -1,3 +1,9 @@
+//! 执行流追踪模块
+//!
+//! 基于符号图谱的 BFS 遍历，检测入口点并追踪执行流。
+//! 入口点定义为出度 > 2 且入度 <= 1 的符号。
+//! 置信度每跳衰减 0.1（最低 0.3）。
+
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use async_trait::async_trait;

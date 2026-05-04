@@ -2,8 +2,6 @@ use criterion::{
     black_box, criterion_group, criterion_main, Criterion,
 };
 use knowledge_core::model::{Document, Block, Token, Reference, SourceType, BlockType, TokenType, RefType, Direction, RecordIdType};
-// use knowledge_core::repository::{BlockRepository, DocumentRepository, KnowledgeRepository, TokenRepository};
-// use std::sync::Arc;
 
 fn make_test_doc(id_num: usize) -> Document {
     Document {

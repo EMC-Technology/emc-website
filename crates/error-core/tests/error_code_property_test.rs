@@ -60,6 +60,7 @@ proptest! {
         prop_assert_eq!(parse_result.unwrap(), error_code);
     }
 
+    #[cfg(feature = "regex")]
     #[test]
     fn proptest_error_code_invalid_sequence(
         source in any_error_source(),
@@ -72,6 +73,7 @@ proptest! {
         prop_assert!(result.is_err());
     }
 
+    #[cfg(feature = "regex")]
     #[test]
     fn proptest_error_code_invalid_module_too_short(
         source in any_error_source(),
@@ -83,6 +85,7 @@ proptest! {
         prop_assert!(result.is_err());
     }
 
+    #[cfg(feature = "regex")]
     #[test]
     fn proptest_error_code_invalid_module_too_long(
         source in any_error_source(),
@@ -94,6 +97,7 @@ proptest! {
         prop_assert!(result.is_err());
     }
 
+    #[cfg(feature = "regex")]
     #[test]
     fn proptest_error_code_invalid_module_lowercase(
         source in any_error_source(),

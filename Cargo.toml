@@ -3,6 +3,8 @@ resolver = "2"
 members = [
     "crates/knowledge-core",
     "crates/knowledge-parser",
+    "crates/knowledge-extractor",
+    "crates/knowledge-evaluator",
     "crates/knowledge-api",
     "crates/knowledge-frontend",
     "crates/error-core",
@@ -36,10 +38,13 @@ tokio = { version = "1.35", default-features = false, features = ["full"] }
 # 数据库
 surrealdb = { version = "1.3", default-features = false, features = ["kv-rocksdb"] }
 
+# 数值类型转换
+num-traits = { version = "0.2", default-features = false, features = ["std"] }
+
 # 文本处理
 comrak = { version = "0.22", default-features = false }
 text-splitter = { version = "0.7", default-features = false }
-icu_segmenter = { version = "1.4", default-features = true }
+icu_segmenter = { version = "1.4", default-features = false, features = ["auto", "compiled_data"] }
 
 # 语法分析
 tree-sitter = { version = "0.25", default-features = false, features = ["std"] }
@@ -67,7 +72,7 @@ error-core = { path = "crates/error-core", default-features = false }
 uuid = { version = "1.0", default-features = false, features = ["v4", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 regex = { version = "1.0", default-features = false, features = ["std", "unicode"] }
-rand = { version = "0.9", default-features = false, features = ["std", "std_rng", "thread_rng"] }
+rand = { version = "0.9", default-features = false, features = ["std", "std_rng", "thread_rng", "os_rng"] }
 
 # 日志 / 可观测性
 tracing = { version = "0.1", default-features = false }
@@ -76,12 +81,12 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 # OpenTelemetry 可观测性
 opentelemetry = { version = "0.23", default-features = false, features = ["trace"] }
 opentelemetry_sdk = { version = "0.23", default-features = false, features = ["rt-tokio", "tokio"] }
-opentelemetry-jaeger = { version = "0.22", features = ["collector_client", "rt-tokio"] }
-tracing-opentelemetry = "0.24"
-metrics = "0.23"
-metrics-exporter-prometheus = { version = "0.15", features = ["tokio"] }
-prometheus = "0.13"
-once_cell = "1.19"
+opentelemetry-jaeger = { version = "0.22", default-features = false, features = ["collector_client", "rt-tokio"] }
+tracing-opentelemetry = { version = "0.24", default-features = false }
+metrics = { version = "0.23", default-features = false }
+metrics-exporter-prometheus = { version = "0.15", default-features = false, features = ["tokio"] }
+prometheus = { version = "0.13", default-features = false }
+once_cell = { version = "1.19", default-features = false }
 
 # 异步 trait
 async-trait = { version = "0.1", default-features = false }
@@ -126,3 +131,6 @@ vaultrs = { version = "0.7", default-features = false, features = ["native-tls"]
 
 # PII 脱敏
 fancy-regex = { version = "0.13", default-features = false }
+
+# 目录路径
+dirs = { version = "6", default-features = false }

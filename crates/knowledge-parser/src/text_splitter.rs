@@ -7,10 +7,10 @@
 //! - **递归分割**：先尝试按段落分割，失败则按句子，最后按字符
 //! - **重叠保持**：相邻 chunk 之间保留 `chunk_overlap` 字符的重叠区域
 
-use text_splitter::{Characters, TextSplitter};
-use knowledge_core::model::{Block, BlockType, RecordIdType};
 use crate::Result;
+use knowledge_core::model::{Block, BlockType, RecordIdType};
 use surrealdb::sql::Thing;
+use text_splitter::{Characters, TextSplitter};
 
 /// 默认最大分块大小（字符数）
 const DEFAULT_MAX_CHUNK_SIZE: usize = 1000;
@@ -52,13 +52,12 @@ impl TextSplitterBlocker {
     /// 当 `chunk_overlap >= max_chunk_size` 时返回错误。
     pub fn with_config(max_chunk_size: usize, chunk_overlap: usize) -> Result<Self> {
         if chunk_overlap >= max_chunk_size {
-            return Err(error_core::ErrorObject::from(
-                format!("chunk_overlap ({chunk_overlap}) 必须小于 max_chunk_size ({max_chunk_size})")
-            ));
+            return Err(error_core::ErrorObject::from(format!(
+                "chunk_overlap ({chunk_overlap}) 必须小于 max_chunk_size ({max_chunk_size})"
+            )));
         }
 
-        let splitter = TextSplitter::new(Characters)
-            .with_trim_chunks(true);
+        let splitter = TextSplitter::new(Characters).with_trim_chunks(true);
 
         Ok(Self {
             splitter,
@@ -72,7 +71,7 @@ impl TextSplitterBlocker {
     /// # Errors
     ///
     /// 当 text-splitter 内部处理失败时返回解析错误（对应 `ErrorObject` code `ERR-FS-PARSE-001`）。
-    pub fn split_to_blocks(&self, content: &str) -> Result<Vec<Block>> {
+    pub fn split_to_blocks(&self, content: &str, file_path: &str) -> Result<Vec<Block>> {
         if content.is_empty() {
             return Ok(Vec::new());
         }
@@ -86,7 +85,8 @@ impl TextSplitterBlocker {
             let line_count: u32 = chunk.matches('\n').count().try_into().unwrap_or(u32::MAX);
             let end_line = current_line + line_count;
 
-            let doc_id: RecordIdType = Thing::from(("doc".to_string(), "temp".to_string()));
+            let doc_hash = blake3::hash(file_path.as_bytes()).to_hex().to_string();
+            let doc_id_record: RecordIdType = Thing::from(("doc".to_string(), doc_hash.clone()));
 
             let block_type = if chunk.trim_start().starts_with('#') {
                 BlockType::Heading
@@ -96,17 +96,19 @@ impl TextSplitterBlocker {
 
             let block = Block {
                 id: None,
-                doc_id,
+                doc_id: doc_id_record.clone(),
                 block_type,
                 start_line: current_line,
                 end_line,
                 embedding: None,
-                idempotency_key: Some(crate::idempotency::IdempotencyKeyGenerator::generate_for_block(
-                "doc:temp",
-                current_line,
-                end_line,
-                chunk,
-            )),
+                idempotency_key: Some(
+                    crate::idempotency::IdempotencyKeyGenerator::generate_for_block(
+                        &doc_hash,
+                        current_line,
+                        end_line,
+                        chunk,
+                    ),
+                ),
             };
 
             blocks.push(block);
@@ -148,7 +150,9 @@ mod tests {
     fn test_split_paragraph_priority() {
         let splitter = TextSplitterBlocker::new();
         let content = "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.";
-        let blocks = splitter.split_to_blocks(content).expect("分块应成功");
+        let blocks = splitter
+            .split_to_blocks(content, "test://paragraph")
+            .expect("分块应成功");
         assert!(!blocks.is_empty(), "应生成 Block");
         for block in &blocks {
             assert_eq!(block.block_type, BlockType::Paragraph);
@@ -158,7 +162,9 @@ mod tests {
     #[test]
     fn test_split_empty_content() {
         let splitter = TextSplitterBlocker::new();
-        let blocks = splitter.split_to_blocks("").expect("空内容不应报错");
+        let blocks = splitter
+            .split_to_blocks("", "test://empty")
+            .expect("空内容不应报错");
         assert!(blocks.is_empty(), "空内容应返回空列表");
     }
 
@@ -166,7 +172,9 @@ mod tests {
     fn test_split_single_short_paragraph() {
         let splitter = TextSplitterBlocker::new();
         let content = "Short text that fits in one chunk.";
-        let blocks = splitter.split_to_blocks(content).expect("短文本应成功");
+        let blocks = splitter
+            .split_to_blocks(content, "test://short")
+            .expect("短文本应成功");
         assert_eq!(blocks.len(), 1, "短文本应为单个块");
     }
 

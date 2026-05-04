@@ -246,6 +246,37 @@ impl<E: SystemEvent> EventBus<E> {
         Err(err)
     }
 
+    /// 发布事件并附带因果上下文
+    ///
+    /// 与 `publish` 相同，但在发布前将因果上下文信息记录到 tracing span 中，
+    /// 确保审计追踪链的完整性。遵循项目规则 #7（事件元数据因果链规则）。
+    ///
+    /// # Errors
+    /// 同 `publish`
+    pub async fn publish_with_causation(
+        &self,
+        event: E,
+        causation_id: Option<&str>,
+        correlation_id: Option<&str>,
+        triggered_by: Option<&str>,
+    ) -> Result<usize, EventError> {
+        let event_id = event.event_id();
+        let event_type = event.event_type();
+
+        if let (Some(cid), Some(corid), Some(tb)) = (causation_id, correlation_id, triggered_by) {
+            info!(
+                event_id = %event_id,
+                event_type = event_type,
+                causation_id = cid,
+                correlation_id = corid,
+                triggered_by = tb,
+                "发布事件（含因果上下文）"
+            );
+        }
+
+        self.publish(event).await
+    }
+
     /// 订阅事件。
     ///
     /// 返回一个 `broadcast::Receiver<E>`，可用于异步迭代接收事件，
@@ -369,6 +400,7 @@ macro_rules! emit_event {
 mod tests {
     use super::*;
     use super::super::types::*;
+    use crate::model::{SourceType, RefType};
 
     #[tokio::test]
     async fn test_event_bus_publish_and_receive() {
@@ -399,7 +431,7 @@ mod tests {
         let _rx3 = bus.subscribe().await;
 
         let event = KnowledgeEvent::NodeCreated(NodeCreatedEvent::new(
-            "node-multi", "Block", Some("doc-001"), "test",
+            "node-multi", NodeType::Block, Some("doc-001"), "test",
         ));
 
         let count = bus.publish(event).await.unwrap();
@@ -486,22 +518,22 @@ mod tests {
         let _rx = bus.subscribe().await;
 
         let events: Vec<KnowledgeEvent> = vec![
-            KnowledgeEvent::DocumentIngested(DocumentIngestedEvent::new("d", "/", 0, "", "", "s")),
+            KnowledgeEvent::DocumentIngested(DocumentIngestedEvent::new("d", "/", 0, SourceType::Plain, "", "s")),
             KnowledgeEvent::DocumentParsed(DocumentParsedEvent::new("d", 0, 0, 0, "s")),
             KnowledgeEvent::DocumentIndexed(DocumentIndexedEvent::new("d", 0, 0, "s")),
             KnowledgeEvent::DocumentDeleted(DocumentDeletedEvent::new("d", 0, 0, 0, "s")),
-            KnowledgeEvent::NodeCreated(NodeCreatedEvent::new("n", "T", None::<String>, "s")),
-            KnowledgeEvent::NodeUpdated(NodeUpdatedEvent::new("n", vec![], "s")),
-            KnowledgeEvent::NodeDeleted(NodeDeletedEvent::new("n", "T", "s")),
-            KnowledgeEvent::NodeLinked(NodeLinkedEvent::new("a", "b", "r", "s")),
-            KnowledgeEvent::EdgeCreated(EdgeCreatedEvent::new("e", "r", "a", "b", "s")),
-            KnowledgeEvent::EdgeDeleted(EdgeDeletedEvent::new("e", "r", "s")),
+            KnowledgeEvent::NodeCreated(NodeCreatedEvent::new("n", NodeType::Token, None::<String>, "s")),
+            KnowledgeEvent::NodeUpdated(NodeUpdatedEvent::new("n", crate::cqrs::event_store::ChangeSet::new(), "s")),
+            KnowledgeEvent::NodeDeleted(NodeDeletedEvent::new("n", NodeType::Token, "s")),
+            KnowledgeEvent::NodeLinked(NodeLinkedEvent::new("a", "b", RefType::Usage, "s")),
+            KnowledgeEvent::EdgeCreated(EdgeCreatedEvent::new("e", RefType::Usage, "a", "b", "s")),
+            KnowledgeEvent::EdgeDeleted(EdgeDeletedEvent::new("e", RefType::Usage, "s")),
             KnowledgeEvent::SearchPerformed(SearchPerformedEvent::new("q", 0, 0, "s")),
-            KnowledgeEvent::QueryExecuted(QueryExecutedEvent::new("t", "b", 0, 0, "s")),
-            KnowledgeEvent::EmbeddingGenerated(EmbeddingGeneratedEvent::new("e", "t", 0, "m", 0, "s")),
-            KnowledgeEvent::EmbeddingCached(EmbeddingCachedEvent::new("e", "t", "k", "s")),
+            KnowledgeEvent::QueryExecuted(QueryExecutedEvent::new(QueryType::Traversal, "b", 0, 0, "s")),
+            KnowledgeEvent::EmbeddingGenerated(EmbeddingGeneratedEvent::new("e", EmbeddingEntityType::Document, 0, "m", 0, "s")),
+            KnowledgeEvent::EmbeddingCached(EmbeddingCachedEvent::new("e", EmbeddingEntityType::Document, "k", "s")),
             KnowledgeEvent::UserAction(UserActionEvent::new("u", "a", None::<String>, None::<String>, "s")),
-            KnowledgeEvent::SystemHealthCheck(SystemHealthEvent::new("c", "ok", None::<String>, "s")),
+            KnowledgeEvent::SystemHealthCheck(SystemHealthEvent::new("c", HealthStatus::Healthy, None::<String>, "s")),
         ];
 
         for event in events {

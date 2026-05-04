@@ -9,15 +9,7 @@ use axum::{
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use knowledge_core::model::{Block, BlockType, Document, SourceType};
 use serde::Deserialize;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use tower::ServiceExt;
-
-#[allow(dead_code)]
-#[derive(Clone)]
-struct BenchState {
-    counter: Arc<RwLock<u64>>,
-}
 
 async fn bench_health_handler() -> impl IntoResponse {
     Json(serde_json::json!({

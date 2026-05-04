@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -14,7 +15,9 @@ use crate::Result;
 /// # 实现说明
 ///
 /// 所有实现必须保证线程安全 (`Send + Sync`)，以支持异步并发调用。
-#[async_trait::async_trait]
+/// 使用 `#[async_trait]` 确保返回的 `Future` 满足 `Send` 约束，
+/// 以便在 `tokio::spawn` 等跨线程场景中使用。
+#[async_trait]
 pub trait KeyManagementService: Send + Sync {
     /// 生成数据加密密钥 (DEK)
     ///
@@ -187,9 +190,10 @@ impl EncryptedKey {
 }
 
 /// 支持的加密算法枚举
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum EncryptionAlgorithm {
     /// AES-256-GCM (推荐，认证加密)
+    #[default]
     Aes256Gcm,
     /// AES-256-CBC with HMAC-SHA256
     Aes256CbcHmacSha256,
@@ -201,26 +205,23 @@ impl EncryptionAlgorithm {
     /// 获取算法的密钥长度（字节）
     pub const fn key_length(&self) -> usize {
         match self {
-            Self::Aes256Gcm | Self::Aes256CbcHmacSha256 => 32,
-            Self::ChaCha20Poly1305 => 32,
+            Self::Aes256Gcm | Self::Aes256CbcHmacSha256 | Self::ChaCha20Poly1305 => 32,
         }
     }
 
     /// 获取算法的 IV/Nonce 长度（字节）
     pub const fn iv_length(&self) -> usize {
         match self {
-            Self::Aes256Gcm => 12,
+            Self::Aes256Gcm | Self::ChaCha20Poly1305 => 12,
             Self::Aes256CbcHmacSha256 => 16,
-            Self::ChaCha20Poly1305 => 12,
         }
     }
 
     /// 获取算法的标签长度（字节，用于认证加密）
     pub const fn tag_length(&self) -> usize {
         match self {
-            Self::Aes256Gcm => 16,
+            Self::Aes256Gcm | Self::ChaCha20Poly1305 => 16,
             Self::Aes256CbcHmacSha256 => 32,
-            Self::ChaCha20Poly1305 => 16,
         }
     }
 
@@ -231,12 +232,6 @@ impl EncryptionAlgorithm {
             Self::Aes256CbcHmacSha256 => "AES-256-CBC-HMAC-SHA256",
             Self::ChaCha20Poly1305 => "ChaCha20-Poly1305",
         }
-    }
-}
-
-impl Default for EncryptionAlgorithm {
-    fn default() -> Self {
-        Self::Aes256Gcm
     }
 }
 
@@ -479,14 +474,11 @@ impl KeySpec {
     pub fn key_material_length(&self) -> usize {
         match self {
             Self::Aes128 => 16,
-            Self::Aes256 => 32,
+            Self::Aes256 | Self::EccP256 | Self::Hmac256 | Self::Ed25519 => 32,
             Self::Rsa2048 => 256,
             Self::Rsa3072 => 384,
             Self::Rsa4096 => 512,
-            Self::EccP256 => 32,
             Self::EccP384 => 48,
-            Self::Hmac256 => 32,
-            Self::Ed25519 => 32,
         }
     }
 
@@ -533,7 +525,7 @@ impl RotationConfig {
             enabled: true,
             rotation_period_days,
             last_rotation_date: now,
-            next_rotation_date: now + chrono::Duration::days(rotation_period_days as i64),
+            next_rotation_date: now + chrono::Duration::days(i64::from(rotation_period_days)),
         }
     }
 
@@ -541,7 +533,7 @@ impl RotationConfig {
     pub fn mark_rotated(&mut self) {
         let now = Utc::now();
         self.last_rotation_date = now;
-        self.next_rotation_date = now + chrono::Duration::days(self.rotation_period_days as i64);
+        self.next_rotation_date = now + chrono::Duration::days(i64::from(self.rotation_period_days));
     }
 }
 
@@ -609,6 +601,7 @@ impl EncryptionContext {
     }
 
     /// 添加键值对
+    #[must_use]
     pub fn add(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.context.insert(key.into(), value.into());
         self
