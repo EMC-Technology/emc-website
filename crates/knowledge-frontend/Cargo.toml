@@ -8,6 +8,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation.workspace = true
 readme.workspace = true
 keywords = ["wasm", "dioxus", "knowledge-graph", "frontend"]
 categories = ["web-programming", "wasm"]
@@ -37,8 +38,8 @@ web-sys = { version = "0.3", default-features = false, features = [
 ] }
 js-sys = { version = "0.3", default-features = false }
 
-knowledge-core = { path = "../knowledge-core", default-features = false }
-error-core = { path = "../error-core", default-features = false, features = ["wasm", "std", "logging"] }
+knowledge-core = { path = "../knowledge-core", version = "0.1.0", default-features = false }
+error-core = { path = "../error-core", version = "0.1.0", default-features = false, features = ["wasm", "std", "logging"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom_v02 = { package = "getrandom", version = "0.2", features = ["js"] }

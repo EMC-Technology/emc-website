@@ -16,8 +16,9 @@ edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 authors = ["Wuhan Zhineng Technology Co., Ltd."]
-repository = "https://github.com/emc-technology/knowledge-system"
+repository = "https://github.com/EMC-Technology/emc-website"
 homepage = "https://emc-technology.github.io/emc-website"
+documentation = "https://docs.rs"
 readme = "README.md"
 keywords = ["knowledge-graph", "rag", "vector-search", "nlp", "candle"]
 categories = ["database", "text-processing", "web-programming"]
@@ -66,7 +67,7 @@ jsonwebtoken = { version = "9.3", default-features = false }
 
 # 错误处理
 thiserror = { version = "1.0", default-features = false }
-error-core = { path = "crates/error-core", default-features = false }
+error-core = { path = "crates/error-core", version = "0.1.0", default-features = false }
 
 # error-core 依赖
 uuid = { version = "1.0", default-features = false, features = ["v4", "serde"] }

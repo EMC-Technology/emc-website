@@ -8,6 +8,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation.workspace = true
 readme.workspace = true
 keywords = ["rag", "evaluation", "ragas", "llm-judge", "benchmark"]
 categories = ["text-processing", "science"]

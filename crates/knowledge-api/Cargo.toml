@@ -8,6 +8,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation.workspace = true
 readme.workspace = true
 keywords = ["rag", "mcp", "llm", "agent", "candle"]
 categories = ["web-programming", "database"]
@@ -45,8 +46,8 @@ hex = { workspace = true }
 
 urlencoding = { version = "2.1", default-features = false }
 
-knowledge-core = { path = "../knowledge-core" }
-knowledge-parser = { path = "../knowledge-parser" }
+knowledge-core = { path = "../knowledge-core", version = "0.1.0" }
+knowledge-parser = { path = "../knowledge-parser", version = "0.1.0" }
 blake3 = { workspace = true }
 rmcp = { workspace = true }
 schemars = { workspace = true }

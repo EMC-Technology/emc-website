@@ -8,6 +8,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation.workspace = true
 readme.workspace = true
 keywords = ["knowledge-graph", "extraction", "llm", "disambiguation", "deduplication"]
 categories = ["text-processing", "database"]
@@ -17,7 +18,7 @@ default = ["db"]
 db = ["knowledge-core/db", "dep:surrealdb"]
 
 [dependencies]
-knowledge-core = { path = "../knowledge-core", default-features = false }
+knowledge-core = { path = "../knowledge-core", version = "0.1.0", default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
