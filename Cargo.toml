@@ -34,7 +34,7 @@ codegen-units = 1
 axum = { version = "0.7", default-features = false, features = ["ws", "macros", "json", "query", "multipart", "tokio", "http1", "http2"] }
 
 # 异步运行时
-tokio = { version = "1.35", default-features = false, features = ["full"] }
+tokio = { version = "1.52", default-features = false, features = ["full"] }
 
 # 数据库
 surrealdb = { version = "1.3", default-features = false, features = ["kv-rocksdb"] }
@@ -51,7 +51,7 @@ icu_segmenter = { version = "1.4", default-features = false, features = ["auto",
 tree-sitter = { version = "0.25", default-features = false, features = ["std"] }
 
 # 数据并行
-rayon = { version = "1.10", default-features = false }
+rayon = { version = "1.12", default-features = false }
 
 # 前端框架 (WASM)
 dioxus = { version = "0.5", default-features = false, features = ["web"] }
@@ -62,7 +62,7 @@ serde_json = { version = "1.0", default-features = false, features = ["std"] }
 
 # 加密与哈希
 aes-gcm = { version = "0.10", default-features = false }
-blake3 = { version = "1.5", default-features = false }
+blake3 = { version = "1.8", default-features = false }
 jsonwebtoken = { version = "9.3", default-features = false }
 
 # 错误处理
@@ -70,7 +70,7 @@ thiserror = { version = "1.0", default-features = false }
 error-core = { path = "crates/error-core", version = "0.1.0", default-features = false }
 
 # error-core 依赖
-uuid = { version = "1.0", default-features = false, features = ["v4", "serde"] }
+uuid = { version = "1.23", default-features = false, features = ["v4", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 regex = { version = "1.0", default-features = false, features = ["std", "unicode"] }
 rand = { version = "0.9", default-features = false, features = ["std", "std_rng", "thread_rng", "os_rng"] }
@@ -124,8 +124,8 @@ hex = { version = "0.4", default-features = false, features = ["alloc"] }
 # AWS SDK (可选 - 在各 crate 的 [dependencies] 中按需引入)
 aws-config = { version = "1.1", default-features = false, features = ["behavior-version-latest"] }
 aws-sdk-kms = { version = "1.12", default-features = false, features = ["behavior-version-latest"] }
-aws-smithy-runtime = { version = "1.1", default-features = false, features = ["client"] }
-aws-sdk-sts = { version = "1.11", default-features = false, features = ["behavior-version-latest"] }
+aws-smithy-runtime = { version = "1.11", default-features = false, features = ["client"] }
+aws-sdk-sts = { version = "1.102", default-features = false, features = ["behavior-version-latest"] }
 
 # HashiCorp Vault (可选)
 vaultrs = { version = "0.8", default-features = false, features = ["rustls"] }
