@@ -1,5 +1,7 @@
-/// 基于 	okio::sync::broadcast 的进程内事件总线实现
+#[allow(missing_docs)]
+/// 基于 tokio::sync::broadcast 的进程内事件总线实现
 pub mod event_bus;
+#[allow(missing_docs)]
 /// 事件处理器 trait 与各领域处理器实现
 pub mod event_handler;
 /// 事件驱动架构核心模块
@@ -21,6 +23,7 @@ pub mod event_handler;
 /// 通过 `event-driven` feature flag 控制：
 /// - 启用时：模块通过 EventBus 通信
 /// - 禁用时：保持原有直接函数调用（向后兼容）
+#[allow(missing_docs)]
 pub mod types;
 
 pub use event_bus::{

@@ -13,6 +13,7 @@ ignore = [
     "RUSTSEC-2025-0119",  # number_prefix 不再维护 — 间接依赖，无安全风险
     "RUSTSEC-2024-0358",  # object_store AWS WebIdentityToken 日志泄露 — 本项目不使用 object_store crate
     "RUSTSEC-2026-0104",  # rustls-webpki CRL 解析 panic — 本项目不解析证书吊销列表
+    "RUSTSEC-2025-0134",  # rustls-pemfile 不再维护 — 间接依赖（tonic → qdrant-client），待上游迁移至 rustls-pki-types PemObject
 ]
 
 [licenses]

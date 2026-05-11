@@ -15,8 +15,21 @@ use std::sync::Arc;
 macro_rules! define_typed_id {
     ($name:ident, $doc:expr) => {
         #[doc = $doc]
-        #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+        #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         pub struct $name(Arc<str>);
+
+        impl serde::Serialize for $name {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                serializer.serialize_str(&self.0)
+            }
+        }
+
+        impl<'de> serde::Deserialize<'de> for $name {
+            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                let s = String::deserialize(deserializer)?;
+                Ok(Self(Arc::from(s)))
+            }
+        }
 
         impl $name {
             /// 从字符串创建 ID

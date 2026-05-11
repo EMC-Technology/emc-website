@@ -189,16 +189,24 @@ impl std::fmt::Display for ContentType {
 /// 用于标识知识图谱中节点的语义类型。
 /// 在 CQRS 命令、事件和查询视图中统一使用此枚举，
 /// 确保编译期类型安全。
+#[allow(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NodeType {
-    /// 文档根节点
     Document,
-    /// 块容器节点
     Block,
-    /// 词元叶子节点
     Token,
-    /// 语义实体
     SemanticEntity,
+}
+
+impl std::fmt::Display for NodeType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Document => write!(f, "document"),
+            Self::Block => write!(f, "block"),
+            Self::Token => write!(f, "token"),
+            Self::SemanticEntity => write!(f, "semantic_entity"),
+        }
+    }
 }
 
 /// 块类型分类
@@ -238,20 +246,28 @@ pub enum TokenType {
 /// 引用关系类型
 ///
 /// 定义知识图谱中边的语义类别，用于构建实体间的有向图。
+#[allow(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RefType {
-    /// 定义关系（A 定义了 B，如"函数 A 定义了变量 B"）
     Definition,
-    /// 使用关系（A 使用了 B，如"函数 A 调用了函数 B"）
     Usage,
-    /// 链接关系（A 引用链接到 B，如 Markdown 链接）
     Link,
-    /// 继承关系（A 继承自 B，如类继承）
     Inherit,
-    /// 实现关系（A 实现了接口 B，如 trait impl）
     Implement,
-    /// 约束关系（A 约束了 B，如泛型约束）
     Constrain,
+}
+
+impl std::fmt::Display for RefType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Definition => write!(f, "definition"),
+            Self::Usage => write!(f, "usage"),
+            Self::Link => write!(f, "link"),
+            Self::Inherit => write!(f, "inherit"),
+            Self::Implement => write!(f, "implement"),
+            Self::Constrain => write!(f, "constrain"),
+        }
+    }
 }
 
 /// 引用方向性

@@ -105,6 +105,12 @@ pub struct DocumentEventHandler {
     name: String,
 }
 
+impl Default for DocumentEventHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DocumentEventHandler {
     pub fn new() -> Self {
         Self {
@@ -239,6 +245,12 @@ pub struct NodeEventHandler {
     name: String,
 }
 
+impl Default for NodeEventHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NodeEventHandler {
     pub fn new() -> Self {
         Self {
@@ -341,6 +353,12 @@ pub struct SearchEventHandler {
     name: String,
 }
 
+impl Default for SearchEventHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SearchEventHandler {
     pub fn new() -> Self {
         Self {
@@ -435,6 +453,12 @@ impl Handler<KnowledgeEvent> for SearchEventHandler {
 /// 管理 embedding 缓存失效策略和使用统计。
 pub struct EmbeddingEventHandler {
     name: String,
+}
+
+impl Default for EmbeddingEventHandler {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EmbeddingEventHandler {
@@ -563,10 +587,10 @@ where
     ///
     /// 必须在 tokio async context 中调用。
     /// 返回一个 JoinHandle，可用于等待任务结束或 abort。
-    pub fn spawn(self) -> tokio::task::JoinHandle<()> {
-        let handler = self.handler;
-        let mut rx = self._rx;
-        let running = self.running;
+    pub fn spawn(&self) -> tokio::task::JoinHandle<()> {
+        let handler = self.handler.clone();
+        let mut rx = self._rx.resubscribe();
+        let running = self.running.clone();
 
         tokio::spawn(async move {
             info!(handler_name = handler.name(), "AsyncEventHandler 已启动");
@@ -633,7 +657,7 @@ where
 
     /// 优雅停机
     pub fn shutdown(&self) {
-        running.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.running.store(false, std::sync::atomic::Ordering::SeqCst);
     }
 }
 

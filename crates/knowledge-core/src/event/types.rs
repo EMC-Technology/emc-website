@@ -39,14 +39,21 @@ pub use crate::model::NodeType;
 /// 替代原先的 `String` 类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EmbeddingEntityType {
-    /// 文档
     Document,
-    /// 块
     Block,
-    /// 词元
     Token,
-    /// 语义实体
     SemanticEntity,
+}
+
+impl std::fmt::Display for EmbeddingEntityType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Document => write!(f, "document"),
+            Self::Block => write!(f, "block"),
+            Self::Token => write!(f, "token"),
+            Self::SemanticEntity => write!(f, "semantic_entity"),
+        }
+    }
 }
 
 /// 图查询类型枚举
@@ -55,16 +62,23 @@ pub enum EmbeddingEntityType {
 /// 替代原先的 `String` 类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum QueryType {
-    /// 图遍历查询
     Traversal,
-    /// 最短路径查询
     ShortestPath,
-    /// 邻居查询
     Neighbors,
-    /// 模式匹配查询
     PatternMatch,
-    /// 聚合查询
     Aggregation,
+}
+
+impl std::fmt::Display for QueryType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Traversal => write!(f, "traversal"),
+            Self::ShortestPath => write!(f, "shortest_path"),
+            Self::Neighbors => write!(f, "neighbors"),
+            Self::PatternMatch => write!(f, "pattern_match"),
+            Self::Aggregation => write!(f, "aggregation"),
+        }
+    }
 }
 
 /// 所有系统事件的统一 trait
@@ -218,7 +232,7 @@ impl SystemEvent for TrackedKnowledgeEvent {
         self.event.event_id()
     }
 
-    fn event_type(&self) -> &str {
+    fn event_type(&self) -> &'static str {
         self.event.event_type()
     }
 
@@ -226,8 +240,12 @@ impl SystemEvent for TrackedKnowledgeEvent {
         self.event.timestamp()
     }
 
-    fn aggregate_id(&self) -> String {
-        self.event.aggregate_id()
+    fn source(&self) -> &str {
+        self.event.source()
+    }
+
+    fn version(&self) -> u32 {
+        self.event.version()
     }
 }
 
@@ -520,7 +538,7 @@ impl NodeCreatedEvent {
             id: Uuid::new_v4(),
             node_id: node_id.into(),
             node_type,
-            document_id: document_id.map(|s| s.into()),
+            document_id: document_id.map(std::convert::Into::into),
             timestamp: Utc::now(),
             version: 1,
             source: source.into(),
@@ -911,7 +929,7 @@ pub struct UserActionEvent {
     #[serde(with = "chrono::serde::ts_milliseconds")]
     pub timestamp: DateTime<Utc>,
     pub version: u32,
-    pub source: EventSource,
+    pub source: String,
 }
 
 impl UserActionEvent {
@@ -920,17 +938,17 @@ impl UserActionEvent {
         action: UserAction,
         resource_type: Option<impl Into<String>>,
         resource_id: Option<impl Into<String>>,
-        source: EventSource,
+        source: impl Into<String>,
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
             user_id: user_id.into(),
             action,
-            resource_type: resource_type.map(|s| s.into()),
-            resource_id: resource_id.map(|s| s.into()),
+            resource_type: resource_type.map(std::convert::Into::into),
+            resource_id: resource_id.map(std::convert::Into::into),
             timestamp: Utc::now(),
             version: 1,
-            source,
+            source: source.into(),
         }
     }
 }
@@ -963,7 +981,7 @@ impl SystemHealthEvent {
             id: Uuid::new_v4(),
             component: component.into(),
             status,
-            details: details.map(|s| s.into()),
+            details: details.map(std::convert::Into::into),
             timestamp: Utc::now(),
             version: 1,
             source: source.into(),

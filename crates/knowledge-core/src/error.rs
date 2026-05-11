@@ -62,8 +62,7 @@ impl From<HandleError> for ErrorObject {
     fn from(err: HandleError) -> Self {
         match err {
             HandleError::TypeMismatch => helpers::event_type_mismatch(),
-            HandleError::ProcessingFailed(msg) => helpers::event_processing_failed(&msg),
-            HandleError::Other(msg) => helpers::event_processing_failed(&msg),
+            HandleError::ProcessingFailed(msg) | HandleError::Other(msg) => helpers::event_processing_failed(&msg),
         }
     }
 }
@@ -72,7 +71,7 @@ impl From<HandleError> for ErrorObject {
 impl From<EventError> for ErrorObject {
     fn from(err: EventError) -> Self {
         match err {
-            EventError::NoSubscribers { event_id } => helpers::event_no_subscribers(&event_id),
+            EventError::NoSubscribers { event_id } => helpers::event_no_subscribers(&event_id.to_string()),
             EventError::Shutdown => helpers::event_bus_shutdown(),
             EventError::PublishTimeout { elapsed_ms } => helpers::event_publish_timeout(elapsed_ms),
         }

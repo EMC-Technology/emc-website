@@ -58,7 +58,7 @@ rayon = { version = "1.10", default-features = false }
 dioxus = { version = "0.5", default-features = false, features = ["web"] }
 
 # 序列化
-serde = { version = "1.0", default-features = false, features = ["derive"] }
+serde = { version = "1.0", default-features = false, features = ["derive", "std"] }
 serde_json = { version = "1.0", default-features = false, features = ["std"] }
 
 # 加密与哈希
