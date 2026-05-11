@@ -23,7 +23,7 @@
 
 | 工具 | 版本要求 | 安装方式 | 验证命令 |
 |------|----------|----------|----------|
-| **Rust toolchain** | ≥ 1.85 (stable) | [rustup.rs](https://rustup.rs/) | `rustc --version` |
+| **Rust toolchain** | ≥ 1.91 (stable) | [rustup.rs](https://rustup.rs/) | `rustc --version` |
 | **Cargo** | 随 Rust 安装 | — | `cargo --version` |
 | **SurrealDB** | ≥ 1.3 | Docker / 二进制 | `surreal version` |
 | **Git** | ≥ 2.30 | [git-scm.com](https://git-scm.com/) | `git --version` |
@@ -51,7 +51,7 @@ winget install Rustlang.Rust.MSVC
 winget install Microsoft.VisualStudio.2022.BuildTools --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
 
 # 验证
-rustc --version  # 应显示 >= 1.85.0
+rustc --version  # 应显示 >= 1.91.0
 ```
 
 #### macOS
@@ -232,22 +232,22 @@ RUST_LOG=debug cargo run --bin knowledge-api
   |_|\___| \_/\_/\_/ |_|_.__/|_|_|
 
 ✨ Knowledge System API v0.1.0
-📍 Listening on http://0.0.0.0:8080
+📍 Listening on http://0.0.0.0:3000
 🔗 Database: ws://localhost:8000/rpc (knowledge/knowledge)
-📊 Metrics: http://localhost:8080/metrics
+📊 Metrics: http://localhost:3000/metrics
 ```
 
 ### 4. 验证服务健康
 
 ```bash
 # 健康检查端点
-curl http://localhost:8080/health
+curl http://localhost:3000/health
 
 # API 版本信息
-curl http://localhost:8080/api/v1/version
+curl http://localhost:3000/api/v1/version
 
 # Prometheus 指标
-curl http://localhost:8080/metrics
+curl http://localhost:3000/metrics
 ```
 
 ---
@@ -442,17 +442,17 @@ rustup target add wasm32-unknown-unknown
 </details>
 
 <details>
-<summary><b>❌ 端口 8080 已被占用</b></summary>
+<summary><b>❌ 端口 3000 已被占用</b></summary>
 
 修改配置文件中的端口，或终止占用进程：
 
 ```bash
 # Windows
-netstat -ano | findstr :8080
+netstat -ano | findstr :3000
 taskkill /PID <pid> /F
 
 # Linux/macOS
-lsof -i :8080
+lsof -i :3000
 kill -9 <pid>
 ```
 

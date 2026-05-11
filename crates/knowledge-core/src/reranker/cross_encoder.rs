@@ -95,7 +95,11 @@ impl Ord for ScoredDocument {
 /// 适用于小规模候选集的精排阶段。
 pub trait CrossEncoderModel: Send + Sync {
     /// 对文档列表进行重排序
-    fn rerank(&self, query: &str, documents: &[Document]) -> impl Future<Output = Result<Vec<ScoredDocument>>> + Send;
+    fn rerank(
+        &self,
+        query: &str,
+        documents: &[Document],
+    ) -> impl Future<Output = Result<Vec<ScoredDocument>>> + Send;
 
     /// 批量重排序
     fn rerank_batch(
@@ -175,7 +179,11 @@ impl Default for MockCrossEncoder {
 #[allow(clippy::manual_async_fn)]
 impl CrossEncoderModel for MockCrossEncoder {
     #[allow(clippy::manual_async_fn)]
-    fn rerank(&self, query: &str, documents: &[Document]) -> impl Future<Output = Result<Vec<ScoredDocument>>> + Send {
+    fn rerank(
+        &self,
+        query: &str,
+        documents: &[Document],
+    ) -> impl Future<Output = Result<Vec<ScoredDocument>>> + Send {
         async move {
             debug!(model = %self.name, count = documents.len(), "mock rerank");
             let mut scored: Vec<ScoredDocument> = documents

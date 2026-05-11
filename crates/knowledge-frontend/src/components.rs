@@ -45,9 +45,7 @@ pub fn Navbar() -> Element {
 /// 提供隐藏的 `<input type="file">` 和"选择文件"按钮，
 /// 选中文件后通过 `FileReader` 异步读取内容，通过回调传递给父组件。
 #[component]
-pub fn FileUploader(
-    on_file_selected: EventHandler<(String, String)>,
-) -> Element {
+pub fn FileUploader(on_file_selected: EventHandler<(String, String)>) -> Element {
     let mut reading = use_signal(|| false);
     let input_id = use_signal(|| {
         use std::sync::atomic::{AtomicU32, Ordering};
@@ -92,14 +90,12 @@ pub fn FileUploader(
             button {
                 class: "bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded",
                 onclick: move |_| {
-                        if let Some(window) = web_sys::window() {
-                            if let Some(document) = window.document() {
-                                if let Some(element) = document.get_element_by_id(&input_id()) {
-                                    if let Ok(input) = wasm_bindgen::JsCast::dyn_into::<web_sys::HtmlInputElement>(element) {
-                                        input.click();
-                                    }
-                                }
-                            }
+                        if let Some(window) = web_sys::window()
+                            && let Some(document) = window.document()
+                            && let Some(element) = document.get_element_by_id(&input_id())
+                            && let Ok(input) = wasm_bindgen::JsCast::dyn_into::<web_sys::HtmlInputElement>(element)
+                        {
+                            input.click();
                         }
                     },
                 "选择文件"
@@ -114,10 +110,10 @@ pub fn FileUploader(
 }
 
 async fn read_file_from_input(input_id: &str) -> Option<(String, String)> {
+    use std::cell::RefCell;
+    use std::rc::Rc;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_futures::JsFuture;
-    use std::rc::Rc;
-    use std::cell::RefCell;
 
     // SAFETY: Rc<RefCell<>> 在此处安全因为：
     // 1. 本代码运行在 WASM 单线程环境中（由 wasm_bindgen_futures::spawn_local 驱动）
@@ -167,7 +163,8 @@ async fn read_file_from_input(input_id: &str) -> Option<(String, String)> {
                 );
                 onload_ref.borrow_mut().take();
                 onerror_ref.borrow_mut().take();
-            }) as Box<dyn Fn() + 'static>);
+            })
+                as Box<dyn Fn() + 'static>);
             *onload.borrow_mut() = Some(onload_closure);
         }
 
@@ -181,7 +178,8 @@ async fn read_file_from_input(input_id: &str) -> Option<(String, String)> {
                 );
                 onload_ref.borrow_mut().take();
                 onerror_ref.borrow_mut().take();
-            }) as Box<dyn Fn() + 'static>);
+            })
+                as Box<dyn Fn() + 'static>);
             *onerror.borrow_mut() = Some(onerror_closure);
         }
 

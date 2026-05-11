@@ -9,6 +9,17 @@ use std::sync::Arc;
 use tracing::{info, instrument};
 use uuid::Uuid;
 
+/// LLM 生成结束原因
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FinishReason {
+    /// 正常结束
+    Stop,
+    /// 达到最大长度
+    Length,
+    /// 内容过滤
+    ContentFilter,
+}
+
 /// LLM 客户端 trait（抽象大语言模型接口）
 ///
 /// 支持多种后端：
@@ -106,8 +117,8 @@ pub struct LLMResponse {
     pub usage: TokenUsage,
     /// 模型名称
     pub model: String,
-    /// 结束原因（`` `stop` ``/`` `length` ``/`` `content_filter` ``）
-    pub finish_reason: String,
+    /// 结束原因
+    pub finish_reason: FinishReason,
 }
 
 /// Token 使用统计
@@ -528,10 +539,10 @@ impl RAGEngine {
     fn resolve_options(request: &RAGRequest) -> GenerateOptions {
         let mut opts = GenerateOptions::default();
 
-        if let Some(ref req_opts) = request.options {
-            if let Some(temp) = req_opts.temperature {
-                opts.temperature = temp;
-            }
+        if let Some(ref req_opts) = request.options
+            && let Some(temp) = req_opts.temperature
+        {
+            opts.temperature = temp;
         }
 
         opts
@@ -620,7 +631,7 @@ impl LLMClient for MockLLMClient {
                 total_tokens: 150,
             },
             model: self.model_name.clone(),
-            finish_reason: "stop".to_string(),
+            finish_reason: FinishReason::Stop,
         })
     }
 
@@ -786,7 +797,7 @@ mod tests {
 
         assert!(!response.content.is_empty());
         assert_eq!(response.model, "test-model");
-        assert_eq!(response.finish_reason, "stop");
+        assert_eq!(response.finish_reason, FinishReason::Stop);
     }
 
     #[tokio::test]

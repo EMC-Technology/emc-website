@@ -17,7 +17,7 @@
 //! 相同输入在不同硬件/运行时环境下产生字节级一致的输出。
 
 use icu_segmenter::WordSegmenter;
-use knowledge_core::model::{RecordIdType, Token, TokenType};
+use knowledge_core::model::{RecordIdType, Token, TokenStatus, TokenType};
 use surrealdb::sql::Thing;
 
 /// ICU Unicode 分词器
@@ -85,6 +85,7 @@ impl IcuTokenizer {
                 token_type,
                 start_char: char_offset,
                 global_offset: base_global_offset + u64::from(char_offset),
+                status: TokenStatus::Created,
             };
 
             tokens.push(token);
@@ -239,5 +240,106 @@ mod tests {
             words.contains(&"World"),
             "词级分词应产生完整单词 'World'，实际: {words:?}"
         );
+    }
+
+    #[test]
+    fn test_default_creates_tokenizer() {
+        let tokenizer = IcuTokenizer::default();
+        let tokens = tokenizer.tokenize_block("test", 0, &temp_block_id());
+        assert!(!tokens.is_empty(), "Default 创建的分词器应能正常工作");
+    }
+
+    #[test]
+    fn test_tokenize_blocks_batch_multiple_blocks() {
+        let tokenizer = IcuTokenizer::new();
+        let blocks = &["Hello world", "Second block"];
+        let result = tokenizer.tokenize_blocks_batch(blocks);
+        assert_eq!(result.len(), 2, "应返回两个块的 Token 列表");
+        assert!(!result[0].is_empty(), "第一个块应有 Token");
+        assert!(!result[1].is_empty(), "第二个块应有 Token");
+    }
+
+    #[test]
+    fn test_tokenize_blocks_batch_empty_blocks() {
+        let tokenizer = IcuTokenizer::new();
+        let blocks: &[&str] = &[];
+        let result = tokenizer.tokenize_blocks_batch(blocks);
+        assert!(result.is_empty(), "空块列表应返回空结果");
+    }
+
+    #[test]
+    fn test_tokenize_blocks_batch_global_offset_continuity() {
+        let tokenizer = IcuTokenizer::new();
+        let blocks = &["Hello", "World"];
+        let result = tokenizer.tokenize_blocks_batch(blocks);
+        if !result[0].is_empty() && !result[1].is_empty() {
+            let last_offset_first = result[0].last().unwrap().global_offset;
+            let first_offset_second = result[1][0].global_offset;
+            assert!(
+                first_offset_second > last_offset_first,
+                "第二个块的偏移应大于第一个块的偏移"
+            );
+        }
+    }
+
+    #[test]
+    fn test_classify_cjk_as_word() {
+        assert_eq!(classify_token_type("你好"), TokenType::Word);
+        assert_eq!(classify_token_type("世界"), TokenType::Word);
+    }
+
+    #[test]
+    fn test_classify_mixed_alphanumeric_as_word() {
+        assert_eq!(classify_token_type("abc123"), TokenType::Word);
+    }
+
+    #[test]
+    fn test_classify_unicode_punctuation() {
+        assert_eq!(classify_token_type("。"), TokenType::Punct);
+        assert_eq!(classify_token_type("，"), TokenType::Punct);
+        assert_eq!(classify_token_type("！"), TokenType::Punct);
+    }
+
+    #[test]
+    fn test_classify_empty_falls_to_symbol() {
+        assert_eq!(classify_token_type(""), TokenType::Symbol);
+    }
+
+    #[test]
+    fn test_is_unicode_punctuation_common_chars() {
+        assert!(is_unicode_punctuation('。'));
+        assert!(is_unicode_punctuation('，'));
+        assert!(is_unicode_punctuation('！'));
+        assert!(is_unicode_punctuation('？'));
+        assert!(!is_unicode_punctuation('A'));
+        assert!(!is_unicode_punctuation('你'));
+    }
+
+    #[test]
+    fn test_is_cjk_ideographic_extended_ranges() {
+        assert!(is_cjk_ideographic('一'));
+        assert!(is_cjk_ideographic('龥'));
+        assert!(is_cjk_ideographic('\u{3400}'));
+        assert!(!is_cjk_ideographic('a'));
+        assert!(!is_cjk_ideographic('1'));
+    }
+
+    #[test]
+    fn test_tokenize_block_preserves_block_id() {
+        let tokenizer = IcuTokenizer::new();
+        let block_id = temp_block_id();
+        let tokens = tokenizer.tokenize_block("test", 0, &block_id);
+        for token in &tokens {
+            assert_eq!(token.block_id, block_id, "Token 的 block_id 应与输入一致");
+        }
+    }
+
+    #[test]
+    fn test_tokenize_blocks_batch_single_block() {
+        let tokenizer = IcuTokenizer::new();
+        let blocks = &["Single block content"];
+        let result = tokenizer.tokenize_blocks_batch(blocks);
+        assert_eq!(result.len(), 1, "单个块应返回一个 Token 列表");
+        assert!(!result[0].is_empty(), "单个块应有 Token");
     }
 }

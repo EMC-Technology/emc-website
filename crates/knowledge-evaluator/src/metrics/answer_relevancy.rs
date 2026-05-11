@@ -90,10 +90,7 @@ mod tests {
     async fn test_answer_relevancy_with_mock() {
         let judge = Arc::new(MockJudge::new());
         let metric = AnswerRelevancyMetric::new(judge);
-        let result = metric
-            .evaluate("query", &[], "answer", "gt")
-            .await
-            .unwrap();
+        let result = metric.evaluate("query", &[], "answer", "gt").await.unwrap();
         assert_eq!(result.metric_name, "answer_relevancy");
     }
 }

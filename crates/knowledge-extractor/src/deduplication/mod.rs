@@ -37,7 +37,8 @@ impl Deduplicator {
                 if entity.entity_type != existing.entity_type {
                     return false;
                 }
-                let similarity = strsim::normalized_damerau_levenshtein(&entity.name, &existing.name);
+                let similarity =
+                    strsim::normalized_damerau_levenshtein(&entity.name, &existing.name);
                 similarity >= self.config.dedup_threshold
             });
 
@@ -55,7 +56,10 @@ impl Deduplicator {
     ///
     /// 详见文档: §4.3 | 用例: UC-017 | 方法: M-026
     #[must_use]
-    pub fn deduplicate_with_stats(&self, entities: &[SemanticEntity]) -> (Vec<SemanticEntity>, usize) {
+    pub fn deduplicate_with_stats(
+        &self,
+        entities: &[SemanticEntity],
+    ) -> (Vec<SemanticEntity>, usize) {
         let original_count = entities.len();
         let unique = self.deduplicate(entities);
         let removed_count = original_count - unique.len();
@@ -115,7 +119,10 @@ mod tests {
         config.dedup_threshold = 0.8;
         let deduplicator = Deduplicator::new(config);
 
-        let entities = vec![make_entity("Rust Programming"), make_entity("Rust Programing")];
+        let entities = vec![
+            make_entity("Rust Programming"),
+            make_entity("Rust Programing"),
+        ];
 
         let result = deduplicator.deduplicate(&entities);
         assert_eq!(result.len(), 1);
@@ -124,7 +131,12 @@ mod tests {
     #[test]
     fn test_deduplicate_preserves_order() {
         let deduplicator = Deduplicator::new(test_config());
-        let entities = vec![make_entity("A"), make_entity("B"), make_entity("A"), make_entity("C")];
+        let entities = vec![
+            make_entity("A"),
+            make_entity("B"),
+            make_entity("A"),
+            make_entity("C"),
+        ];
 
         let result = deduplicator.deduplicate(&entities);
         assert_eq!(result.len(), 3);
@@ -136,7 +148,11 @@ mod tests {
     #[test]
     fn test_deduplicate_with_stats_counts_removals() {
         let deduplicator = Deduplicator::new(test_config());
-        let entities = vec![make_entity("Rust"), make_entity("Rust"), make_entity("Python")];
+        let entities = vec![
+            make_entity("Rust"),
+            make_entity("Rust"),
+            make_entity("Python"),
+        ];
 
         let (unique, removed) = deduplicator.deduplicate_with_stats(&entities);
         assert_eq!(unique.len(), 2);
@@ -175,5 +191,20 @@ mod tests {
         let deduplicator = Deduplicator::new(test_config());
         let result = deduplicator.deduplicate(&[]);
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_deduplicate_keeps_entities_with_different_types() {
+        let deduplicator = Deduplicator::new(test_config());
+        let entities = vec![
+            SemanticEntity::new("Rust".to_string(), EntityType::Technology),
+            SemanticEntity::new("Rust".to_string(), EntityType::Concept),
+        ];
+        let result = deduplicator.deduplicate(&entities);
+        assert_eq!(
+            result.len(),
+            2,
+            "Same name but different type should not be deduplicated"
+        );
     }
 }

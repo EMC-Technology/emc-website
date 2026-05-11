@@ -5,7 +5,9 @@
 use std::collections::HashMap;
 
 use crate::dataset::GoldenDataset;
-use crate::dataset::sample::{AggregatedMetric, EvaluationReport, GoldenSample, SampleEvalResult};
+use crate::dataset::sample::{
+    AggregatedMetric, EvaluationReport, GoldenSample, SampleDifficulty, SampleEvalResult,
+};
 
 /// 指标聚合器
 ///
@@ -49,12 +51,12 @@ impl MetricAggregator {
         &self,
         dataset: &GoldenDataset,
         sample_results: &[SampleEvalResult],
-    ) -> HashMap<String, Vec<AggregatedMetric>> {
-        let mut groups: HashMap<String, Vec<SampleEvalResult>> = HashMap::new();
+    ) -> HashMap<SampleDifficulty, Vec<AggregatedMetric>> {
+        let mut groups: HashMap<SampleDifficulty, Vec<SampleEvalResult>> = HashMap::new();
         for result in sample_results {
             if let Some(sample) = dataset.samples.iter().find(|s| s.id == result.sample_id) {
                 groups
-                    .entry(format!("{:?}", sample.difficulty))
+                    .entry(sample.difficulty)
                     .or_default()
                     .push(result.clone());
             }
@@ -128,12 +130,9 @@ impl MetricAggregator {
         EvaluationReport {
             report_id: format!(
                 "{:016x}",
-                blake3::hash(
-                    format!("{dataset_id}:{dataset_version}").as_bytes()
-                )
-                .as_bytes()[..8]
-                .try_into()
-                .map_or(0, |b: [u8; 8]| u64::from_le_bytes(b))
+                blake3::hash(format!("{dataset_id}:{dataset_version}").as_bytes()).as_bytes()[..8]
+                    .try_into()
+                    .map_or(0, |b: [u8; 8]| u64::from_le_bytes(b))
             ),
             dataset_id: dataset_id.to_string(),
             dataset_version: dataset_version.to_string(),
@@ -150,24 +149,17 @@ impl MetricAggregator {
     }
 
     fn compute_aggregated(metric_name: &str, scores: &[f64]) -> AggregatedMetric {
-        if scores.is_empty() {
-            return AggregatedMetric {
-                metric_name: metric_name.to_string(),
-                mean: 0.0,
-                median: 0.0,
-                std_dev: 0.0,
-                min: 0.0,
-                max: 0.0,
-                sample_count: 0,
-            };
-        }
+        debug_assert!(
+            !scores.is_empty(),
+            "compute_aggregated requires non-empty scores"
+        );
 
         let mut sorted = scores.to_vec();
         sorted.sort_by(f64::total_cmp);
 
         #[allow(clippy::cast_precision_loss)]
         let mean = scores.iter().sum::<f64>() / scores.len() as f64;
-        let median = if sorted.len() % 2 == 0 {
+        let median = if sorted.len().is_multiple_of(2) {
             f64::midpoint(sorted[sorted.len() / 2 - 1], sorted[sorted.len() / 2])
         } else {
             sorted[sorted.len() / 2]
@@ -277,8 +269,8 @@ mod tests {
         let aggregator = MetricAggregator::new();
         let groups = aggregator.group_by_difficulty(&dataset, &results);
 
-        assert!(groups.contains_key("Easy"));
-        assert!(groups.contains_key("Hard"));
+        assert!(groups.contains_key(&SampleDifficulty::Easy));
+        assert!(groups.contains_key(&SampleDifficulty::Hard));
     }
 
     #[test]
@@ -325,5 +317,50 @@ mod tests {
             .find(|m| m.metric_name == "faithfulness")
             .unwrap();
         assert!((faithfulness.mean - 0.7).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_aggregator_default() {
+        let aggregator = MetricAggregator;
+        let aggregated = aggregator.aggregate(&[]);
+        assert!(aggregated.is_empty());
+    }
+
+    #[test]
+    fn test_build_report_with_failed_samples() {
+        let samples = vec![make_sample("s1", SampleDifficulty::Easy, "cat1")];
+        let results = vec![SampleEvalResult {
+            sample_id: "s1".to_string(),
+            scores: vec![],
+            duration_ms: 50,
+        }];
+
+        let report = MetricAggregator::build_report("ds1", "1.0", &samples, &results);
+        assert_eq!(report.total_samples, 1);
+        assert_eq!(report.successful_samples, 0);
+        assert_eq!(report.failed_samples, 1);
+    }
+
+    #[test]
+    fn test_aggregate_single_score() {
+        let results = vec![make_result("s1", vec![("faithfulness", 0.5)])];
+        let aggregator = MetricAggregator::new();
+        let aggregated = aggregator.aggregate(&results);
+        assert_eq!(aggregated.len(), 1);
+        assert!((aggregated[0].mean - 0.5).abs() < 1e-6);
+        assert!((aggregated[0].median - 0.5).abs() < 1e-6);
+        assert!((aggregated[0].std_dev - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_aggregate_even_count_median() {
+        let results = vec![
+            make_result("s1", vec![("m", 0.2)]),
+            make_result("s2", vec![("m", 0.8)]),
+        ];
+        let aggregator = MetricAggregator::new();
+        let aggregated = aggregator.aggregate(&results);
+        assert_eq!(aggregated.len(), 1);
+        assert!((aggregated[0].median - 0.5).abs() < 1e-6);
     }
 }

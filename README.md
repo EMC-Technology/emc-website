@@ -1,6 +1,6 @@
 <div align="center">
 
-![Rust](https://img.shields.io/badge/Rust-1.85+-orange.svg)
+![Rust](https://img.shields.io/badge/Rust-1.91+-orange.svg)
 ![License](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)
 ![CI](https://github.com/EMC-Technology/emc-website/actions/workflows/ci.yml/badge.svg)
 ![deps](https://img.shields.io/badge/Status-WASM%20Ready-green.svg)
@@ -35,7 +35,7 @@
 
 | 工具 | 版本 | 安装 |
 |------|------|------|
-| Rust | ≥ 1.85 | [rustup.rs](https://rustup.rs/) |
+| Rust | ≥ 1.91 | [rustup.rs](https://rustup.rs/) |
 | SurrealDB | ≥ 1.3 | `curl -sSf https://install.surrealdb.com \| sh` |
 | just | 最新 | `cargo install just` |
 

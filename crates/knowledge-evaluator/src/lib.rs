@@ -1,7 +1,15 @@
+#![warn(missing_docs)]
 #![allow(clippy::result_large_err)] // ErrorObject 含因果链+上下文帧，体积较大但语义完整
 //! Knowledge Evaluator Crate
 //!
 //! RAG 评估框架：RAGAS 指标、LLM-as-Judge、Golden Dataset 管理、报告生成。
+//!
+//! ## 核心能力
+//!
+//! - **RAGAS 指标**：Faithfulness、Answer Relevancy、Context Precision/Recall
+//! - **LLM-as-Judge**：结构化评分 + Mock Judge 测试替身
+//! - **Golden Dataset**：标注数据集管理与加载
+//! - **报告生成**：Markdown 格式评估报告 + 指标聚合
 
 pub mod config;
 pub mod dataset;
@@ -15,9 +23,11 @@ pub use config::EvalConfig;
 pub use dataset::{GoldenDataset, GoldenSample, SampleDifficulty};
 pub use engine::EvaluationEngine;
 pub use error::Result;
-pub use judge::{JudgeResult, LLMJudge, MockJudge, UllmJudge};
+#[cfg(feature = "ullm-adapter")]
+pub use judge::UllmJudge;
+pub use judge::{JudgeResult, LLMJudge, MockJudge};
 pub use metrics::{
-    AnswerRelevancyMetric, AnswerSimilarityMetric, ContextPrecisionMetric,
-    ContextRecallMetric, FaithfulnessMetric,
+    AnswerRelevancyMetric, AnswerSimilarityMetric, ContextPrecisionMetric, ContextRecallMetric,
+    FaithfulnessMetric,
 };
 pub use report::{MarkdownExporter, MetricAggregator};

@@ -512,12 +512,12 @@ impl RealtimeSync {
         let connection_ptr_clone = connection_ptr.clone();
 
         let on_message = Closure::wrap(Box::new(move |event: web_sys::MessageEvent| {
-            if let Some(text) = event.data().as_string() {
-                if let Ok(json) = serde_json::from_str(&text) {
-                    let connection = connection_ptr_clone.borrow();
-                    if let Some(handler) = &connection.message_handler {
-                        handler(json);
-                    }
+            if let Some(text) = event.data().as_string()
+                && let Ok(json) = serde_json::from_str(&text)
+            {
+                let connection = connection_ptr_clone.borrow();
+                if let Some(handler) = &connection.message_handler {
+                    handler(json);
                 }
             }
         }) as Box<dyn FnMut(_)>);
@@ -797,6 +797,8 @@ fn window_host() -> String {
         .and_then(|w| w.location().host().ok())
         .unwrap_or_else(|| {
             web_sys::console::log_1(&"无法获取 window.location.host，使用默认值".into());
-            std::option_env!("KNOWLEDGE_WS_HOST").unwrap_or("127.0.0.1:3000").to_string()
+            std::option_env!("KNOWLEDGE_WS_HOST")
+                .unwrap_or("127.0.0.1:3000")
+                .to_string()
         })
 }

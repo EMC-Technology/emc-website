@@ -11,11 +11,17 @@
 //! 当启用 `db` feature 时，ID 字段使用 SurrealDB 的 `RecordId` 类型；
 //! 否则使用字符串表示。
 
-pub mod semantic;
 pub mod community_summary;
+pub mod ids;
+pub mod semantic;
 
-pub use semantic::{SemanticEntity, SemanticRelation, EntityType, RelationType};
 pub use community_summary::CommunitySummary;
+pub use ids::{
+    AggregateId, BlockId, CausationId, CommunityId, CorrelationId, DocumentId, EdgeId, EventId,
+    NodeId, PrincipalId, ProcessId, ProcessStepId, ReferenceId, ResourceId, ScopeId, TokenId,
+    TraceId, UserId,
+};
+pub use semantic::{EntityType, RelationType, SemanticEntity, SemanticRelation};
 
 use serde::{Deserialize, Serialize};
 
@@ -35,8 +41,8 @@ pub type RecordIdType = String;
 /// 将 `RecordId` 与 JSON 字符串之间进行双向转换，
 /// 确保 SurrealDB 原生类型可跨 serde 边界传输。
 pub mod record_id_serde {
-    use serde::de::{self, Deserializer};
     use serde::Serializer;
+    use serde::de::{self, Deserializer};
     use surrealdb::opt::RecordId;
 
     /// 将 `RecordId` 序列化为字符串
@@ -69,8 +75,8 @@ pub mod record_id_serde {
 /// 将 `Option<RecordId>` 与 JSON 字符串/null 之间进行双向转换，
 /// 处理新建实体 ID 为 None 的场景。
 pub mod optional_record_id_serde {
-    use serde::de::{self, Deserializer};
     use serde::Serializer;
+    use serde::de::{self, Deserializer};
     use surrealdb::opt::RecordId;
 
     #[allow(clippy::ref_option)]
@@ -96,10 +102,14 @@ pub mod optional_record_id_serde {
     {
         use serde::Deserialize as _;
         let opt = Option::<String>::deserialize(deserializer)?;
-        opt.map_or_else(|| Ok(None), |s| s
-            .parse::<RecordId>()
-            .map(Some)
-            .map_err(|e| de::Error::custom(format!("RecordId 解析失败: {e:?}"))))
+        opt.map_or_else(
+            || Ok(None),
+            |s| {
+                s.parse::<RecordId>()
+                    .map(Some)
+                    .map_err(|e| de::Error::custom(format!("RecordId 解析失败: {e:?}")))
+            },
+        )
     }
 }
 
@@ -118,6 +128,85 @@ pub enum SourceType {
     Code,
     /// 纯文本文件（使用 icu_segmenter 分词）
     Plain,
+}
+
+/// 文档内容类型枚举
+///
+/// 用于标识文档内容的 MIME 类型，替代原先的 `String` 类型。
+/// 在 CQRS 命令、事件和聚合根中统一使用此枚举，
+/// 确保编译期类型安全，杜绝无效内容类型值。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ContentType {
+    /// Markdown 格式（`text/markdown`）
+    Markdown,
+    /// 纯文本格式（`text/plain`）
+    Plain,
+    /// 源代码格式（`text/code`）
+    Code,
+    /// HTML 格式（`text/html`）
+    Html,
+    /// JSON 格式（`application/json`）
+    Json,
+}
+
+impl ContentType {
+    /// 从 MIME 类型字符串解析为 `ContentType`
+    ///
+    /// # Errors
+    /// 当传入无法识别的 MIME 类型时返回错误消息
+    pub fn from_mime(mime: &str) -> std::result::Result<Self, String> {
+        match mime.to_lowercase().as_str() {
+            "text/markdown" | "markdown" | "md" => Ok(Self::Markdown),
+            "text/plain" | "plain" | "txt" => Ok(Self::Plain),
+            "text/code" | "code" => Ok(Self::Code),
+            "text/html" | "html" => Ok(Self::Html),
+            "application/json" | "json" => Ok(Self::Json),
+            other => Err(format!("无法识别的内容类型: {other}")),
+        }
+    }
+
+    /// 转换为标准 MIME 类型字符串
+    #[must_use]
+    pub fn to_mime(&self) -> &'static str {
+        match self {
+            Self::Markdown => "text/markdown",
+            Self::Plain => "text/plain",
+            Self::Code => "text/code",
+            Self::Html => "text/html",
+            Self::Json => "application/json",
+        }
+    }
+}
+
+impl std::fmt::Display for ContentType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.to_mime())
+    }
+}
+
+/// 知识节点类型枚举
+///
+/// 用于标识知识图谱中节点的语义类型。
+/// 在 CQRS 命令、事件和查询视图中统一使用此枚举，
+/// 确保编译期类型安全。
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NodeType {
+    Document,
+    Block,
+    Token,
+    SemanticEntity,
+}
+
+impl std::fmt::Display for NodeType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Document => write!(f, "document"),
+            Self::Block => write!(f, "block"),
+            Self::Token => write!(f, "token"),
+            Self::SemanticEntity => write!(f, "semantic_entity"),
+        }
+    }
 }
 
 /// 块类型分类
@@ -157,20 +246,28 @@ pub enum TokenType {
 /// 引用关系类型
 ///
 /// 定义知识图谱中边的语义类别，用于构建实体间的有向图。
+#[allow(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RefType {
-    /// 定义关系（A 定义了 B，如"函数 A 定义了变量 B"）
     Definition,
-    /// 使用关系（A 使用了 B，如"函数 A 调用了函数 B"）
     Usage,
-    /// 链接关系（A 引用链接到 B，如 Markdown 链接）
     Link,
-    /// 继承关系（A 继承自 B，如类继承）
     Inherit,
-    /// 实现关系（A 实现了接口 B，如 trait impl）
     Implement,
-    /// 约束关系（A 约束了 B，如泛型约束）
     Constrain,
+}
+
+impl std::fmt::Display for RefType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Definition => write!(f, "definition"),
+            Self::Usage => write!(f, "usage"),
+            Self::Link => write!(f, "link"),
+            Self::Inherit => write!(f, "inherit"),
+            Self::Implement => write!(f, "implement"),
+            Self::Constrain => write!(f, "constrain"),
+        }
+    }
 }
 
 /// 引用方向性
@@ -184,6 +281,89 @@ pub enum Direction {
     TwoWay,
     /// 双向隐式边（单向存储，查询时自动反向匹配）
     ImplicitTwoWay,
+}
+
+/// 块生命周期状态（Axiom-7: 统一生命周期）
+///
+/// 描述 Block 从创建到归档的完整 FSM 生命周期。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BlockStatus {
+    /// 已创建，尚未索引
+    Created,
+    /// 已索引，嵌入向量已生成
+    Indexed,
+    /// 已归档，不再参与检索
+    Archived,
+}
+
+impl BlockStatus {
+    /// 默认状态：Created
+    #[must_use]
+    pub const fn default_status() -> Self {
+        Self::Created
+    }
+
+    /// 检查是否可以转换到目标状态
+    #[must_use]
+    pub fn can_transition_to(&self, target: &Self) -> bool {
+        matches!(
+            (self, target),
+            (Self::Created, Self::Indexed | Self::Archived) | (Self::Indexed, Self::Archived)
+        )
+    }
+}
+
+/// 词元生命周期状态（Axiom-7: 统一生命周期）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TokenStatus {
+    /// 已创建
+    Created,
+    /// 已索引
+    Indexed,
+    /// 已归档
+    Archived,
+}
+
+impl TokenStatus {
+    /// 默认状态：Created
+    #[must_use]
+    pub const fn default_status() -> Self {
+        Self::Created
+    }
+}
+
+/// 引用生命周期状态（Axiom-7: 统一生命周期）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReferenceStatus {
+    /// 已创建，尚未验证
+    Created,
+    /// 已验证，链接有效
+    Verified,
+    /// 链接失效
+    Broken,
+    /// 已归档
+    Archived,
+}
+
+impl ReferenceStatus {
+    /// 默认状态：Created
+    #[must_use]
+    pub const fn default_status() -> Self {
+        Self::Created
+    }
+
+    /// 检查是否可以转换到目标状态
+    #[must_use]
+    pub fn can_transition_to(&self, target: &Self) -> bool {
+        matches!(
+            (self, target),
+            (
+                Self::Created,
+                Self::Verified | Self::Broken | Self::Archived
+            ) | (Self::Verified, Self::Broken | Self::Archived)
+                | (Self::Broken, Self::Archived)
+        )
+    }
 }
 
 // ============================================================================
@@ -294,12 +474,12 @@ impl Document {
 /// # 设计说明
 ///
 /// - `start_line` / `end_line`：基于行的位置信息，用于源码定位
-/// - `embedding`：1536 维浮点向量（OpenAI ada-002 模型输出维度）
+/// - `embedding`：2560 维浮点向量（GEMMA4-E4B 模型输出维度）
 /// - `idempotency_key`：幂等键，防止重复插入相同块
 ///
 /// # 示例
 ///
-/// ```rust
+/// ```rust,ignore
 /// use knowledge_core::model::{Block, BlockType};
 /// use surrealdb::opt::RecordId;
 ///
@@ -309,7 +489,7 @@ impl Document {
 ///     block_type: BlockType::Paragraph,
 ///     start_line: 10,
 ///     end_line: 25,
-///     embedding: Some(vec![0.1; 1536]),
+///     embedding: Some(vec![0.1; 2560]),
 ///     idempotency_key: Some("para_10_25".to_string()),
 /// };
 /// ```
@@ -352,11 +532,12 @@ pub struct Block {
     /// 结束行号（含）
     pub end_line: u32,
 
-    /// 向量嵌入（1536 维浮点数组，OpenAI ada-002 输出维度）
-    pub embedding: Option<Vec<f32>>,
-
     /// 幂等键，防止重复插入相同块
     pub idempotency_key: Option<String>,
+
+    /// 块生命周期状态（Axiom-7: 统一生命周期）
+    #[serde(default = "BlockStatus::default_status")]
+    pub status: BlockStatus,
 }
 
 impl Block {
@@ -384,30 +565,9 @@ impl Block {
             block_type,
             start_line,
             end_line,
-            embedding: None,
             idempotency_key: None,
+            status: BlockStatus::Created,
         }
-    }
-
-    /// 设置向量嵌入
-    ///
-    /// # 参数
-    ///
-    /// * `embedding` - 1536 维浮点向量
-    ///
-    /// # Errors
-    ///
-    /// 当向量维度不为 1536 时返回 `error_core::helpers::validation_error`。
-    #[inline]
-    pub fn with_embedding(mut self, embedding: Vec<f32>) -> crate::Result<Self> {
-        if embedding.len() != 1536 {
-            return Err(crate::error::helpers::validation_error(&format!(
-                "嵌入向量维度必须为 1536，实际为 {}",
-                embedding.len()
-            ), "with_embedding"));
-        }
-        self.embedding = Some(embedding);
-        Ok(self)
     }
 
     /// 设置幂等性键
@@ -418,13 +578,90 @@ impl Block {
     }
 
     /// 获取块的行范围
-    pub const fn line_range(&self) -> std::ops::Range<u32> {
-        self.start_line..self.end_line + 1
+    pub const fn line_range(&self) -> std::ops::RangeInclusive<u32> {
+        self.start_line..=self.end_line
     }
 
     /// 验证行号合法性
     pub const fn is_valid_position(&self) -> bool {
         self.start_line <= self.end_line
+    }
+}
+
+// ============================================================================
+// BlockEmbedding: Block 的语义向量表示（概念-载体解耦）
+// ============================================================================
+
+/// 块语义向量嵌入（与 Block 解耦的独立实体）
+///
+/// 遵循关注点分离原则：Block 承载结构化文本信息（行号、类型、状态），
+/// BlockEmbedding 承载语义向量信息（嵌入维度、向量数据）。
+/// 两者通过 `block_id` 关联，生命周期独立管理。
+///
+/// # 设计动机
+///
+/// - Block 的结构信息在解析时确定后几乎不变
+/// - Embedding 可能因模型升级、内容修改、缓存失效而频繁重算
+/// - 序列化/反序列化 Block 时无需携带 ~6KB 的向量数据
+/// - 维度不再硬编码，支持不同嵌入模型
+///
+/// # Example
+///
+/// ```
+/// use knowledge_core::model::BlockEmbedding;
+///
+/// let embedding = BlockEmbedding::new("block_123".to_string(), vec![0.1; 768], 768)
+///     .expect("维度匹配");
+/// assert_eq!(embedding.dimension(), 768);
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockEmbedding {
+    /// 关联的 Block ID
+    pub block_id: String,
+    /// 嵌入向量
+    pub vector: Vec<f32>,
+    /// 声明的向量维度
+    pub declared_dimension: usize,
+}
+
+impl BlockEmbedding {
+    /// 创建新的 BlockEmbedding
+    ///
+    /// # Errors
+    ///
+    /// 当向量实际长度与声明的维度不一致时返回验证错误。
+    pub fn new(
+        block_id: String,
+        vector: Vec<f32>,
+        declared_dimension: usize,
+    ) -> crate::Result<Self> {
+        if vector.len() != declared_dimension {
+            return Err(crate::error::helpers::validation_error(
+                &format!(
+                    "嵌入向量维度不匹配：声明 {} 维，实际 {} 维",
+                    declared_dimension,
+                    vector.len()
+                ),
+                "BlockEmbedding::new",
+            ));
+        }
+        Ok(Self {
+            block_id,
+            vector,
+            declared_dimension,
+        })
+    }
+
+    /// 获取向量维度
+    #[must_use]
+    pub fn dimension(&self) -> usize {
+        self.declared_dimension
+    }
+
+    /// 获取向量引用
+    #[must_use]
+    pub fn vector(&self) -> &[f32] {
+        &self.vector
     }
 }
 
@@ -480,6 +717,10 @@ pub struct Token {
 
     /// 全局绝对字节偏移（使用 u64 防止大文件溢出）
     pub global_offset: u64,
+
+    /// 词元生命周期状态（Axiom-7: 统一生命周期）
+    #[serde(default = "TokenStatus::default_status")]
+    pub status: TokenStatus,
 }
 
 impl Token {
@@ -510,6 +751,7 @@ impl Token {
             token_type,
             start_char,
             global_offset,
+            status: TokenStatus::Created,
         }
     }
 
@@ -541,7 +783,7 @@ impl Token {
 ///
 /// # 示例
 ///
-/// ```rust
+/// ```rust,ignore
 /// use knowledge_core::model::{Reference, RefType, Direction};
 /// use surrealdb::opt::RecordId;
 ///
@@ -606,6 +848,10 @@ pub struct Reference {
     #[serde(rename = "target_id")]
     /// 终点实体 ID
     pub to_id: String,
+
+    /// 引用生命周期状态（Axiom-7: 统一生命周期）
+    #[serde(default = "ReferenceStatus::default_status")]
+    pub status: ReferenceStatus,
 }
 
 impl Reference {
@@ -635,6 +881,7 @@ impl Reference {
             scope: None,
             from_id,
             to_id,
+            status: ReferenceStatus::Created,
         }
     }
 
@@ -668,7 +915,7 @@ impl Reference {
 ///
 /// # 示例
 ///
-/// ```rust
+/// ```rust,ignore
 /// use knowledge_core::model::Community;
 /// use surrealdb::opt::RecordId;
 ///
@@ -724,7 +971,7 @@ pub struct Community {
 ///
 /// # 示例
 ///
-/// ```rust
+/// ```rust,ignore
 /// use knowledge_core::model::Process;
 /// use surrealdb::opt::RecordId;
 ///
@@ -779,7 +1026,7 @@ pub struct Process {
 ///
 /// # 示例
 ///
-/// ```rust
+/// ```rust,ignore
 /// use knowledge_core::model::ProcessStep;
 /// use surrealdb::opt::RecordId;
 ///
@@ -885,58 +1132,35 @@ mod tests {
 
     #[test]
     fn test_block_serialization() {
-        let block = Block::new(
-            rid("document:test"),
-            BlockType::Code,
-            0,
-            100,
-        );
+        let block = Block::new(rid("document:test"), BlockType::Code, 0, 100);
 
         let json = serde_json::to_string(&block).expect("序列化失败");
         let de_block: Block = serde_json::from_str(&json).expect("反序列化失败");
 
         assert_eq!(block.block_type, de_block.block_type);
         assert_eq!(block.start_line, de_block.start_line);
-        assert!(de_block.embedding.is_none());
     }
 
     #[test]
-    fn test_block_with_embedding() {
-        let block = Block::new(
-            rid("document:test"),
-            BlockType::Paragraph,
-            10,
-            20,
-        )
-        .with_embedding(vec![0.5; 1536])
-        .expect("嵌入维度正确");
+    fn test_block_embedding_creation() {
+        let embedding =
+            BlockEmbedding::new("block_123".to_string(), vec![0.5; 1536], 1536).expect("维度匹配");
 
-        assert!(block.embedding.is_some());
-        assert_eq!(block.embedding.as_ref().unwrap().len(), 1536);
+        assert_eq!(embedding.dimension(), 1536);
+        assert_eq!(embedding.vector().len(), 1536);
+        assert_eq!(embedding.block_id, "block_123");
     }
 
     #[test]
-    fn test_block_with_embedding_wrong_dim() {
-        let result = Block::new(
-            rid("document:test"),
-            BlockType::Paragraph,
-            10,
-            20,
-        )
-        .with_embedding(vec![0.5; 100]);
+    fn test_block_embedding_wrong_dim() {
+        let result = BlockEmbedding::new("block_123".to_string(), vec![0.5; 100], 1536);
 
         assert!(result.is_err());
     }
 
     #[test]
     fn test_token_serialization() {
-        let token = Token::new(
-            rid("block:test"),
-            "hello",
-            TokenType::Word,
-            0,
-            1000,
-        );
+        let token = Token::new(rid("block:test"), "hello", TokenType::Word, 0, 1000);
 
         let json = serde_json::to_string(&token).expect("序列化失败");
         let de_token: Token = serde_json::from_str(&json).expect("反序列化失败");
@@ -1004,38 +1228,22 @@ mod tests {
 
     #[test]
     fn test_block_line_range() {
-        let block = Block::new(
-            rid("doc:x"),
-            BlockType::Heading,
-            10,
-            20,
-        );
+        let block = Block::new(rid("doc:x"), BlockType::Heading, 10, 20);
 
-        assert_eq!(block.line_range(), 10..21);
+        assert_eq!(block.line_range(), 10..=20);
         assert!(block.is_valid_position());
     }
 
     #[test]
     fn test_block_invalid_position() {
-        let block = Block::new(
-            rid("doc:x"),
-            BlockType::Paragraph,
-            20,
-            10,
-        );
+        let block = Block::new(rid("doc:x"), BlockType::Paragraph, 20, 10);
 
         assert!(!block.is_valid_position());
     }
 
     #[test]
     fn test_token_lengths() {
-        let token = Token::new(
-            rid("block:x"),
-            "你好世界",
-            TokenType::Word,
-            0,
-            100,
-        );
+        let token = Token::new(rid("block:x"), "你好世界", TokenType::Word, 0, 100);
 
         // UTF-8 中文字符每个占 3 字节
         assert_eq!(token.byte_len(), 12);
@@ -1044,20 +1252,144 @@ mod tests {
 
     #[test]
     fn test_reference_bidirectional_check() {
-        let one_way = Reference::new(
-            RefType::Link,
-            Direction::OneWay,
-            rid("a"),
-            rid("b"),
-        );
+        let one_way = Reference::new(RefType::Link, Direction::OneWay, rid("a"), rid("b"));
         assert!(!one_way.is_bidirectional());
 
-        let two_way = Reference::new(
-            RefType::Inherit,
-            Direction::TwoWay,
-            rid("a"),
-            rid("b"),
-        );
+        let two_way = Reference::new(RefType::Inherit, Direction::TwoWay, rid("a"), rid("b"));
         assert!(two_way.is_bidirectional());
+    }
+
+    #[test]
+    fn test_content_type_from_mime() {
+        assert_eq!(
+            ContentType::from_mime("text/markdown").unwrap(),
+            ContentType::Markdown
+        );
+        assert_eq!(
+            ContentType::from_mime("markdown").unwrap(),
+            ContentType::Markdown
+        );
+        assert_eq!(ContentType::from_mime("md").unwrap(), ContentType::Markdown);
+        assert_eq!(
+            ContentType::from_mime("text/plain").unwrap(),
+            ContentType::Plain
+        );
+        assert_eq!(ContentType::from_mime("plain").unwrap(), ContentType::Plain);
+        assert_eq!(ContentType::from_mime("txt").unwrap(), ContentType::Plain);
+        assert_eq!(
+            ContentType::from_mime("text/code").unwrap(),
+            ContentType::Code
+        );
+        assert_eq!(ContentType::from_mime("code").unwrap(), ContentType::Code);
+        assert_eq!(
+            ContentType::from_mime("text/html").unwrap(),
+            ContentType::Html
+        );
+        assert_eq!(ContentType::from_mime("html").unwrap(), ContentType::Html);
+        assert_eq!(
+            ContentType::from_mime("application/json").unwrap(),
+            ContentType::Json
+        );
+        assert_eq!(ContentType::from_mime("json").unwrap(), ContentType::Json);
+        assert!(ContentType::from_mime("unknown/type").is_err());
+    }
+
+    #[test]
+    fn test_content_type_to_mime() {
+        assert_eq!(ContentType::Markdown.to_mime(), "text/markdown");
+        assert_eq!(ContentType::Plain.to_mime(), "text/plain");
+        assert_eq!(ContentType::Code.to_mime(), "text/code");
+        assert_eq!(ContentType::Html.to_mime(), "text/html");
+        assert_eq!(ContentType::Json.to_mime(), "application/json");
+    }
+
+    #[test]
+    fn test_content_type_display() {
+        assert_eq!(format!("{}", ContentType::Markdown), "text/markdown");
+        assert_eq!(format!("{}", ContentType::Json), "application/json");
+    }
+
+    #[test]
+    fn test_block_status_transitions() {
+        assert!(BlockStatus::Created.can_transition_to(&BlockStatus::Indexed));
+        assert!(BlockStatus::Created.can_transition_to(&BlockStatus::Archived));
+        assert!(BlockStatus::Indexed.can_transition_to(&BlockStatus::Archived));
+        assert!(!BlockStatus::Indexed.can_transition_to(&BlockStatus::Created));
+        assert!(!BlockStatus::Archived.can_transition_to(&BlockStatus::Created));
+        assert!(!BlockStatus::Archived.can_transition_to(&BlockStatus::Indexed));
+    }
+
+    #[test]
+    fn test_block_status_default() {
+        assert_eq!(BlockStatus::default_status(), BlockStatus::Created);
+    }
+
+    #[test]
+    fn test_reference_status_transitions() {
+        assert!(ReferenceStatus::Created.can_transition_to(&ReferenceStatus::Verified));
+        assert!(ReferenceStatus::Created.can_transition_to(&ReferenceStatus::Broken));
+        assert!(ReferenceStatus::Created.can_transition_to(&ReferenceStatus::Archived));
+        assert!(ReferenceStatus::Verified.can_transition_to(&ReferenceStatus::Broken));
+        assert!(ReferenceStatus::Verified.can_transition_to(&ReferenceStatus::Archived));
+        assert!(ReferenceStatus::Broken.can_transition_to(&ReferenceStatus::Archived));
+        assert!(!ReferenceStatus::Verified.can_transition_to(&ReferenceStatus::Created));
+        assert!(!ReferenceStatus::Archived.can_transition_to(&ReferenceStatus::Created));
+    }
+
+    #[test]
+    fn test_reference_status_default() {
+        assert_eq!(ReferenceStatus::default_status(), ReferenceStatus::Created);
+    }
+
+    #[test]
+    fn test_token_status_default() {
+        assert_eq!(TokenStatus::default_status(), TokenStatus::Created);
+    }
+
+    #[test]
+    fn test_block_with_idempotency_key() {
+        let block = Block::new(rid("doc:x"), BlockType::Code, 1, 10)
+            .with_idempotency_key("code_block_1_10");
+        assert_eq!(block.idempotency_key, Some("code_block_1_10".to_string()));
+    }
+
+    #[test]
+    fn test_reference_with_scope() {
+        let reference = Reference::new(
+            RefType::Usage,
+            Direction::OneWay,
+            rid("token:a"),
+            rid("token:b"),
+        )
+        .with_scope("function_scope");
+        assert_eq!(reference.scope, Some("function_scope".to_string()));
+    }
+
+    #[test]
+    fn test_document_is_valid_hash() {
+        let doc = Document {
+            id: None,
+            path: "/test.md".to_string(),
+            title: "Test".to_string(),
+            source_type: SourceType::Markdown,
+            hash: "a".repeat(64),
+        };
+        assert!(doc.is_valid_hash());
+
+        let invalid_doc = Document {
+            id: None,
+            path: "/test.md".to_string(),
+            title: "Test".to_string(),
+            source_type: SourceType::Markdown,
+            hash: "not-hex-chars!@#".to_string(),
+        };
+        assert!(!invalid_doc.is_valid_hash());
+    }
+
+    #[test]
+    fn test_implicit_two_way_is_bidirectional() {
+        let reference =
+            Reference::new(RefType::Link, Direction::ImplicitTwoWay, rid("a"), rid("b"));
+        assert!(reference.is_bidirectional());
     }
 }

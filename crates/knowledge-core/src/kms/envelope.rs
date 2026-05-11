@@ -1,8 +1,10 @@
+use aes_gcm::{Aes256Gcm, KeyInit, Nonce, aead::Aead};
 use lru::LruCache;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use crate::Result;
+use crate::error::helpers;
 use crate::kms::traits::{DecryptedDek, EncryptionContext, EnvelopedData, KeyManagementService};
 
 /// 信封加密 (Envelope Encryption) 实现
@@ -74,7 +76,6 @@ impl<KMS: KeyManagementService> EnvelopeEncryption<KMS> {
         data: &[u8],
         context: &EncryptionContext,
     ) -> Result<EnvelopedData> {
-        // 获取或生成 DEK
         let kek_id = context
             .context
             .get("kek_id")
@@ -82,7 +83,22 @@ impl<KMS: KeyManagementService> EnvelopeEncryption<KMS> {
 
         let encrypted_dek = self.kms.generate_dek(kek_id).await?;
 
-        // 使用 DEK 加密数据
+        {
+            let mut cache = self.dek_cache.write().await;
+            let dek_plaintext = self.kms.decrypt_dek(&encrypted_dek).await?;
+            let cache_key = encrypted_dek.key_id.clone();
+            cache.put(
+                cache_key,
+                DecryptedDek {
+                    plaintext_key: dek_plaintext,
+                    algorithm: encrypted_dek.algorithm,
+                    decrypted_at: chrono::Utc::now(),
+                    source_key_id: encrypted_dek.key_id.clone(),
+                    expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+                },
+            );
+        }
+
         let ciphertext = self.kms.encrypt(&encrypted_dek, data).await?;
 
         Ok(EnvelopedData {
@@ -103,6 +119,29 @@ impl<KMS: KeyManagementService> EnvelopeEncryption<KMS> {
     ///
     /// 解密后的明文数据。
     pub async fn decrypt_data(&self, enveloped: &EnvelopedData) -> Result<Vec<u8>> {
+        let key_id = &enveloped.encrypted_dek.key_id;
+
+        {
+            let cache = self.dek_cache.read().await;
+            if let Some(cached_dek) = cache.peek(key_id)
+                && chrono::Utc::now() < cached_dek.expires_at
+            {
+                let cipher = Aes256Gcm::new_from_slice(&cached_dek.plaintext_key)
+                    .map_err(|e| helpers::crypto_error(&format!("DEK 初始化失败: {e}")))?;
+
+                if enveloped.ciphertext.nonce.is_empty() {
+                    return Err(helpers::crypto_error("解密失败：密文缺少 Nonce"));
+                }
+
+                let nonce = Nonce::from_slice(&enveloped.ciphertext.nonce);
+                let plaintext = cipher
+                    .decrypt(nonce, enveloped.ciphertext.data.as_slice())
+                    .map_err(|_| helpers::crypto_error("解密失败：密文可能已损坏"))?;
+
+                return Ok(plaintext);
+            }
+        }
+
         self.kms
             .decrypt(&enveloped.encrypted_dek, &enveloped.ciphertext)
             .await
@@ -306,6 +345,7 @@ mod tests {
     use super::{ChunkedEncryptor, EnvelopeConfig, EnvelopeEncryption, utils};
     use crate::kms::local::LocalKms;
     use crate::kms::traits::EncryptionContext;
+    use base64::Engine;
     use tempfile::TempDir;
 
     async fn create_test_kms() -> (LocalKms, TempDir) {
@@ -428,5 +468,95 @@ mod tests {
         assert_eq!(config.cache_ttl_secs, 300);
         assert_eq!(config.max_cache_size, 100);
         assert_eq!(config.default_kek_id, "default");
+    }
+
+    #[tokio::test]
+    async fn test_from_arc_creation() {
+        let (kms, _dir) = create_test_kms().await;
+        let kms_arc = std::sync::Arc::new(kms);
+        let envelope = EnvelopeEncryption::from_arc(kms_arc.clone(), 10);
+        assert!(std::sync::Arc::ptr_eq(envelope.kms(), &kms_arc));
+    }
+
+    #[tokio::test]
+    async fn test_kms_reference() {
+        let (kms, _dir) = create_test_kms().await;
+        let envelope = EnvelopeEncryption::new(kms, 10);
+        let _kms_ref = envelope.kms();
+    }
+
+    #[tokio::test]
+    async fn test_chunked_encryption_single_chunk() {
+        let (kms, _dir) = create_test_kms().await;
+        let envelope = EnvelopeEncryption::new(kms, 10);
+        let chunked = ChunkedEncryptor::new(envelope, 1000);
+
+        let small_data = b"small data";
+        let context = EncryptionContext::empty();
+
+        let encrypted = chunked.encrypt_large(small_data, &context).await.unwrap();
+        assert_eq!(encrypted.chunk_count, 1);
+        assert_eq!(encrypted.original_size, small_data.len());
+
+        let decrypted = chunked.decrypt_large(&encrypted).await.unwrap();
+        assert_eq!(small_data, decrypted.as_slice());
+    }
+
+    #[tokio::test]
+    async fn test_decrypt_from_base64_invalid_input() {
+        let (kms, _dir) = create_test_kms().await;
+        let envelope = EnvelopeEncryption::new(kms, 10);
+
+        let result = utils::decrypt_from_base64(&envelope, "!!!not-base64!!!").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_decrypt_from_base64_invalid_utf8_json() {
+        let (kms, _dir) = create_test_kms().await;
+        let envelope = EnvelopeEncryption::new(kms, 10);
+
+        let invalid_json = base64::engine::general_purpose::STANDARD.encode(b"\xff\xfe".as_slice());
+        let result = utils::decrypt_from_base64(&envelope, &invalid_json).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_decrypt_from_base64_invalid_json_structure() {
+        let (kms, _dir) = create_test_kms().await;
+        let envelope = EnvelopeEncryption::new(kms, 10);
+
+        let valid_json_but_wrong_structure = base64::engine::general_purpose::STANDARD
+            .encode(r#"{"not":"valid_enveloped_data"}"#.as_bytes());
+        let result = utils::decrypt_from_base64(&envelope, &valid_json_but_wrong_structure).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_is_valid_enveloped_data_empty() {
+        use crate::kms::traits::{Ciphertext, EncryptedKey, EncryptionAlgorithm, EnvelopedData};
+
+        let empty_data = EnvelopedData {
+            ciphertext: Ciphertext {
+                data: vec![],
+                nonce: vec![0u8; 12],
+                auth_tag: None,
+                dek_id: "test".to_string(),
+                encrypted_at: chrono::Utc::now(),
+                algorithm: EncryptionAlgorithm::Aes256Gcm,
+                context: None,
+            },
+            encrypted_dek: EncryptedKey {
+                key_id: "test".to_string(),
+                ciphertext_blob: vec![],
+                iv: vec![0u8; 12],
+                algorithm: EncryptionAlgorithm::Aes256Gcm,
+                created_at: chrono::Utc::now(),
+                encrypted_with: "kek".to_string(),
+            },
+            context: None,
+            version: 1,
+        };
+        assert!(!utils::is_valid_enveloped_data(&empty_data));
     }
 }

@@ -108,13 +108,19 @@ pub async fn upload_document(
     let decoded_path = urlencoding::decode(&req.path)
         .map_err(|_| helpers::validation_error("文件路径编码无效", "upload"))?;
     if decoded_path.contains("..") {
-        return Err(helpers::validation_error("文件路径不允许包含编码后的路径遍历字符", "upload").into());
+        return Err(
+            helpers::validation_error("文件路径不允许包含编码后的路径遍历字符", "upload").into(),
+        );
     }
 
     let double_decoded = urlencoding::decode(&decoded_path)
         .map_err(|_| helpers::validation_error("文件路径双重编码无效", "upload"))?;
     if double_decoded.contains("..") {
-        return Err(helpers::validation_error("文件路径不允许包含双重编码后的路径遍历字符", "upload").into());
+        return Err(helpers::validation_error(
+            "文件路径不允许包含双重编码后的路径遍历字符",
+            "upload",
+        )
+        .into());
     }
 
     let source_type = detect_source_type(&req.path);
@@ -273,8 +279,7 @@ pub async fn get_token(
     Path(id): Path<String>,
     State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<Token>>, ApiError> {
-    let token = state.vm.get_token(&id)
-        .map_err(ApiError::from)?;
+    let token = state.vm.get_token(&id).map_err(ApiError::from)?;
     Ok(Json(ApiResponse::success(token)))
 }
 
@@ -333,13 +338,19 @@ pub async fn vector_search(
     }
     if req.query_vec.len() > 4096 {
         return Err(ApiError::from_error_object(
-            &error_core::helpers::validation_error(&format!("查询向量维度 {} 超过上限 4096", req.query_vec.len()), "vector_search"),
+            &error_core::helpers::validation_error(
+                &format!("查询向量维度 {} 超过上限 4096", req.query_vec.len()),
+                "vector_search",
+            ),
         ));
     }
     const MAX_K: u32 = 1000;
     if req.k == 0 || req.k > MAX_K {
         return Err(ApiError::from_error_object(
-            &error_core::helpers::validation_error(&format!("k 值须在 1..={MAX_K} 范围内，当前: {}", req.k), "vector_search"),
+            &error_core::helpers::validation_error(
+                &format!("k 值须在 1..={MAX_K} 范围内，当前: {}", req.k),
+                "vector_search",
+            ),
         ));
     }
     let start = std::time::Instant::now();
@@ -403,6 +414,7 @@ fn detect_source_type(path: &str) -> SourceType {
     match ext.as_str() {
         "md" | "markdown" => SourceType::Markdown,
         "rs" | "py" | "js" | "ts" | "go" | "java" | "c" | "cpp" | "h" => SourceType::Code,
+        // 文件扩展名为开放集合，无法穷举；未知扩展名默认为 Plain
         _ => SourceType::Plain,
     }
 }
@@ -415,6 +427,7 @@ fn blake3_hash(content: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dto::HealthState;
 
     #[test]
     fn test_app_state_clone() {
@@ -450,7 +463,7 @@ mod tests {
     #[tokio::test]
     async fn test_health_check_returns_healthy() {
         let response = health_check().await;
-        assert_eq!(response.status, "healthy");
+        assert_eq!(response.status, HealthState::Healthy);
         assert!(!response.version.is_empty());
         assert!(!response.timestamp.is_empty());
     }

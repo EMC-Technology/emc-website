@@ -111,7 +111,9 @@ impl SafeRecordId {
     /// 去除数字 ID 的 `⟨⟩` 括号。
     pub fn id_value(&self) -> String {
         let raw = self.0.id.to_string();
-        raw.trim_start_matches('⟨').trim_end_matches('⟩').to_string()
+        raw.trim_start_matches('⟨')
+            .trim_end_matches('⟩')
+            .to_string()
     }
 }
 
@@ -181,8 +183,7 @@ mod tests {
     fn test_serialization_roundtrip() {
         let original = SafeRecordId::parse("reference:link001").expect("解析失败");
         let json = serde_json::to_string(&original).expect("序列化失败");
-        let deserialized: SafeRecordId =
-            serde_json::from_str(&json).expect("反序列化失败");
+        let deserialized: SafeRecordId = serde_json::from_str(&json).expect("反序列化失败");
 
         assert_eq!(original, deserialized);
         assert_eq!(original.table_name(), deserialized.table_name());
@@ -227,5 +228,26 @@ mod tests {
         set.insert(id3);
 
         assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn test_into_inner_preserves_data() {
+        let safe_id = SafeRecordId::parse("document:test123").expect("解析失败");
+        let record_id = safe_id.into_inner();
+        assert_eq!(record_id.tb, "document");
+    }
+
+    #[test]
+    fn test_id_value_with_special_characters() {
+        let id = SafeRecordId::parse("block:hello-world_123").expect("解析失败");
+        assert_eq!(id.table_name(), "block");
+        assert_eq!(id.id_value(), "hello-world_123");
+    }
+
+    #[test]
+    fn test_parse_with_multiple_colons() {
+        let id = SafeRecordId::parse("doc:key:with:colons").expect("解析失败");
+        assert_eq!(id.table_name(), "doc");
+        assert!(id.id_value().contains("key:with:colons"));
     }
 }

@@ -6,6 +6,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::knowledge_vm::RiskLevel;
+
 // ============================================================================
 // Tool 1: query - 混合搜索
 // ============================================================================
@@ -85,8 +87,8 @@ pub struct ImpactResult {
     pub layers: Vec<ImpactLayer>,
     /// 总受影响数量
     pub total_affected: usize,
-    /// 风险评估（low / medium / high）
-    pub risk_level: String,
+    /// 风险评估
+    pub risk_level: RiskLevel,
 }
 
 // ============================================================================
@@ -110,7 +112,7 @@ pub struct TraceStep {
     /// 符号标识
     pub symbol: String,
     /// 引用类型
-    pub ref_type: String,
+    pub ref_type: knowledge_core::model::RefType,
     /// 置信度分数（0.0 ~ 1.0）
     pub confidence: f64,
 }
@@ -193,9 +195,8 @@ impl SearchParams {
         }
 
         let dangerous_keywords = [
-            "CREATE", "UPDATE", "DELETE", "INSERT", "RELATE",
-            "DEFINE", "REMOVE", "REBUILD", "BEGIN", "COMMIT",
-            "CANCEL", "LET ", "RETURN ",
+            "CREATE", "UPDATE", "DELETE", "INSERT", "RELATE", "DEFINE", "REMOVE", "REBUILD",
+            "BEGIN", "COMMIT", "CANCEL", "LET ", "RETURN ",
         ];
 
         let after_select = &normalized[6..];
@@ -317,17 +318,281 @@ pub struct DetectChangesParams {
     pub doc_id: String,
 }
 
+/// 变更检测状态
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChangeStatus {
+    /// 无变更
+    Unchanged,
+    /// 已修改
+    Modified,
+    /// 已删除
+    Deleted,
+}
+
 /// `detect_changes` 工具结果
 #[derive(Debug, Clone, Serialize)]
 pub struct DetectChangesResult {
     /// 文档 ID
     pub doc_id: String,
-    /// 变更状态（unchanged / modified / deleted）
-    pub status: String,
+    /// 变更状态
+    pub status: ChangeStatus,
     /// 当前哈希值
     pub current_hash: Option<String>,
     /// 受影响的引用数量
     pub affected_references: usize,
     /// 受影响的引用列表
     pub affected_refs_detail: Vec<serde_json::Value>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_search_params_validate_valid_select() {
+        let params = SearchParams {
+            query: "SELECT * FROM document".to_string(),
+            params: None,
+        };
+        assert!(params.validate_query().is_ok());
+    }
+
+    #[test]
+    fn test_search_params_validate_rejects_non_select() {
+        let params = SearchParams {
+            query: "DELETE FROM document".to_string(),
+            params: None,
+        };
+        assert!(params.validate_query().is_err());
+    }
+
+    #[test]
+    fn test_search_params_validate_rejects_empty() {
+        let params = SearchParams {
+            query: "   ".to_string(),
+            params: None,
+        };
+        let err = params.validate_query().unwrap_err();
+        assert!(err.contains("空"));
+    }
+
+    #[test]
+    fn test_search_params_validate_rejects_semicolon() {
+        let params = SearchParams {
+            query: "SELECT * FROM document; DROP TABLE document".to_string(),
+            params: None,
+        };
+        let err = params.validate_query().unwrap_err();
+        assert!(err.contains("分号"));
+    }
+
+    #[test]
+    fn test_search_params_validate_rejects_too_long() {
+        let params = SearchParams {
+            query: "SELECT * FROM document WHERE ".to_string() + &"x".repeat(10_000),
+            params: None,
+        };
+        let err = params.validate_query().unwrap_err();
+        assert!(err.contains("10000"));
+    }
+
+    #[test]
+    fn test_search_params_validate_rejects_dangerous_keywords() {
+        let cases = [
+            (
+                "SELECT * FROM document WHERE x = 1 CREATE TABLE t",
+                "CREATE",
+            ),
+            (
+                "SELECT * FROM document WHERE x = 1 UPDATE t SET a = 1",
+                "UPDATE",
+            ),
+            ("SELECT * FROM document WHERE x = 1 DELETE FROM t", "DELETE"),
+            ("SELECT * FROM document WHERE x = 1 INSERT INTO t", "INSERT"),
+            (
+                "SELECT * FROM document WHERE x = 1 RELATE a->b->c",
+                "RELATE",
+            ),
+            (
+                "SELECT * FROM document WHERE x = 1 DEFINE TABLE t",
+                "DEFINE",
+            ),
+            (
+                "SELECT * FROM document WHERE x = 1 REMOVE TABLE t",
+                "REMOVE",
+            ),
+            (
+                "SELECT * FROM document WHERE x = 1 REBUILD INDEX",
+                "REBUILD",
+            ),
+            (
+                "SELECT * FROM document WHERE x = 1 BEGIN TRANSACTION",
+                "BEGIN",
+            ),
+            ("SELECT * FROM document WHERE x = 1 COMMIT", "COMMIT"),
+            (
+                "SELECT * FROM document WHERE x = 1 CANCEL TRANSACTION",
+                "CANCEL",
+            ),
+            ("SELECT * FROM document WHERE x = 1 LET $x = 1", "LET"),
+            ("SELECT * FROM document WHERE x = 1 RETURN 1", "RETURN"),
+        ];
+        for (query, keyword) in &cases {
+            let params = SearchParams {
+                query: (*query).to_string(),
+                params: None,
+            };
+            let err = params.validate_query().unwrap_err();
+            assert!(
+                err.contains(keyword),
+                "Expected error for keyword '{keyword}' in query: {query}, got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_search_params_validate_allows_safe_string_literals() {
+        let params = SearchParams {
+            query: "SELECT * FROM document WHERE title = 'CREATE something'".to_string(),
+            params: None,
+        };
+        assert!(params.validate_query().is_ok());
+    }
+
+    #[test]
+    fn test_search_params_validate_case_insensitive() {
+        let params = SearchParams {
+            query: "select * from document".to_string(),
+            params: None,
+        };
+        assert!(params.validate_query().is_ok());
+    }
+
+    #[test]
+    fn test_strip_surrealql_comments_line() {
+        let input = "SELECT * FROM doc -- this is a comment\nWHERE x = 1";
+        let stripped = strip_surrealql_comments(input);
+        assert!(!stripped.contains("comment"));
+        assert!(stripped.contains("SELECT"));
+        assert!(stripped.contains("WHERE"));
+    }
+
+    #[test]
+    fn test_strip_surrealql_comments_block() {
+        let input = "SELECT * FROM doc /* block comment */ WHERE x = 1";
+        let stripped = strip_surrealql_comments(input);
+        assert!(!stripped.contains("block comment"));
+        assert!(stripped.contains("SELECT"));
+        assert!(stripped.contains("WHERE"));
+    }
+
+    #[test]
+    fn test_strip_string_literals_single_quotes() {
+        let input = " WHERE title = 'CREATE' AND x = 1 ";
+        let stripped = strip_string_literals(input);
+        assert!(!stripped.contains("CREATE"));
+        assert!(stripped.contains("WHERE"));
+        assert!(stripped.contains('?'));
+    }
+
+    #[test]
+    fn test_strip_string_literals_double_quotes() {
+        let input = " WHERE title = \"DELETE\" AND x = 1 ";
+        let stripped = strip_string_literals(input);
+        assert!(!stripped.contains("DELETE"));
+        assert!(stripped.contains("WHERE"));
+    }
+
+    #[test]
+    fn test_change_status_serialization() {
+        let statuses = [
+            ChangeStatus::Unchanged,
+            ChangeStatus::Modified,
+            ChangeStatus::Deleted,
+        ];
+        let json = serde_json::to_string(&statuses).unwrap();
+        assert!(json.contains("unchanged"));
+        assert!(json.contains("modified"));
+        assert!(json.contains("deleted"));
+    }
+
+    #[test]
+    fn test_query_params_deserialization() {
+        let json = r#"{"query": "test query", "limit": 5}"#;
+        let params: QueryParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.query, "test query");
+        assert_eq!(params.limit, Some(5));
+    }
+
+    #[test]
+    fn test_impact_params_deserialization() {
+        let json = r#"{"symbol": "fn_main", "depth": 5}"#;
+        let params: ImpactParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.symbol, "fn_main");
+        assert_eq!(params.depth, Some(5));
+    }
+
+    #[test]
+    fn test_trace_params_deserialization() {
+        let json = r#"{"entry_point": "main", "max_depth": 20}"#;
+        let params: TraceParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.entry_point, "main");
+        assert_eq!(params.max_depth, Some(20));
+    }
+
+    #[test]
+    fn test_graph_params_deserialization() {
+        let json = r#"{"doc_id": "doc:001"}"#;
+        let params: GraphParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.doc_id, "doc:001");
+    }
+
+    #[test]
+    fn test_detect_changes_params_deserialization() {
+        let json = r#"{"doc_id": "doc:001"}"#;
+        let params: DetectChangesParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.doc_id, "doc:001");
+    }
+
+    #[test]
+    fn test_query_result_serialization() {
+        let result = QueryResult {
+            blocks: vec![serde_json::json!({"id": 1})],
+            total: 1,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("blocks"));
+        assert!(json.contains("total"));
+    }
+
+    #[test]
+    fn test_impact_result_serialization() {
+        let result = ImpactResult {
+            symbol: "fn_main".to_string(),
+            layers: vec![ImpactLayer {
+                hop: 1,
+                affected: vec![],
+                count: 0,
+            }],
+            total_affected: 0,
+            risk_level: RiskLevel::Low,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("fn_main"));
+    }
+
+    #[test]
+    fn test_detect_changes_result_serialization() {
+        let result = DetectChangesResult {
+            doc_id: "doc:001".to_string(),
+            status: ChangeStatus::Modified,
+            current_hash: Some("abc123".to_string()),
+            affected_references: 5,
+            affected_refs_detail: vec![],
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("modified"));
+        assert!(json.contains("abc123"));
+    }
 }

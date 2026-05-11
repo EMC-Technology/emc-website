@@ -232,11 +232,135 @@ impl Actor {
     }
 }
 
+/// 审计动作类型（AP-B07 修复：替代 String 表示）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditActionType {
+    /// 创建
+    Create,
+    /// 读取
+    Read,
+    /// 更新
+    Update,
+    /// 删除
+    Delete,
+    /// 查询
+    Query,
+    /// 搜索
+    Search,
+    /// 导出
+    Export,
+    /// 导入
+    Import,
+    /// 登录
+    Login,
+    /// 登出
+    Logout,
+    /// 授权
+    Grant,
+    /// 撤销授权
+    Revoke,
+    /// 加密
+    Encrypt,
+    /// 解密
+    Decrypt,
+    /// 签名
+    Sign,
+    /// 验签
+    Verify,
+    /// 其他
+    Other,
+}
+
+impl AuditActionType {
+    /// 返回动作类型的字符串表示
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Create => "create",
+            Self::Read => "read",
+            Self::Update => "update",
+            Self::Delete => "delete",
+            Self::Query => "query",
+            Self::Search => "search",
+            Self::Export => "export",
+            Self::Import => "import",
+            Self::Login => "login",
+            Self::Logout => "logout",
+            Self::Grant => "grant",
+            Self::Revoke => "revoke",
+            Self::Encrypt => "encrypt",
+            Self::Decrypt => "decrypt",
+            Self::Sign => "sign",
+            Self::Verify => "verify",
+            Self::Other => "other",
+        }
+    }
+}
+
+impl std::fmt::Display for AuditActionType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// 审计资源类型（AP-B07 修复：替代 String 表示）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditResourceType {
+    /// 文档
+    Document,
+    /// 节点
+    Node,
+    /// 边
+    Edge,
+    /// 向量嵌入
+    Embedding,
+    /// 用户
+    User,
+    /// 角色
+    Role,
+    /// 策略
+    Policy,
+    /// 密钥
+    Key,
+    /// 配置
+    Config,
+    /// 系统
+    System,
+    /// 其他
+    Other,
+}
+
+impl AuditResourceType {
+    /// 返回资源类型的字符串表示
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Document => "document",
+            Self::Node => "node",
+            Self::Edge => "edge",
+            Self::Embedding => "embedding",
+            Self::User => "user",
+            Self::Role => "role",
+            Self::Policy => "policy",
+            Self::Key => "key",
+            Self::Config => "config",
+            Self::System => "system",
+            Self::Other => "other",
+        }
+    }
+}
+
+impl std::fmt::Display for AuditResourceType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// 操作描述
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Action {
     /// 操作类型
-    pub action_type: String,
+    pub action_type: AuditActionType,
     /// 操作详情
     pub details: HashMap<String, String>,
 }
@@ -245,7 +369,7 @@ pub struct Action {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceRef {
     /// 资源类型
-    pub resource_type: String,
+    pub resource_type: AuditResourceType,
     /// 资源 ID
     pub resource_id: String,
     /// 资源路径（可选）
@@ -308,7 +432,9 @@ pub trait AuditWriter: Send + Sync {
     /// 读取最后一条审计条目（用于构建审计链的 previous_hash）
     async fn read_last(&self) -> Result<Option<AuditEntry>> {
         let now = Utc::now();
-        let entries = self.read_range(now - chrono::Duration::days(365), now).await?;
+        let entries = self
+            .read_range(now - chrono::Duration::days(365), now)
+            .await?;
         Ok(entries.last().cloned())
     }
 
@@ -426,15 +552,26 @@ impl HmacSigner {
     }
 
     /// 序列化用于签名的字段（排除 `signature` 和 `current_hash`）
+    ///
+    /// 安全性要求：签名范围必须覆盖所有可变字段，否则攻击者可篡改未签名字段
+    /// 而不使签名失效。当前覆盖：id, timestamp, event_type, actor, action_type,
+    /// action.details, resource, payload, metadata, previous_hash。
     fn serialize_for_signing(entry: &AuditEntry) -> String {
+        let details_json = serde_json::to_string(&entry.action.details).unwrap_or_default();
+        let metadata_json = serde_json::to_string(&entry.metadata).unwrap_or_default();
+        let payload_json = serde_json::to_string(&entry.payload).unwrap_or_default();
         format!(
-            "{}|{}|{}|{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
             entry.id.0,
             entry.timestamp.format("%Y-%m-%dT%H:%M:%S%.6fZ"),
             entry.event_type.code(),
             entry.actor.actor_id(),
             entry.action.action_type,
+            details_json,
+            entry.resource.resource_type,
             entry.resource.resource_id,
+            payload_json,
+            metadata_json,
             entry.previous_hash.as_deref().unwrap_or("")
         )
     }
@@ -459,6 +596,10 @@ impl ChainValidator {
     }
 
     /// 计算条目的哈希值
+    ///
+    /// 安全性要求：哈希范围必须与签名范围一致，覆盖所有可变字段。
+    /// 当前覆盖：id, timestamp, event_type, actor, action_type, action.details,
+    /// resource, payload, metadata, previous_hash。
     #[must_use]
     pub fn compute_hash(entry: &AuditEntry) -> String {
         use blake3::Hasher;
@@ -474,9 +615,12 @@ impl ChainValidator {
         );
         hasher.update(entry.event_type.code().as_bytes());
         hasher.update(entry.actor.actor_id().as_bytes());
-        hasher.update(
-            &serde_json::to_vec(&entry.payload).unwrap_or_default(),
-        );
+        hasher.update(entry.action.action_type.as_str().as_bytes());
+        hasher.update(&serde_json::to_vec(&entry.action.details).unwrap_or_default());
+        hasher.update(entry.resource.resource_type.as_str().as_bytes());
+        hasher.update(entry.resource.resource_id.as_bytes());
+        hasher.update(&serde_json::to_vec(&entry.payload).unwrap_or_default());
+        hasher.update(&serde_json::to_vec(&entry.metadata).unwrap_or_default());
 
         if let Some(ref prev_hash) = entry.previous_hash {
             hasher.update(prev_hash.as_bytes());
@@ -745,10 +889,11 @@ impl AuditWriter for FileAuditWriter {
         let mut entries = Vec::new();
 
         for line in lines {
-            if let Ok(entry) = serde_json::from_str::<AuditEntry>(&line) {
-                if entry.timestamp >= from && entry.timestamp <= to {
-                    entries.push(entry);
-                }
+            if let Ok(entry) = serde_json::from_str::<AuditEntry>(&line)
+                && entry.timestamp >= from
+                && entry.timestamp <= to
+            {
+                entries.push(entry);
             }
         }
 
@@ -760,10 +905,10 @@ impl AuditWriter for FileAuditWriter {
         let lines = self.read_all_lines().await?;
 
         for line in lines {
-            if let Ok(entry) = serde_json::from_str::<AuditEntry>(&line) {
-                if entry.id == *id {
-                    return Ok(Some(entry));
-                }
+            if let Ok(entry) = serde_json::from_str::<AuditEntry>(&line)
+                && entry.id == *id
+            {
+                return Ok(Some(entry));
             }
         }
 
@@ -811,11 +956,11 @@ mod tests {
                     name: Some("张三".to_string()),
                 },
                 Action {
-                    action_type: "create_document".to_string(),
+                    action_type: AuditActionType::Create,
                     details: HashMap::new(),
                 },
                 ResourceRef {
-                    resource_type: "document".to_string(),
+                    resource_type: AuditResourceType::Document,
                     resource_id: "doc-456".to_string(),
                     path: None,
                 },
@@ -851,11 +996,11 @@ mod tests {
                         component: "test".to_string(),
                     },
                     Action {
-                        action_type: format!("operation_{i}"),
+                        action_type: AuditActionType::Other,
                         details: HashMap::new(),
                     },
                     ResourceRef {
-                        resource_type: "resource".to_string(),
+                        resource_type: AuditResourceType::Other,
                         resource_id: format!("res-{i}"),
                         path: None,
                     },
@@ -890,11 +1035,11 @@ mod tests {
                     name: None,
                 },
                 Action {
-                    action_type: "login".to_string(),
+                    action_type: AuditActionType::Login,
                     details: HashMap::new(),
                 },
                 ResourceRef {
-                    resource_type: "session".to_string(),
+                    resource_type: AuditResourceType::Other,
                     resource_id: "s1".to_string(),
                     path: None,
                 },
@@ -935,11 +1080,11 @@ mod tests {
                 component: "test".to_string(),
             },
             action: Action {
-                action_type: "start".to_string(),
+                action_type: AuditActionType::Other,
                 details: HashMap::new(),
             },
             resource: ResourceRef {
-                resource_type: "system".to_string(),
+                resource_type: AuditResourceType::System,
                 resource_id: "sys-1".to_string(),
                 path: None,
             },

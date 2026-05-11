@@ -72,7 +72,11 @@ impl CandleReranker {
 #[allow(clippy::manual_async_fn)]
 impl CrossEncoderModel for CandleReranker {
     #[allow(clippy::manual_async_fn)]
-    fn rerank(&self, query: &str, documents: &[Document]) -> impl Future<Output = Result<Vec<ScoredDocument>>> + Send {
+    fn rerank(
+        &self,
+        query: &str,
+        documents: &[Document],
+    ) -> impl Future<Output = Result<Vec<ScoredDocument>>> + Send {
         async move {
             info!(
                 model = %self.model_name(),
@@ -114,7 +118,9 @@ mod tests {
         if model.is_err() {
             return;
         }
-        let reranker = CandleReranker { model: model.unwrap() };
+        let reranker = CandleReranker {
+            model: model.unwrap(),
+        };
         assert_eq!(reranker.model_name(), "test-model");
     }
 
@@ -125,7 +131,9 @@ mod tests {
         if model_result.is_err() {
             return;
         }
-        let reranker = CandleReranker { model: model_result.unwrap() };
+        let reranker = CandleReranker {
+            model: model_result.unwrap(),
+        };
 
         let docs = vec![
             make_doc("Rust is a systems programming language"),

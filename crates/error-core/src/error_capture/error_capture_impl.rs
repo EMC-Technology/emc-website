@@ -1,27 +1,31 @@
 //! Error capture and propagation mechanisms
-//! 
+//!
 //! This module defines error capture mechanisms for different layers of the application,
 //! including frontend/UI, gateway/API, business logic, and infrastructure layers.
 
-use std::collections::HashMap;
-use crate::classification::{ErrorSource, Severity, ImpactScope, Recoverability};
+use crate::classification::{ErrorSource, ImpactScope, Recoverability, Severity};
+use crate::error_code::registry;
 use crate::error_object::ErrorObject;
 use crate::propagation::ContextFrame;
-use crate::error_code::registry;
+use std::collections::HashMap;
 
 /// Error capture trait
-/// 
+///
 /// Defines a common interface for error capture across different layers.
 pub trait ErrorCapture {
     /// Capture an error and convert it to an `ErrorObject`
     fn capture_error(&self, error: &dyn std::error::Error) -> ErrorObject;
-    
-    /// Add context to an existing error
-    fn add_context(&self, error: &mut ErrorObject, context: HashMap<String, serde_json::Value>);
+
+    /// Add context to an existing error, returning a new ErrorObject（Axiom-1: 业务事实不变性）
+    fn add_context(
+        &self,
+        error: ErrorObject,
+        context: HashMap<String, serde_json::Value>,
+    ) -> ErrorObject;
 }
 
 /// Frontend/UI layer error capture
-/// 
+///
 /// Handles errors at the UI level, focusing on user-friendly messages and presentation.
 pub struct FrontendErrorCapture {
     component: String,
@@ -53,10 +57,14 @@ impl ErrorCapture for FrontendErrorCapture {
             .operation("ui_operation")
             .build()
     }
-    
-    fn add_context(&self, error: &mut ErrorObject, context: HashMap<String, serde_json::Value>) {
+
+    fn add_context(
+        &self,
+        error: ErrorObject,
+        context: HashMap<String, serde_json::Value>,
+    ) -> ErrorObject {
         let frame = ContextFrame::new(&self.component, context);
-        error.add_context_frame(frame);
+        error.with_context_frame(frame)
     }
 }
 
@@ -68,7 +76,7 @@ impl FrontendErrorCapture {
 }
 
 /// Gateway/API layer error capture
-/// 
+///
 /// Handles errors at the API gateway level, focusing on request processing and response formatting.
 pub struct GatewayErrorCapture {
     service: String,
@@ -101,15 +109,19 @@ impl ErrorCapture for GatewayErrorCapture {
             .operation(&self.endpoint)
             .build()
     }
-    
-    fn add_context(&self, error: &mut ErrorObject, context: HashMap<String, serde_json::Value>) {
+
+    fn add_context(
+        &self,
+        error: ErrorObject,
+        context: HashMap<String, serde_json::Value>,
+    ) -> ErrorObject {
         let frame = ContextFrame::new(&self.service, context);
-        error.add_context_frame(frame);
+        error.with_context_frame(frame)
     }
 }
 
 /// Business logic layer error capture
-/// 
+///
 /// Handles errors at the business logic level, focusing on domain-specific error handling.
 pub struct BusinessErrorCapture {
     domain: String,
@@ -142,15 +154,19 @@ impl ErrorCapture for BusinessErrorCapture {
             .operation(&self.operation)
             .build()
     }
-    
-    fn add_context(&self, error: &mut ErrorObject, context: HashMap<String, serde_json::Value>) {
+
+    fn add_context(
+        &self,
+        error: ErrorObject,
+        context: HashMap<String, serde_json::Value>,
+    ) -> ErrorObject {
         let frame = ContextFrame::new(&self.domain, context);
-        error.add_context_frame(frame);
+        error.with_context_frame(frame)
     }
 }
 
 /// Infrastructure layer error capture
-/// 
+///
 /// Handles errors at the infrastructure level, focusing on external system errors and resource issues.
 pub struct InfrastructureErrorCapture {
     service: String,
@@ -183,15 +199,19 @@ impl ErrorCapture for InfrastructureErrorCapture {
             .operation(&self.resource)
             .build()
     }
-    
-    fn add_context(&self, error: &mut ErrorObject, context: HashMap<String, serde_json::Value>) {
+
+    fn add_context(
+        &self,
+        error: ErrorObject,
+        context: HashMap<String, serde_json::Value>,
+    ) -> ErrorObject {
         let frame = ContextFrame::new(&self.service, context);
-        error.add_context_frame(frame);
+        error.with_context_frame(frame)
     }
 }
 
 /// Error propagation utilities
-/// 
+///
 /// Provides functions for propagating errors through different layers of the application.
 pub struct ErrorPropagation;
 
@@ -203,27 +223,20 @@ impl ErrorPropagation {
         source: &str,
         context: HashMap<String, serde_json::Value>,
     ) -> ErrorObject {
-        let mut error = error;
         let frame = ContextFrame::new(source, context);
-        error.add_context_frame(frame);
-        error
+        error.with_context_frame(frame)
     }
-    
+
     /// Preserve the cause chain when wrapping errors
     #[must_use]
-    pub fn wrap_error(
-        outer_error: ErrorObject,
-        inner_error: ErrorObject,
-    ) -> ErrorObject {
-        let mut outer_error = outer_error;
-        outer_error.set_cause(inner_error);
-        outer_error
+    pub fn wrap_error(outer_error: ErrorObject, inner_error: ErrorObject) -> ErrorObject {
+        outer_error.with_cause(inner_error)
     }
-    
+
     /// Strip internal details from an error before returning it to external clients
-    pub fn strip_internal_details(error: &mut ErrorObject) {
-        error.clear_details();
-        error.clear_context_chain();
+    #[must_use]
+    pub fn strip_internal_details(error: ErrorObject) -> ErrorObject {
+        error.sanitize_details().sanitize_context_chain()
     }
 }
 
@@ -231,37 +244,37 @@ impl ErrorPropagation {
 mod tests {
     use super::*;
     use serde_json::json;
-    
+
     #[test]
     fn test_frontend_error_capture() {
         #[derive(Debug, thiserror::Error)]
         #[error("Test error")]
         struct TestError;
-        
+
         let capture = FrontendErrorCapture::new("user_dashboard");
         let error = TestError;
         let captured = capture.capture_error(&error);
-        
+
         assert_eq!(captured.code(), "ERR-USR-UI-001_ERR_O");
         assert_eq!(captured.source(), ErrorSource::USR);
         assert_eq!(captured.severity(), Severity::ERROR);
         assert_eq!(captured.impact_scope(), ImpactScope::OPERATION);
     }
-    
+
     #[test]
     fn test_error_propagation() {
         #[derive(Debug, thiserror::Error)]
         #[error("Test error")]
         struct TestError;
-        
+
         let capture = BusinessErrorCapture::new("user_service", "create_user");
         let error = TestError;
         let captured = capture.capture_error(&error);
-        
+
         let mut context = HashMap::new();
         context.insert("user_id".to_string(), json!("12345"));
         let propagated = ErrorPropagation::append_context(captured, "api_gateway", context);
-        
+
         assert_eq!(propagated.context_chain().len(), 1);
         assert_eq!(propagated.context_chain()[0].source(), "api_gateway");
     }
@@ -271,11 +284,11 @@ mod tests {
         #[derive(Debug, thiserror::Error)]
         #[error("Test error")]
         struct TestError;
-        
+
         let capture = GatewayErrorCapture::new("auth_service", "login");
         let error = TestError;
         let captured = capture.capture_error(&error);
-        
+
         assert_eq!(captured.code(), "ERR-NET-GW-001_ERR_S");
         assert_eq!(captured.source(), ErrorSource::NET);
         assert_eq!(captured.severity(), Severity::ERROR);
@@ -287,11 +300,11 @@ mod tests {
         #[derive(Debug, thiserror::Error)]
         #[error("Test error")]
         struct TestError;
-        
+
         let capture = BusinessErrorCapture::new("order_service", "process_payment");
         let error = TestError;
         let captured = capture.capture_error(&error);
-        
+
         assert_eq!(captured.code(), "ERR-INT-BL-001_ERR_M");
         assert_eq!(captured.source(), ErrorSource::INT);
         assert_eq!(captured.severity(), Severity::ERROR);
@@ -303,11 +316,11 @@ mod tests {
         #[derive(Debug, thiserror::Error)]
         #[error("Test error")]
         struct TestError;
-        
+
         let capture = InfrastructureErrorCapture::new("database", "connection");
         let error = TestError;
         let captured = capture.capture_error(&error);
-        
+
         assert_eq!(captured.code(), "ERR-SYS-IF-001_ERR_G");
         assert_eq!(captured.source(), ErrorSource::SYS);
         assert_eq!(captured.severity(), Severity::ERROR);
@@ -319,15 +332,15 @@ mod tests {
         #[derive(Debug, thiserror::Error)]
         #[error("Test error")]
         struct TestError;
-        
+
         let capture = FrontendErrorCapture::new("user_dashboard");
         let error = TestError;
-        let mut captured = capture.capture_error(&error);
-        
+        let captured = capture.capture_error(&error);
+
         let mut context = HashMap::new();
         context.insert("component".to_string(), json!("login_form"));
-        capture.add_context(&mut captured, context);
-        
+        let captured = capture.add_context(captured, context);
+
         assert_eq!(captured.context_chain().len(), 1);
     }
 
@@ -336,15 +349,15 @@ mod tests {
         #[derive(Debug, thiserror::Error)]
         #[error("Test error")]
         struct TestError;
-        
+
         let capture = GatewayErrorCapture::new("auth_service", "login");
         let error = TestError;
-        let mut captured = capture.capture_error(&error);
-        
+        let captured = capture.capture_error(&error);
+
         let mut context = HashMap::new();
         context.insert("request_id".to_string(), json!("req_123"));
-        capture.add_context(&mut captured, context);
-        
+        let captured = capture.add_context(captured, context);
+
         assert_eq!(captured.context_chain().len(), 1);
     }
 
@@ -353,15 +366,15 @@ mod tests {
         #[derive(Debug, thiserror::Error)]
         #[error("Test error")]
         struct TestError;
-        
+
         let capture = BusinessErrorCapture::new("order_service", "process_payment");
         let error = TestError;
-        let mut captured = capture.capture_error(&error);
-        
+        let captured = capture.capture_error(&error);
+
         let mut context = HashMap::new();
         context.insert("order_id".to_string(), json!("ord_456"));
-        capture.add_context(&mut captured, context);
-        
+        let captured = capture.add_context(captured, context);
+
         assert_eq!(captured.context_chain().len(), 1);
     }
 
@@ -370,15 +383,15 @@ mod tests {
         #[derive(Debug, thiserror::Error)]
         #[error("Test error")]
         struct TestError;
-        
+
         let capture = InfrastructureErrorCapture::new("database", "connection");
         let error = TestError;
-        let mut captured = capture.capture_error(&error);
-        
+        let captured = capture.capture_error(&error);
+
         let mut context = HashMap::new();
         context.insert("db_instance".to_string(), json!("prod_db"));
-        capture.add_context(&mut captured, context);
-        
+        let captured = capture.add_context(captured, context);
+
         assert_eq!(captured.context_chain().len(), 1);
     }
 
@@ -387,19 +400,19 @@ mod tests {
         #[derive(Debug, thiserror::Error)]
         #[error("Inner error")]
         struct InnerError;
-        
+
         #[derive(Debug, thiserror::Error)]
         #[error("Outer error")]
         struct OuterError;
-        
+
         let inner_capture = InfrastructureErrorCapture::new("database", "connection");
         let inner_error = InnerError;
         let inner_captured = inner_capture.capture_error(&inner_error);
-        
+
         let outer_capture = BusinessErrorCapture::new("order_service", "process_payment");
         let outer_error = OuterError;
         let outer_captured = outer_capture.capture_error(&outer_error);
-        
+
         let wrapped = ErrorPropagation::wrap_error(outer_captured, inner_captured);
         assert!(wrapped.cause().is_some());
     }
@@ -409,12 +422,13 @@ mod tests {
         #[derive(Debug, thiserror::Error)]
         #[error("Test error")]
         struct TestError;
-        
+
         let capture = BusinessErrorCapture::new("user_service", "create_user");
         let error = TestError;
-        let mut captured = capture.capture_error(&error);
-        
-        ErrorPropagation::strip_internal_details(&mut captured);
+        let captured = capture.capture_error(&error);
+
+        let captured = ErrorPropagation::strip_internal_details(captured);
+        let _ = captured;
     }
 
     #[test]
@@ -422,7 +436,7 @@ mod tests {
         #[derive(Debug, thiserror::Error)]
         #[error("Test error")]
         struct TestError;
-        
+
         let _capture = FrontendErrorCapture::new("user_dashboard");
         let error = TestError;
         let message = FrontendErrorCapture::get_user_friendly_message(&error);

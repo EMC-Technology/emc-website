@@ -8,10 +8,9 @@
 use futures::Stream;
 use serde::{Deserialize, Serialize};
 
-use super::engine::{GenerateOptions, LLMClient, LLMMessage, LLMResponse, StreamChunk, TokenUsage};
-
-#[cfg(test)]
-use super::engine::MessageRole;
+use super::engine::{
+    GenerateOptions, LLMClient, LLMMessage, LLMResponse, MessageRole, StreamChunk, TokenUsage,
+};
 
 /// Ollama 客户端配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,10 +43,35 @@ struct OllamaChatRequest {
     options: Option<OllamaOptions>,
 }
 
+/// Chat 角色类型枚举
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChatRole {
+    /// 系统指令
+    System,
+    /// 用户消息
+    User,
+    /// 助手回复
+    Assistant,
+    /// 工具调用结果
+    Tool,
+}
+
+impl std::fmt::Display for ChatRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::System => write!(f, "system"),
+            Self::User => write!(f, "user"),
+            Self::Assistant => write!(f, "assistant"),
+            Self::Tool => write!(f, "tool"),
+        }
+    }
+}
+
 /// Ollama 消息格式
 #[derive(Debug, Serialize, Deserialize)]
 struct OllamaMessage {
-    role: String,
+    role: ChatRole,
     content: String,
 }
 
@@ -109,7 +133,11 @@ impl OllamaLLMClient {
         messages
             .iter()
             .map(|m| OllamaMessage {
-                role: m.role.to_string(),
+                role: match m.role {
+                    MessageRole::System => ChatRole::System,
+                    MessageRole::User => ChatRole::User,
+                    MessageRole::Assistant => ChatRole::Assistant,
+                },
                 content: m.content.clone(),
             })
             .collect()
@@ -175,9 +203,9 @@ impl LLMClient for OllamaLLMClient {
             },
             model: chat_response.model,
             finish_reason: if chat_response.done {
-                "stop".to_string()
+                super::engine::FinishReason::Stop
             } else {
-                "length".to_string()
+                super::engine::FinishReason::Length
             },
         })
     }
@@ -336,7 +364,7 @@ mod tests {
             content: "Hello".to_string(),
         }];
         let ollama_msgs = OllamaLLMClient::convert_messages(&messages);
-        assert_eq!(ollama_msgs[0].role, "user");
+        assert_eq!(ollama_msgs[0].role, ChatRole::User);
         assert_eq!(ollama_msgs[0].content, "Hello");
     }
 
@@ -353,7 +381,7 @@ mod tests {
         let request = OllamaChatRequest {
             model: "qwen2.5:7b".to_string(),
             messages: vec![OllamaMessage {
-                role: "user".to_string(),
+                role: ChatRole::User,
                 content: "test".to_string(),
             }],
             stream: false,

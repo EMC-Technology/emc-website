@@ -116,12 +116,12 @@ impl ExecutionFlowTracer {
             });
             step_order += 1;
 
-            if depth < max_depth {
-                if let Some(neighbors) = adjacency.get(node) {
-                    for &neighbor in neighbors {
-                        if visited.insert(neighbor) {
-                            queue.push_back((neighbor, depth + 1));
-                        }
+            if depth < max_depth
+                && let Some(neighbors) = adjacency.get(node)
+            {
+                for &neighbor in neighbors {
+                    if visited.insert(neighbor) {
+                        queue.push_back((neighbor, depth + 1));
                     }
                 }
             }
@@ -172,7 +172,7 @@ impl ParseStage for ProcessExecutionFlowsStage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use knowledge_core::model::RecordIdType;
+    use knowledge_core::model::{RecordIdType, SourceType};
 
     fn make_graph_with_entry_point() -> SymbolGraph {
         let mut graph = SymbolGraph::new();
@@ -302,5 +302,64 @@ mod tests {
         assert_eq!(steps[2].symbol_id, make_symbol_id("C"));
         assert_eq!(steps[2].step_order, 2);
         assert!((steps[2].confidence - 0.8).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_trace_execution_flow_depth_zero_returns_only_entry() {
+        let graph = make_branching_graph();
+        let steps = ExecutionFlowTracer::trace_execution_flow("A", &graph, 0);
+
+        assert_eq!(steps.len(), 1, "max_depth=0 应只返回入口点");
+        assert_eq!(steps[0].symbol_id, make_symbol_id("A"));
+        assert!((steps[0].confidence - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_trace_execution_flow_confidence_decay_minimum() {
+        let mut graph = SymbolGraph::new();
+        graph.add_edge("A", "B", 1.0);
+        graph.add_edge("B", "C", 1.0);
+        graph.add_edge("C", "D", 1.0);
+        graph.add_edge("D", "E", 1.0);
+        graph.add_edge("E", "F", 1.0);
+        graph.add_edge("F", "G", 1.0);
+        graph.add_edge("G", "H", 1.0);
+        graph.add_edge("H", "I", 1.0);
+
+        let steps = ExecutionFlowTracer::trace_execution_flow("A", &graph, 20);
+        for step in &steps {
+            assert!(
+                step.confidence >= 0.3 - f64::EPSILON,
+                "置信度不应低于 0.3: {}",
+                step.confidence
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_process_execution_flows_stage_passes_through() {
+        let stage = ProcessExecutionFlowsStage;
+        assert_eq!(stage.name(), "process_execution_flows");
+
+        let doc = Document::new("/test.rs", "Test", SourceType::Code, "a".repeat(64)).unwrap();
+        let result = stage.execute(vec![doc]).await;
+        assert!(result.is_ok());
+        let docs = result.unwrap();
+        assert_eq!(docs.len(), 1);
+    }
+
+    #[test]
+    fn test_detect_entry_points_empty_graph() {
+        let graph = SymbolGraph::new();
+        let entry_points = ExecutionFlowTracer::detect_entry_points(&graph);
+        assert!(entry_points.is_empty(), "空图不应有入口点");
+    }
+
+    #[test]
+    fn test_trace_execution_flow_nonexistent_entry() {
+        let graph = make_linear_chain_graph();
+        let steps = ExecutionFlowTracer::trace_execution_flow("Z", &graph, 10);
+        assert_eq!(steps.len(), 1, "不存在的入口点应只产生自身");
+        assert_eq!(steps[0].symbol_id, make_symbol_id("Z"));
     }
 }

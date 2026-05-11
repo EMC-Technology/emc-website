@@ -1,6 +1,6 @@
 use error_core::classification::{ErrorSource, ImpactScope, Recoverability, Severity};
-use error_core::helpers;
 use error_core::error_code::registry;
+use error_core::helpers;
 
 #[test]
 fn test_llm_api_error_code_matches_registry() {
@@ -628,66 +628,9 @@ fn test_observability_forbidden_code_matches_registry() {
     assert_eq!(err.operation(), "metrics_query");
 }
 
-#[test]
-fn test_extended_helpers_error_code_format_matches_pattern() {
-    let cases: Vec<(String, ErrorSource)> = vec![
-        (helpers::llm_api_error("m", "op").code().to_string(), ErrorSource::AIM),
-        (helpers::llm_judgment_error("m", "op").code().to_string(), ErrorSource::AIM),
-        (helpers::metric_calc_error("m").code().to_string(), ErrorSource::AIM),
-        (helpers::dataset_load_error("m").code().to_string(), ErrorSource::FS),
-        (helpers::eval_timeout_error("m").code().to_string(), ErrorSource::INT),
-        (helpers::io_error("m").code().to_string(), ErrorSource::FS),
-        (helpers::token_invalid_error("m").code().to_string(), ErrorSource::SEC),
-        (helpers::general_fallback_error("m").code().to_string(), ErrorSource::INT),
-        (helpers::frontend_ui_error("m").code().to_string(), ErrorSource::USR),
-        (helpers::gateway_error("m").code().to_string(), ErrorSource::NET),
-        (helpers::business_logic_error("m", "op").code().to_string(), ErrorSource::INT),
-        (helpers::infrastructure_error("m").code().to_string(), ErrorSource::SYS),
-        (helpers::extraction_error("m").code().to_string(), ErrorSource::AIM),
-        (helpers::disambiguation_error("m").code().to_string(), ErrorSource::AIM),
-        (helpers::embedding_config_error("m").code().to_string(), ErrorSource::AIM),
-        (helpers::embedding_model_not_loaded("m").code().to_string(), ErrorSource::AIM),
-        (helpers::embedding_model_load_failed("m").code().to_string(), ErrorSource::AIM),
-        (helpers::embedding_inference_failed("m").code().to_string(), ErrorSource::AIM),
-        (helpers::embedding_empty_input().code().to_string(), ErrorSource::AIM),
-        (helpers::embedding_tokenizer_error("m").code().to_string(), ErrorSource::AIM),
-        (helpers::embedding_io_error("m").code().to_string(), ErrorSource::AIM),
-        (helpers::agent_llm_error("m").code().to_string(), ErrorSource::AIM),
-        (helpers::agent_tool_error("t", "e").code().to_string(), ErrorSource::AIM),
-        (helpers::agent_tool_not_found("t").code().to_string(), ErrorSource::AIM),
-        (helpers::agent_max_iterations(5).code().to_string(), ErrorSource::AIM),
-        (helpers::agent_timeout().code().to_string(), ErrorSource::AIM),
-        (helpers::agent_clarification("m").code().to_string(), ErrorSource::AIM),
-        (helpers::agent_parse_action_error("m").code().to_string(), ErrorSource::AIM),
-        (helpers::agent_memory_error("m").code().to_string(), ErrorSource::AIM),
-        (helpers::agent_invalid_transition("a", "b").code().to_string(), ErrorSource::AIM),
-        (helpers::agent_workflow_error("m").code().to_string(), ErrorSource::AIM),
-        (helpers::agent_serialization_error("m").code().to_string(), ErrorSource::AIM),
-        (helpers::agent_permission_denied("m").code().to_string(), ErrorSource::SEC),
-        (helpers::agent_safety_check_failed("m").code().to_string(), ErrorSource::SEC),
-        (helpers::aggregate_invalid_state("m").code().to_string(), ErrorSource::INT),
-        (helpers::aggregate_business_rule("m").code().to_string(), ErrorSource::INT),
-        (helpers::aggregate_not_found("id").code().to_string(), ErrorSource::INT),
-        (helpers::aggregate_version_conflict(1, 2).code().to_string(), ErrorSource::INT),
-        (helpers::aggregate_serialization_error("m").code().to_string(), ErrorSource::INT),
-        (helpers::cache_l2_connection_error("m").code().to_string(), ErrorSource::FS),
-        (helpers::cache_l2_serialization_error("m").code().to_string(), ErrorSource::INT),
-        (helpers::cache_l2_deserialization_error("m").code().to_string(), ErrorSource::INT),
-        (helpers::cache_l2_operation_error("m").code().to_string(), ErrorSource::FS),
-        (helpers::cache_manager_l2_error("m").code().to_string(), ErrorSource::FS),
-        (helpers::cache_manager_serialization_error("m").code().to_string(), ErrorSource::INT),
-        (helpers::event_type_mismatch().code().to_string(), ErrorSource::INT),
-        (helpers::event_processing_failed("m").code().to_string(), ErrorSource::INT),
-        (helpers::event_no_subscribers("e").code().to_string(), ErrorSource::INT),
-        (helpers::event_bus_shutdown().code().to_string(), ErrorSource::INT),
-        (helpers::event_publish_timeout(100).code().to_string(), ErrorSource::INT),
-        (helpers::observability_forbidden("m", "c").code().to_string(), ErrorSource::SEC),
-    ];
+fn assert_error_code_format(cases: Vec<(String, ErrorSource)>) {
     for (code, expected_source) in cases {
-        assert!(
-            code.starts_with("ERR-"),
-            "错误码 '{code}' 不以 'ERR-' 开头",
-        );
+        assert!(code.starts_with("ERR-"), "错误码 '{code}' 不以 'ERR-' 开头",);
         assert!(
             code.contains(&format!("-{expected_source}-")),
             "错误码 '{code}' 不包含来源 '-{expected_source}-'",
@@ -697,4 +640,238 @@ fn test_extended_helpers_error_code_format_matches_pattern() {
             "错误码 '{code}' 格式不正确，缺少 '_' 分隔的严重性/影响域",
         );
     }
+}
+
+#[test]
+fn test_extended_helpers_error_code_format_aim_source() {
+    let cases: Vec<(String, ErrorSource)> = vec![
+        (
+            helpers::llm_api_error("m", "op").code().to_string(),
+            ErrorSource::AIM,
+        ),
+        (
+            helpers::llm_judgment_error("m", "op").code().to_string(),
+            ErrorSource::AIM,
+        ),
+        (
+            helpers::metric_calc_error("m").code().to_string(),
+            ErrorSource::AIM,
+        ),
+        (
+            helpers::extraction_error("m").code().to_string(),
+            ErrorSource::AIM,
+        ),
+        (
+            helpers::disambiguation_error("m").code().to_string(),
+            ErrorSource::AIM,
+        ),
+        (
+            helpers::embedding_config_error("m").code().to_string(),
+            ErrorSource::AIM,
+        ),
+        (
+            helpers::embedding_model_not_loaded("m").code().to_string(),
+            ErrorSource::AIM,
+        ),
+        (
+            helpers::embedding_model_load_failed("m").code().to_string(),
+            ErrorSource::AIM,
+        ),
+        (
+            helpers::embedding_inference_failed("m").code().to_string(),
+            ErrorSource::AIM,
+        ),
+        (
+            helpers::embedding_empty_input().code().to_string(),
+            ErrorSource::AIM,
+        ),
+        (
+            helpers::embedding_tokenizer_error("m").code().to_string(),
+            ErrorSource::AIM,
+        ),
+        (
+            helpers::embedding_io_error("m").code().to_string(),
+            ErrorSource::AIM,
+        ),
+        (
+            helpers::agent_llm_error("m").code().to_string(),
+            ErrorSource::AIM,
+        ),
+        (
+            helpers::agent_tool_error("t", "e").code().to_string(),
+            ErrorSource::AIM,
+        ),
+        (
+            helpers::agent_tool_not_found("t").code().to_string(),
+            ErrorSource::AIM,
+        ),
+        (
+            helpers::agent_max_iterations(5).code().to_string(),
+            ErrorSource::AIM,
+        ),
+        (
+            helpers::agent_timeout().code().to_string(),
+            ErrorSource::AIM,
+        ),
+        (
+            helpers::agent_clarification("m").code().to_string(),
+            ErrorSource::AIM,
+        ),
+        (
+            helpers::agent_parse_action_error("m").code().to_string(),
+            ErrorSource::AIM,
+        ),
+        (
+            helpers::agent_memory_error("m").code().to_string(),
+            ErrorSource::AIM,
+        ),
+        (
+            helpers::agent_invalid_transition("a", "b")
+                .code()
+                .to_string(),
+            ErrorSource::AIM,
+        ),
+        (
+            helpers::agent_workflow_error("m").code().to_string(),
+            ErrorSource::AIM,
+        ),
+        (
+            helpers::agent_serialization_error("m").code().to_string(),
+            ErrorSource::AIM,
+        ),
+    ];
+    assert_error_code_format(cases);
+}
+
+#[test]
+fn test_extended_helpers_error_code_format_other_sources() {
+    let cases: Vec<(String, ErrorSource)> = vec![
+        (
+            helpers::dataset_load_error("m").code().to_string(),
+            ErrorSource::FS,
+        ),
+        (
+            helpers::eval_timeout_error("m").code().to_string(),
+            ErrorSource::INT,
+        ),
+        (helpers::io_error("m").code().to_string(), ErrorSource::FS),
+        (
+            helpers::token_invalid_error("m").code().to_string(),
+            ErrorSource::SEC,
+        ),
+        (
+            helpers::general_fallback_error("m").code().to_string(),
+            ErrorSource::INT,
+        ),
+        (
+            helpers::frontend_ui_error("m").code().to_string(),
+            ErrorSource::USR,
+        ),
+        (
+            helpers::gateway_error("m").code().to_string(),
+            ErrorSource::NET,
+        ),
+        (
+            helpers::business_logic_error("m", "op").code().to_string(),
+            ErrorSource::INT,
+        ),
+        (
+            helpers::infrastructure_error("m").code().to_string(),
+            ErrorSource::SYS,
+        ),
+        (
+            helpers::agent_permission_denied("m").code().to_string(),
+            ErrorSource::SEC,
+        ),
+        (
+            helpers::agent_safety_check_failed("m").code().to_string(),
+            ErrorSource::SEC,
+        ),
+        (
+            helpers::observability_forbidden("m", "c")
+                .code()
+                .to_string(),
+            ErrorSource::SEC,
+        ),
+    ];
+    assert_error_code_format(cases);
+}
+
+#[test]
+fn test_extended_helpers_error_code_format_aggregate_cache_event() {
+    let cases: Vec<(String, ErrorSource)> = vec![
+        (
+            helpers::aggregate_invalid_state("m").code().to_string(),
+            ErrorSource::INT,
+        ),
+        (
+            helpers::aggregate_business_rule("m").code().to_string(),
+            ErrorSource::INT,
+        ),
+        (
+            helpers::aggregate_not_found("id").code().to_string(),
+            ErrorSource::INT,
+        ),
+        (
+            helpers::aggregate_version_conflict(1, 2).code().to_string(),
+            ErrorSource::INT,
+        ),
+        (
+            helpers::aggregate_serialization_error("m")
+                .code()
+                .to_string(),
+            ErrorSource::INT,
+        ),
+        (
+            helpers::cache_l2_connection_error("m").code().to_string(),
+            ErrorSource::FS,
+        ),
+        (
+            helpers::cache_l2_serialization_error("m")
+                .code()
+                .to_string(),
+            ErrorSource::INT,
+        ),
+        (
+            helpers::cache_l2_deserialization_error("m")
+                .code()
+                .to_string(),
+            ErrorSource::INT,
+        ),
+        (
+            helpers::cache_l2_operation_error("m").code().to_string(),
+            ErrorSource::FS,
+        ),
+        (
+            helpers::cache_manager_l2_error("m").code().to_string(),
+            ErrorSource::FS,
+        ),
+        (
+            helpers::cache_manager_serialization_error("m")
+                .code()
+                .to_string(),
+            ErrorSource::INT,
+        ),
+        (
+            helpers::event_type_mismatch().code().to_string(),
+            ErrorSource::INT,
+        ),
+        (
+            helpers::event_processing_failed("m").code().to_string(),
+            ErrorSource::INT,
+        ),
+        (
+            helpers::event_no_subscribers("e").code().to_string(),
+            ErrorSource::INT,
+        ),
+        (
+            helpers::event_bus_shutdown().code().to_string(),
+            ErrorSource::INT,
+        ),
+        (
+            helpers::event_publish_timeout(100).code().to_string(),
+            ErrorSource::INT,
+        ),
+    ];
+    assert_error_code_format(cases);
 }

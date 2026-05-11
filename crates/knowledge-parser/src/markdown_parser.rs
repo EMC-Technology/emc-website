@@ -3,17 +3,21 @@
 //! 遵循 CommonMark 标准规范，输出结构化的 AST 用于后续分块处理。
 //! 使用 comrak 库的默认配置进行 Markdown 解析。
 
-use comrak::{nodes::NodeValue, parse_document, Arena, ComrakOptions};
-use knowledge_core::model::{Block, BlockType, Document, Token, TokenType, RecordIdType};
 use crate::Result;
 use crate::file_ingester::IngestedFile;
+use comrak::{Arena, ComrakOptions, nodes::NodeValue, parse_document};
+use knowledge_core::model::{
+    Block, BlockStatus, BlockType, Document, RecordIdType, Token, TokenStatus, TokenType,
+};
 
 /// 判断是否为有序列表项（如 `1. `、`42. `）
 ///
 /// 匹配模式：ASCII 数字 + `.` + 空格
 /// 避免将 `42 is the answer` 等纯数字开头的行误判为列表
 fn is_ordered_list_item(trimmed: &str) -> bool {
-    let Some(dot_pos) = trimmed.find('.') else { return false };
+    let Some(dot_pos) = trimmed.find('.') else {
+        return false;
+    };
     if dot_pos == 0 || dot_pos + 1 >= trimmed.len() {
         return false;
     }
@@ -51,8 +55,13 @@ impl MarkdownParser {
     /// 文档创建失败时返回错误
     pub fn parse(&self, file: &IngestedFile) -> Result<(Document, Vec<Block>, Vec<Token>)> {
         let title = extract_markdown_title(&file.content);
-        let hash_prefix = if file.hash.len() >= 8 { &file.hash[..8] } else { &file.hash };
-        let doc_id: RecordIdType = surrealdb::sql::Thing::from(("doc".to_string(), hash_prefix.to_string()));
+        let hash_prefix = if file.hash.len() >= 8 {
+            &file.hash[..8]
+        } else {
+            &file.hash
+        };
+        let doc_id: RecordIdType =
+            surrealdb::sql::Thing::from(("doc".to_string(), hash_prefix.to_string()));
 
         let document = Document {
             id: None,
@@ -61,8 +70,6 @@ impl MarkdownParser {
             source_type: file.source_type.clone(),
             hash: file.hash.clone(),
         };
-
-        let _doc_id_for_blocks = &doc_id;
 
         let lines: Vec<&str> = file.content.lines().collect();
         #[allow(clippy::cast_possible_truncation)]
@@ -91,14 +98,18 @@ impl MarkdownParser {
                 BlockType::Code
             } else if trimmed.starts_with("    ") || trimmed.starts_with('\t') {
                 BlockType::Code
-            } else if trimmed.starts_with("- ") || trimmed.starts_with("* ") || is_ordered_list_item(trimmed) {
+            } else if trimmed.starts_with("- ")
+                || trimmed.starts_with("* ")
+                || is_ordered_list_item(trimmed)
+            {
                 BlockType::List
             } else {
                 BlockType::Paragraph
             };
 
             let end_line = current_line;
-            let _block_id: RecordIdType = surrealdb::sql::Thing::from(("block".to_string(), format!("{current_line}")));
+            let _block_id: RecordIdType =
+                surrealdb::sql::Thing::from(("block".to_string(), format!("{current_line}")));
 
             blocks.push(Block {
                 id: None,
@@ -106,23 +117,24 @@ impl MarkdownParser {
                 block_type,
                 start_line: current_line,
                 end_line,
-                embedding: None,
                 idempotency_key: None,
+                status: BlockStatus::Created,
             });
 
             current_line += 1;
         }
 
         if blocks.is_empty() && line_count > 0 {
-            let _block_id: RecordIdType = surrealdb::sql::Thing::from(("block".to_string(), "0".to_string()));
+            let _block_id: RecordIdType =
+                surrealdb::sql::Thing::from(("block".to_string(), "0".to_string()));
             blocks.push(Block {
                 id: None,
                 doc_id: doc_id.clone(),
                 block_type: BlockType::Paragraph,
                 start_line: 0,
                 end_line: line_count.saturating_sub(1),
-                embedding: None,
                 idempotency_key: None,
+                status: BlockStatus::Created,
             });
         }
 
@@ -150,7 +162,8 @@ fn tokenize_markdown(content: &str, blocks: &[Block]) -> Vec<Token> {
     let mut global_offset = 0u64;
 
     for block in blocks {
-        let block_id: RecordIdType = surrealdb::sql::Thing::from(("block".to_string(), format!("{}", block.start_line)));
+        let block_id: RecordIdType =
+            surrealdb::sql::Thing::from(("block".to_string(), format!("{}", block.start_line)));
         let lines: Vec<&str> = content.lines().collect();
         #[allow(clippy::cast_possible_truncation)]
         let start = block.start_line as usize;
@@ -176,6 +189,7 @@ fn tokenize_markdown(content: &str, blocks: &[Block]) -> Vec<Token> {
                     token_type,
                     start_char: char_pos,
                     global_offset: global_offset + u64::from(char_pos),
+                    status: TokenStatus::Created,
                 });
                 char_pos += u32::try_from(word.chars().count()).unwrap_or(u32::MAX) + 1;
             }
@@ -336,5 +350,280 @@ mod tests {
             parser.options().extension.strikethrough,
             "自定义配置应覆盖默认值"
         );
+    }
+
+    fn make_ingested(content: &str) -> IngestedFile {
+        IngestedFile {
+            path: std::path::PathBuf::from("test.md"),
+            content: content.to_string(),
+            hash: blake3::hash(content.as_bytes()).to_hex().to_string(),
+            file_size: content.len() as u64,
+            source_type: knowledge_core::model::SourceType::Markdown,
+        }
+    }
+
+    #[test]
+    fn test_markdown_parser_default() {
+        let _parser = MarkdownParser::default();
+    }
+
+    #[test]
+    fn test_markdown_parser_new() {
+        let parser = MarkdownParser::new();
+        let file = make_ingested("# Hello\n\nWorld");
+        let result = parser.parse(&file);
+        assert!(result.is_ok());
+        let (doc, blocks, tokens) = result.unwrap();
+        assert_eq!(doc.title, "Hello");
+        assert!(!blocks.is_empty());
+        assert!(!tokens.is_empty());
+    }
+
+    #[test]
+    fn test_parse_heading_block() {
+        let parser = MarkdownParser::new();
+        let file = make_ingested("# Title\n\nParagraph text");
+        let (doc, blocks, _tokens) = parser.parse(&file).unwrap();
+        assert_eq!(doc.title, "Title");
+        let heading_blocks: Vec<_> = blocks
+            .iter()
+            .filter(|b| b.block_type == BlockType::Heading)
+            .collect();
+        assert!(!heading_blocks.is_empty(), "应识别出 Heading 块");
+    }
+
+    #[test]
+    fn test_parse_code_block_triple_backtick() {
+        let parser = MarkdownParser::new();
+        let file = make_ingested("```rust\nfn main() {}\n```");
+        let (_, blocks, _tokens) = parser.parse(&file).unwrap();
+        let code_blocks: Vec<_> = blocks
+            .iter()
+            .filter(|b| b.block_type == BlockType::Code)
+            .collect();
+        assert!(!code_blocks.is_empty(), "应识别出 Code 块");
+    }
+
+    #[test]
+    fn test_parse_code_block_indented() {
+        let parser = MarkdownParser::new();
+        let file = make_ingested("    let x = 1;");
+        let (_, blocks, _tokens) = parser.parse(&file).unwrap();
+        assert!(!blocks.is_empty(), "缩进4空格应产生 Block");
+    }
+
+    #[test]
+    fn test_parse_code_block_tab_indented() {
+        let parser = MarkdownParser::new();
+        let file = make_ingested("\tlet x = 1;");
+        let (_, blocks, _tokens) = parser.parse(&file).unwrap();
+        assert!(!blocks.is_empty(), "Tab 缩进应产生 Block");
+    }
+
+    #[test]
+    fn test_parse_unordered_list_dash() {
+        let parser = MarkdownParser::new();
+        let file = make_ingested("- item one\n- item two");
+        let (_, blocks, _tokens) = parser.parse(&file).unwrap();
+        assert_eq!(
+            blocks[0].block_type,
+            BlockType::List,
+            "- 开头应识别为 List 块"
+        );
+    }
+
+    #[test]
+    fn test_parse_unordered_list_asterisk() {
+        let parser = MarkdownParser::new();
+        let file = make_ingested("* item one\n* item two");
+        let (_, blocks, _tokens) = parser.parse(&file).unwrap();
+        assert_eq!(
+            blocks[0].block_type,
+            BlockType::List,
+            "* 开头应识别为 List 块"
+        );
+    }
+
+    #[test]
+    fn test_parse_ordered_list() {
+        let parser = MarkdownParser::new();
+        let file = make_ingested("1. first item\n2. second item");
+        let (_, blocks, _tokens) = parser.parse(&file).unwrap();
+        assert_eq!(
+            blocks[0].block_type,
+            BlockType::List,
+            "数字列表应识别为 List 块"
+        );
+    }
+
+    #[test]
+    fn test_parse_paragraph_block() {
+        let parser = MarkdownParser::new();
+        let file = make_ingested("Just a plain paragraph.");
+        let (_, blocks, _tokens) = parser.parse(&file).unwrap();
+        assert_eq!(
+            blocks[0].block_type,
+            BlockType::Paragraph,
+            "普通文本应识别为 Paragraph 块"
+        );
+    }
+
+    #[test]
+    fn test_parse_empty_lines_skipped() {
+        let parser = MarkdownParser::new();
+        let file = make_ingested("\n\n\nHello\n\n\n");
+        let (_, blocks, _tokens) = parser.parse(&file).unwrap();
+        assert_eq!(blocks.len(), 1, "空行不应产生块");
+        assert_eq!(blocks[0].block_type, BlockType::Paragraph);
+    }
+
+    #[test]
+    fn test_parse_empty_content_fallback_block() {
+        let parser = MarkdownParser::new();
+        let file = make_ingested("");
+        let (_, blocks, _tokens) = parser.parse(&file).unwrap();
+        assert!(blocks.is_empty(), "空内容不应产生块");
+    }
+
+    #[test]
+    fn test_parse_only_whitespace_produces_fallback() {
+        let parser = MarkdownParser::new();
+        let file = make_ingested("   \n   \n   ");
+        let result = parser.parse(&file);
+        assert!(result.is_ok(), "仅空白的行应成功解析");
+    }
+
+    #[test]
+    fn test_parse_title_from_h1() {
+        let parser = MarkdownParser::new();
+        let file = make_ingested("# My Title\n\nSome content");
+        let (doc, _, _) = parser.parse(&file).unwrap();
+        assert_eq!(doc.title, "My Title");
+    }
+
+    #[test]
+    fn test_parse_title_from_h2_fallback() {
+        let parser = MarkdownParser::new();
+        let file = make_ingested("## Sub Title\n\nContent");
+        let (doc, _, _) = parser.parse(&file).unwrap();
+        assert_eq!(doc.title, "Sub Title");
+    }
+
+    #[test]
+    fn test_parse_no_title_untitled() {
+        let parser = MarkdownParser::new();
+        let file = make_ingested("Just some text without heading");
+        let (doc, _, _) = parser.parse(&file).unwrap();
+        assert_eq!(doc.title, "Untitled");
+    }
+
+    #[test]
+    fn test_parse_document_fields() {
+        let parser = MarkdownParser::new();
+        let file = make_ingested("# Test Doc");
+        let (doc, _, _) = parser.parse(&file).unwrap();
+        assert_eq!(doc.path, "test.md");
+        assert_eq!(doc.source_type, knowledge_core::model::SourceType::Markdown);
+        assert!(!doc.hash.is_empty());
+    }
+
+    #[test]
+    fn test_parse_tokens_generated() {
+        let parser = MarkdownParser::new();
+        let file = make_ingested("# Hello World\n\nSome text here");
+        let (_, _, tokens) = parser.parse(&file).unwrap();
+        assert!(!tokens.is_empty(), "应生成 Token");
+        let has_symbol = tokens.iter().any(|t| t.token_type == TokenType::Symbol);
+        assert!(has_symbol, "# 开头的词应标记为 Symbol");
+    }
+
+    #[test]
+    fn test_parse_code_block_closing() {
+        let parser = MarkdownParser::new();
+        let file = make_ingested("```rust\ncode line\n```\nAfter code");
+        let (_, blocks, _) = parser.parse(&file).unwrap();
+        let after_code: Vec<_> = blocks
+            .iter()
+            .filter(|b| b.block_type == BlockType::Paragraph)
+            .collect();
+        assert!(!after_code.is_empty(), "代码块关闭后应为 Paragraph");
+    }
+
+    #[test]
+    fn test_is_ordered_list_item_valid() {
+        assert!(is_ordered_list_item("1. hello"));
+        assert!(is_ordered_list_item("42. world"));
+    }
+
+    #[test]
+    fn test_is_ordered_list_item_no_dot() {
+        assert!(!is_ordered_list_item("no dot here"));
+    }
+
+    #[test]
+    fn test_is_ordered_list_item_dot_at_start() {
+        assert!(!is_ordered_list_item(". no digits"));
+    }
+
+    #[test]
+    fn test_is_ordered_list_item_dot_at_end() {
+        assert!(!is_ordered_list_item("123."));
+    }
+
+    #[test]
+    fn test_is_ordered_list_item_no_space_after_dot() {
+        assert!(!is_ordered_list_item("1.x"));
+    }
+
+    #[test]
+    fn test_is_ordered_list_item_non_digit() {
+        assert!(!is_ordered_list_item("abc. hello"));
+    }
+
+    #[test]
+    fn test_comrak_ast_parser_default() {
+        let _parser = ComrakAstParser::default();
+    }
+
+    #[test]
+    fn test_comrak_ast_parser_heading_with_text() {
+        let parser = ComrakAstParser::new();
+        let headings = parser.parse("# Heading\n\nSome text\n## Sub");
+        assert_eq!(headings.len(), 2);
+        assert_eq!(headings[0], "Heading");
+        assert_eq!(headings[1], "Sub");
+    }
+
+    #[test]
+    fn test_parse_short_hash() {
+        let parser = MarkdownParser::new();
+        let mut file = make_ingested("# Short");
+        file.hash = "abc".to_string();
+        let result = parser.parse(&file);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_multiline_code_block() {
+        let parser = MarkdownParser::new();
+        let file = make_ingested("```\nline1\nline2\nline3\n```");
+        let (_, blocks, _) = parser.parse(&file).unwrap();
+        let code_blocks: Vec<_> = blocks
+            .iter()
+            .filter(|b| b.block_type == BlockType::Code)
+            .collect();
+        assert!(code_blocks.len() >= 2, "多行代码块应产生多个 Code 块");
+    }
+
+    #[test]
+    fn test_parse_backtick_in_token() {
+        let parser = MarkdownParser::new();
+        let file = make_ingested("```rust\ncode\n```");
+        let (_, _, tokens) = parser.parse(&file).unwrap();
+        let backtick_tokens: Vec<_> = tokens
+            .iter()
+            .filter(|t| t.content.starts_with("```"))
+            .collect();
+        assert!(!backtick_tokens.is_empty(), "``` 应被识别为 Symbol token");
     }
 }

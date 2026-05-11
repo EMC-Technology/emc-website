@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use knowledge_core::model::SourceType;
 use std::pin::Pin;
 use tokio_stream::Stream;
 
@@ -84,7 +85,7 @@ impl KnowledgeSource for LocalFileSource {
                 documents.push(SourceDocument {
                     id,
                     title,
-                    source_type: "local-file".to_string(),
+                    source_type: SourceType::Plain,
                     content: Vec::new(),
                     metadata: serde_json::json!({
                         "size": metadata.len(),
@@ -129,7 +130,7 @@ impl KnowledgeSource for LocalFileSource {
         Ok(SourceDocument {
             id: doc_id.to_string(),
             title,
-            source_type: "local-file".to_string(),
+            source_type: SourceType::Plain,
             content,
             metadata: serde_json::json!({
                 "size": metadata.len(),

@@ -5,3 +5,7 @@ runner = "wasm-server-runner"
 
 [target.wasm32-unknown-unknown]
 rustflags = ["--cfg", "getrandom_backend=\"wasm_js\""]
+
+[profile.kani]
+debug = true
+overflow-checks = true

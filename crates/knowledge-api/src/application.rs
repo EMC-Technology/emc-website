@@ -1,7 +1,7 @@
 //! 应用程序启动与生命周期管理
 
-use knowledge_core::SurrealDbClient;
 use error_core::helpers;
+use knowledge_core::SurrealDbClient;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -11,11 +11,11 @@ use crate::auth::AuthService;
 use crate::auth::LoginRateLimiter;
 use crate::authz::engine::{AuthorizationEngine, DbPolicyStore, NoopAuditLogger};
 use crate::config::{Config, ConfigLoader};
-use crate::knowledge_vm::KnowledgeVm as KnowledgeVM;
-use crate::router::build_router;
 use crate::handler::AppState;
-use crate::ws::WsConnectionManager;
+use crate::knowledge_vm::KnowledgeVm as KnowledgeVM;
 use crate::observability;
+use crate::router::build_router;
+use crate::ws::WsConnectionManager;
 
 /// 应用程序入口
 ///
@@ -44,13 +44,14 @@ impl Application {
             &config.database.addr,
             &config.database.namespace,
             &config.database.database,
-        ).await?;
+        )
+        .await?;
 
         info!("数据库连接成功: {}", config.database.addr);
 
         let knowledge_vm = Arc::new(
             KnowledgeVM::with_embedding_dim(db_client, config.parser.embedding_dim)
-                .map_err(|e| error_core::helpers::infrastructure_error(&e.to_string()))?
+                .map_err(|e| error_core::helpers::infrastructure_error(&e.to_string()))?,
         );
         let ws_manager = Arc::new(WsConnectionManager::new());
 
@@ -77,17 +78,14 @@ impl Application {
             telemetry,
         } = self;
 
-        let auth_service = Arc::new(
-            AuthService::new(&config.security.jwt_secret, config.security.jwt_expiry_hours)?
-        );
+        let auth_service = Arc::new(AuthService::new(
+            &config.security.jwt_secret,
+            config.security.jwt_expiry_hours,
+        )?);
 
         let policy_store = Arc::new(DbPolicyStore::new());
         let audit_logger = Arc::new(NoopAuditLogger);
-        let authz_engine = Arc::new(AuthorizationEngine::new(
-            policy_store,
-            None,
-            audit_logger,
-        ));
+        let authz_engine = Arc::new(AuthorizationEngine::new(policy_store, None, audit_logger));
 
         let app_state = AppState {
             vm: knowledge_vm,
@@ -128,20 +126,18 @@ impl Application {
     async fn shutdown_signal(shutdown_tx: broadcast::Sender<()>) {
         #[cfg(unix)]
         {
-            let mut terminate = tokio::signal::unix::signal(
-                tokio::signal::unix::SignalKind::terminate(),
-            )
-            .map_err(|e| tracing::error!("无法注册 SIGTERM 信号: {}", e))
-            .ok();
-            let mut interrupt = tokio::signal::unix::signal(
-                tokio::signal::unix::SignalKind::interrupt(),
-            )
-            .map_err(|e| tracing::error!("无法注册 SIGINT 信号: {}", e))
-            .ok();
+            let mut terminate =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .map_err(|e| tracing::error!("无法注册 SIGTERM 信号: {}", e))
+                    .ok();
+            let mut interrupt =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+                    .map_err(|e| tracing::error!("无法注册 SIGINT 信号: {}", e))
+                    .ok();
 
             tokio::select! {
-                _ = async { if let Some(ref mut sig) = terminate { sig.recv().await; } } => info!("收到 SIGTERM 信号，准备关闭"),
-                _ = async { if let Some(ref mut sig) = interrupt { sig.recv().await; } } => info!("收到 SIGINT 信号，准备关闭"),
+                () = async { if let Some(ref mut sig) = terminate { sig.recv().await; } } => info!("收到 SIGTERM 信号，准备关闭"),
+                () = async { if let Some(ref mut sig) = interrupt { sig.recv().await; } } => info!("收到 SIGINT 信号，准备关闭"),
             }
         }
 

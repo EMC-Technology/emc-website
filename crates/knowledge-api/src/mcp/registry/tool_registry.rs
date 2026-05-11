@@ -159,7 +159,7 @@ struct RegisteredTool {
 }
 
 /// 工具状态，表示工具在注册中心中的生命周期阶段
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub enum ToolStatus {
     /// 活跃状态，工具可正常调用
     #[default]
@@ -208,7 +208,7 @@ pub struct ToolStats {
     /// 注册时间
     pub registered_at: DateTime<Utc>,
     /// 当前状态
-    pub status: String,
+    pub status: ToolStatus,
 }
 
 /// 调用上下文
@@ -434,37 +434,50 @@ impl ToolRegistry {
         arguments: serde_json::Value,
         context: CallContext,
     ) -> Result<ToolCallResult, ErrorObject> {
-        let tool_entry = self
-            .tools
-            .get(name)
-            .ok_or_else(|| helpers::not_found("工具", name))?;
+        let (input_schema, is_deprecated) = {
+            let tool_entry = self
+                .tools
+                .get(name)
+                .ok_or_else(|| helpers::not_found("工具", name))?;
 
-        match &tool_entry.status {
-            ToolStatus::Disabled => {
-                return Err(helpers::auth_error(
-                    &format!("工具 '{name}' 已被禁用"),
-                    "call_tool",
-                ));
+            match &tool_entry.status {
+                ToolStatus::Disabled => {
+                    return Err(helpers::auth_error(
+                        &format!("工具 '{name}' 已被禁用"),
+                        "call_tool",
+                    ));
+                }
+                ToolStatus::Deprecated => {
+                    tracing::warn!("调用已弃用的工具: {name}");
+                }
+                ToolStatus::Active => {}
             }
-            ToolStatus::Deprecated => {
-                tracing::warn!("调用已弃用的工具: {name}");
-            }
-            ToolStatus::Active => {}
-        }
 
-        let definition = &tool_entry.definition;
+            (
+                tool_entry.definition.input_schema.clone(),
+                matches!(tool_entry.status, ToolStatus::Deprecated),
+            )
+        };
 
-        let handler = self
-            .handlers
-            .get(name)
-            .ok_or_else(|| helpers::not_found("ToolHandler", &format!("工具 '{name}' 缺少处理器")))?;
+        let handler = {
+            self.handlers
+                .get(name)
+                .ok_or_else(|| {
+                    helpers::not_found("ToolHandler", &format!("工具 '{name}' 缺少处理器"))
+                })?
+                .clone()
+        };
 
-        handler.validate_args(&definition.input_schema, &arguments)?;
+        handler.validate_args(&input_schema, &arguments)?;
 
         let start = std::time::Instant::now();
         let result = handler.handle(arguments, context).await;
         #[allow(clippy::cast_possible_truncation)]
         let _duration_ms = start.elapsed().as_millis() as u64;
+
+        if is_deprecated {
+            tracing::warn!("已弃用工具 '{name}' 调用完成");
+        }
 
         {
             if let Some(mut tool_mut) = self.tools.get_mut(name) {
@@ -513,10 +526,10 @@ impl ToolRegistry {
                     return false;
                 }
 
-                if let Some(ref cat) = filter.category {
-                    if entry.definition.metadata.category != *cat {
-                        return false;
-                    }
+                if let Some(ref cat) = filter.category
+                    && entry.definition.metadata.category != *cat
+                {
+                    return false;
                 }
 
                 if filter.streaming_only && !entry.definition.capabilities.streaming {
@@ -567,14 +580,14 @@ impl ToolRegistry {
             call_count: entry.call_count,
             last_called_at: entry.last_called_at,
             registered_at: entry.registered_at,
-            status: format!("{:?}", entry.status),
+            status: entry.status,
         })
     }
 
     /// 获取注册中心整体指标
     #[must_use]
-    pub fn get_registry_metrics(&self) -> RegistryMetrics {
-        self.metrics.blocking_read().clone()
+    pub async fn get_registry_metrics(&self) -> RegistryMetrics {
+        self.metrics.read().await.clone()
     }
 
     /// 获取已注册工具数量
@@ -594,8 +607,14 @@ impl ToolRegistry {
             .get_mut(name)
             .ok_or_else(|| helpers::not_found("工具", name))?;
 
-        tool.status = status.clone();
-        tracing::info!("工具状态更新: {} -> {:?}", name, status);
+        let old_status = tool.status;
+        tool.status = *status;
+        tracing::info!(
+            tool = %name,
+            old_status = ?old_status,
+            new_status = ?status,
+            "工具状态变更（Axiom-4: 状态变更已记录）"
+        );
 
         Ok(())
     }
@@ -775,7 +794,7 @@ mod tests {
         assert_eq!(stats_after.call_count, 1);
         assert!(stats_after.last_called_at.is_some());
 
-        let metrics = registry.get_registry_metrics();
+        let metrics = registry.get_registry_metrics().await;
         assert_eq!(metrics.total_calls, 1);
         assert_eq!(metrics.total_registrations, 1);
     }

@@ -1,8 +1,8 @@
 //! Serde JSON error conversions
 
-use crate::error_object::ErrorObject;
-use crate::classification::{ErrorSource, Severity, ImpactScope, Recoverability};
+use crate::classification::{ErrorSource, ImpactScope, Recoverability, Severity};
 use crate::error_code::registry;
+use crate::error_object::ErrorObject;
 
 impl From<serde_json::Error> for ErrorObject {
     fn from(e: serde_json::Error) -> Self {

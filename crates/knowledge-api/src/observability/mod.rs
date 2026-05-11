@@ -1,6 +1,7 @@
 pub mod metrics;
 
 use opentelemetry::KeyValue;
+use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_sdk::{
     Resource,
     trace::{Config, Sampler, TracerProvider},
@@ -44,13 +45,17 @@ pub fn init_telemetry(service_name: &str) -> crate::Result<TelemetryHandle> {
     let resource = build_resource(&resolved_service_name);
     let tracer_provider = build_tracer_provider(&resource);
 
+    let tracer = tracer_provider.tracer(resolved_service_name.clone());
+
     let env_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,tokio=warn"));
     let log_layer = fmt::layer();
+    let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
 
     tracing_subscriber::registry()
         .with(env_filter)
         .with(log_layer)
+        .with(otel_layer)
         .init();
 
     metrics::init_business_metrics();

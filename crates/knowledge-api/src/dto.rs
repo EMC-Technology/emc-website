@@ -75,11 +75,23 @@ pub struct BlockWithTokens {
     pub tokens: Vec<knowledge_core::model::Token>,
 }
 
+/// 健康检查服务状态
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HealthState {
+    /// 服务正常
+    Healthy,
+    /// 服务不健康
+    Unhealthy,
+    /// 服务降级运行
+    Degraded,
+}
+
 /// 健康检查响应
 #[derive(Debug, Serialize)]
 pub struct HealthStatus {
-    /// 服务状态标识（"healthy" / "unhealthy" / "degraded"）
-    pub status: String,
+    /// 服务状态标识
+    pub status: HealthState,
     /// API 版本号
     pub version: String,
     /// 响应生成时间戳 (RFC3339 格式)
@@ -91,7 +103,7 @@ impl HealthStatus {
     #[must_use]
     pub fn healthy() -> Self {
         Self {
-            status: "healthy".to_string(),
+            status: HealthState::Healthy,
             version: env!("CARGO_PKG_VERSION").to_string(),
             timestamp: chrono::Utc::now().to_rfc3339(),
         }
@@ -177,7 +189,10 @@ impl FullTextSearchQuery {
     /// 搜索关键词为空时返回验证错误。
     pub fn validate(&self) -> crate::Result<()> {
         if self.q.trim().is_empty() {
-            return Err(error_core::helpers::validation_error("搜索关键词不能为空", "validate"));
+            return Err(error_core::helpers::validation_error(
+                "搜索关键词不能为空",
+                "validate",
+            ));
         }
         Ok(())
     }
@@ -278,18 +293,24 @@ mod tests {
     #[test]
     fn test_health_status_healthy() {
         let health = HealthStatus::healthy();
-        assert_eq!(health.status, "healthy");
+        assert_eq!(health.status, HealthState::Healthy);
         assert!(!health.version.is_empty());
         assert!(!health.timestamp.is_empty());
     }
 
     #[test]
     fn test_list_query_params_defaults() {
-        let params = ListQueryParams { offset: None, limit: None };
+        let params = ListQueryParams {
+            offset: None,
+            limit: None,
+        };
         assert_eq!(params.offset(), 0);
         assert_eq!(params.limit(), 20);
 
-        let params_limited = ListQueryParams { offset: Some(10), limit: Some(200) };
+        let params_limited = ListQueryParams {
+            offset: Some(10),
+            limit: Some(200),
+        };
         assert_eq!(params_limited.offset(), 10);
         assert_eq!(params_limited.limit(), 100); // 限制最大值
     }
@@ -333,5 +354,115 @@ mod tests {
             assert_eq!(sym_ref.to_id, de_ref.to_id);
             assert_eq!(sym_ref.ref_type, de_ref.ref_type);
         }
+    }
+
+    #[test]
+    fn test_vector_search_query_k_default() {
+        let query = VectorSearchQuery { k: None };
+        assert_eq!(query.k(), 10);
+    }
+
+    #[test]
+    fn test_vector_search_query_k_custom() {
+        let query = VectorSearchQuery { k: Some(50) };
+        assert_eq!(query.k(), 50);
+    }
+
+    #[test]
+    fn test_vector_search_query_k_max_cap() {
+        let query = VectorSearchQuery { k: Some(200) };
+        assert_eq!(query.k(), 100);
+    }
+
+    #[test]
+    fn test_full_text_search_query_validate_success() {
+        let query = FullTextSearchQuery {
+            q: "test query".to_string(),
+            limit: None,
+        };
+        assert!(query.validate().is_ok());
+    }
+
+    #[test]
+    fn test_full_text_search_query_validate_empty() {
+        let query = FullTextSearchQuery {
+            q: "   ".to_string(),
+            limit: None,
+        };
+        assert!(query.validate().is_err());
+    }
+
+    #[test]
+    fn test_full_text_search_query_limit_default() {
+        let query = FullTextSearchQuery {
+            q: "test".to_string(),
+            limit: None,
+        };
+        assert_eq!(query.limit(), 20);
+    }
+
+    #[test]
+    fn test_full_text_search_query_limit_capped() {
+        let query = FullTextSearchQuery {
+            q: "test".to_string(),
+            limit: Some(200),
+        };
+        assert_eq!(query.limit(), 100);
+    }
+
+    #[test]
+    fn test_api_response_with_pagination() {
+        let meta = PaginationMeta::new(100, 0, 20);
+        let response = ApiResponse::success_with_pagination(vec![1, 2], meta);
+        assert!(response.success);
+        assert!(response.pagination.is_some());
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("pagination"));
+    }
+
+    #[test]
+    fn test_health_state_serialization() {
+        let states = [
+            HealthState::Healthy,
+            HealthState::Unhealthy,
+            HealthState::Degraded,
+        ];
+        let json = serde_json::to_string(&states).unwrap();
+        assert!(json.contains("healthy"));
+        assert!(json.contains("unhealthy"));
+        assert!(json.contains("degraded"));
+    }
+
+    #[test]
+    fn test_symbol_context_serialization() {
+        let ctx = SymbolContext {
+            symbol_id: "sym1".to_string(),
+            callers: vec![],
+            callees: vec![],
+            community: Some(CommunityInfo {
+                name: "core".to_string(),
+                cohesion_score: 0.9,
+            }),
+            processes: vec!["main".to_string()],
+            references: vec![],
+        };
+        let json = serde_json::to_string(&ctx).unwrap();
+        let de: SymbolContext = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.symbol_id, "sym1");
+        assert!(de.community.is_some());
+    }
+
+    #[test]
+    fn test_pagination_meta_no_more() {
+        let meta = PaginationMeta::new(20, 0, 20);
+        assert!(!meta.has_more);
+    }
+
+    #[test]
+    fn test_upload_document_request_deserialization() {
+        let json = r#"{"path": "/test.md", "title": "Test", "content": "hello"}"#;
+        let req: UploadDocumentRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.path, "/test.md");
+        assert_eq!(req.title, Some("Test".to_string()));
     }
 }

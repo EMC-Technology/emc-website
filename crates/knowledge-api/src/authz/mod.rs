@@ -20,10 +20,10 @@
 //! - 缓存命中率 > 95%
 //! - 吞吐量 > 10K QPS
 
-pub mod policy;
 pub mod engine;
 pub mod middleware;
+pub mod policy;
 
-pub use policy::*;
 pub use engine::AuthorizationEngine;
-pub use middleware::{authorization_middleware, AuthorizationExtractor};
+pub use middleware::{AuthorizationExtractor, authorization_middleware};
+pub use policy::*;

@@ -11,9 +11,9 @@
 //! | 纯文本 | .txt, .log, .csv | `SourceType::Plain` |
 //! | 不支持 | 其他所有扩展名 | 返回 `UnsupportedFormat` (E3002) |
 
-use knowledge_core::model::SourceType;
 use crate::Result;
 use error_core::helpers;
+use knowledge_core::model::SourceType;
 use std::path::Path;
 
 /// 源类型检测器（扩展名 → `SourceType` 枚举映射）
@@ -64,16 +64,17 @@ impl SourceTypeDetector {
             "md" | "mdx" | "markdown" => Ok(SourceType::Markdown),
 
             // 代码族（按语言分类，与 CodePipeline EXTENSION_LANG_MAP 保持一致）
-            "rs" | "py" | "pyw" | "js" | "mjs" | "cjs" | "ts" | "tsx" | "jsx"
-            | "go" | "c" | "h" | "cpp" | "hpp" | "hxx" | "cc" | "cxx"
-            | "java" | "rb" | "rbw" | "kt" | "kts" | "swift" | "zig"
-            | "toml" | "yaml" | "yml" | "json" => Ok(SourceType::Code),
+            "rs" | "py" | "pyw" | "js" | "mjs" | "cjs" | "ts" | "tsx" | "jsx" | "go" | "c"
+            | "h" | "cpp" | "hpp" | "hxx" | "cc" | "cxx" | "java" | "rb" | "rbw" | "kt" | "kts"
+            | "swift" | "zig" | "toml" | "yaml" | "yml" | "json" => Ok(SourceType::Code),
 
             // 纯文本
             "txt" | "log" | "csv" => Ok(SourceType::Plain),
 
             // 不支持的格式
-            _ => Err(helpers::unsupported_format(&format!("不支持的文件格式: .{ext} (支持: md/rs/py/txt等)"))),
+            _ => Err(helpers::unsupported_format(&format!(
+                "不支持的文件格式: .{ext} (支持: md/rs/py/txt等)"
+            ))),
         }
     }
 
@@ -98,8 +99,8 @@ impl SourceTypeDetector {
 
 #[cfg(test)]
 mod tests {
-    use error_core::prelude::ErrorSource;
     use super::*;
+    use error_core::prelude::ErrorSource;
     use std::path::Path;
 
     // -------------------------------------------------------------------------
@@ -117,13 +118,9 @@ mod tests {
 
         for (filename, expected) in cases {
             let path = Path::new(filename);
-            let result = SourceTypeDetector::detect(path).unwrap_or_else(|e| {
-                panic!("检测 {filename} 失败: {e}")
-            });
-            assert_eq!(
-                result, expected,
-                "{filename} 应被识别为 {expected:?}"
-            );
+            let result = SourceTypeDetector::detect(path)
+                .unwrap_or_else(|e| panic!("检测 {filename} 失败: {e}"));
+            assert_eq!(result, expected, "{filename} 应被识别为 {expected:?}");
         }
     }
 
@@ -154,13 +151,9 @@ mod tests {
 
         for (filename, expected) in code_extensions {
             let path = Path::new(filename);
-            let result = SourceTypeDetector::detect(path).unwrap_or_else(|e| {
-                panic!("检测 {filename} 失败: {e}")
-            });
-            assert_eq!(
-                result, expected,
-                "{filename} 应被识别为 Code"
-            );
+            let result = SourceTypeDetector::detect(path)
+                .unwrap_or_else(|e| panic!("检测 {filename} 失败: {e}"));
+            assert_eq!(result, expected, "{filename} 应被识别为 Code");
         }
     }
 
@@ -178,13 +171,9 @@ mod tests {
 
         for (filename, expected) in plain_cases {
             let path = Path::new(filename);
-            let result = SourceTypeDetector::detect(path).unwrap_or_else(|e| {
-                panic!("检测 {filename} 失败: {e}")
-            });
-            assert_eq!(
-                result, expected,
-                "{filename} 应被识别为 Plain"
-            );
+            let result = SourceTypeDetector::detect(path)
+                .unwrap_or_else(|e| panic!("检测 {filename} 失败: {e}"));
+            assert_eq!(result, expected, "{filename} 应被识别为 Plain");
         }
     }
 
@@ -209,11 +198,7 @@ mod tests {
                         "{filename} 的错误消息应包含'不支持的文件格式': {}",
                         err.message()
                     );
-                    let ext = Path::new(filename)
-                        .extension()
-                        .unwrap()
-                        .to_str()
-                        .unwrap();
+                    let ext = Path::new(filename).extension().unwrap().to_str().unwrap();
                     assert!(
                         err.message().contains(ext),
                         "{filename} 的错误消息应包含扩展名 {ext}"
@@ -236,7 +221,11 @@ mod tests {
         assert!(result.is_err());
         match result.unwrap_err() {
             err if err.code().contains("PARSE") && err.source() == ErrorSource::USR => {
-                assert!(err.message().contains("无扩展名"), "错误消息应包含'无扩展名': {}", err.message());
+                assert!(
+                    err.message().contains("无扩展名"),
+                    "错误消息应包含'无扩展名': {}",
+                    err.message()
+                );
             }
             other => panic!("期望 UnsupportedFormat('无扩展名'), 实际: {other}"),
         }
@@ -270,6 +259,81 @@ mod tests {
     #[test]
     fn test_detect_error_code_is_e3002() {
         let err = SourceTypeDetector::detect(Path::new("file.pdf")).unwrap_err();
-        assert!(err.code().contains("PARSE"), "错误码应包含 PARSE: {}", err.code());
+        assert!(
+            err.code().contains("PARSE"),
+            "错误码应包含 PARSE: {}",
+            err.code()
+        );
+    }
+
+    #[test]
+    fn test_detect_pyw_extension() {
+        let result = SourceTypeDetector::detect(Path::new("script.pyw"));
+        assert_eq!(result.unwrap(), SourceType::Code, ".pyw 应被识别为 Code");
+    }
+
+    #[test]
+    fn test_detect_mjs_extension() {
+        let result = SourceTypeDetector::detect(Path::new("app.mjs"));
+        assert_eq!(result.unwrap(), SourceType::Code, ".mjs 应被识别为 Code");
+    }
+
+    #[test]
+    fn test_detect_cjs_extension() {
+        let result = SourceTypeDetector::detect(Path::new("app.cjs"));
+        assert_eq!(result.unwrap(), SourceType::Code, ".cjs 应被识别为 Code");
+    }
+
+    #[test]
+    fn test_detect_tsx_extension() {
+        let result = SourceTypeDetector::detect(Path::new("component.tsx"));
+        assert_eq!(result.unwrap(), SourceType::Code, ".tsx 应被识别为 Code");
+    }
+
+    #[test]
+    fn test_detect_jsx_extension() {
+        let result = SourceTypeDetector::detect(Path::new("component.jsx"));
+        assert_eq!(result.unwrap(), SourceType::Code, ".jsx 应被识别为 Code");
+    }
+
+    #[test]
+    fn test_detect_kts_extension() {
+        let result = SourceTypeDetector::detect(Path::new("build.kts"));
+        assert_eq!(result.unwrap(), SourceType::Code, ".kts 应被识别为 Code");
+    }
+
+    #[test]
+    fn test_detect_h_extension() {
+        let result = SourceTypeDetector::detect(Path::new("header.h"));
+        assert_eq!(result.unwrap(), SourceType::Code, ".h 应被识别为 Code");
+    }
+
+    #[test]
+    fn test_detect_hpp_extension() {
+        let result = SourceTypeDetector::detect(Path::new("header.hpp"));
+        assert_eq!(result.unwrap(), SourceType::Code, ".hpp 应被识别为 Code");
+    }
+
+    #[test]
+    fn test_detect_cc_extension() {
+        let result = SourceTypeDetector::detect(Path::new("source.cc"));
+        assert_eq!(result.unwrap(), SourceType::Code, ".cc 应被识别为 Code");
+    }
+
+    #[test]
+    fn test_detect_hidden_file_with_extension() {
+        let result = SourceTypeDetector::detect(Path::new(".env.toml"));
+        assert_eq!(
+            result.unwrap(),
+            SourceType::Code,
+            ".env.toml 应被识别为 Code"
+        );
+    }
+
+    #[test]
+    fn test_is_supported_with_full_path() {
+        assert!(SourceTypeDetector::is_supported(Path::new(
+            "/some/deep/path/to/file.rs"
+        )));
     }
 }

@@ -3,9 +3,10 @@
 //! 包含两类验证：
 //! - 硬编码输入验证：确保特定输入路径的正确性
 //! - 符号执行验证（kani::any()）：穷举所有可能的输入状态空间
+#![cfg(kani)]
 
-use error_core::error_code::*;
 use error_core::classification::*;
+use error_core::error_code::*;
 
 // Test ErrorCode::new with valid inputs
 #[kani::proof]
@@ -62,13 +63,49 @@ fn test_error_code_new_valid() {
 #[kani::proof]
 fn test_error_code_parse_valid() {
     let valid_codes = vec![
-        ("ERR-USR-MOD-001_CRI_G", ErrorSource::USR, "MOD", 1, Severity::CRITICAL, ImpactScope::GLOBAL),
-        ("ERR-AIM-LM-002_ERR_S", ErrorSource::AIM, "LM", 2, Severity::ERROR, ImpactScope::SESSION),
-        ("ERR-FS-IO-003_WRN_O", ErrorSource::FS, "IO", 3, Severity::WARNING, ImpactScope::OPERATION),
-        ("ERR-NET-API-004_INF_M", ErrorSource::NET, "API", 4, Severity::INFO, ImpactScope::MODULE),
+        (
+            "ERR-USR-MOD-001_CRI_G",
+            ErrorSource::USR,
+            "MOD",
+            1,
+            Severity::CRITICAL,
+            ImpactScope::GLOBAL,
+        ),
+        (
+            "ERR-AIM-LM-002_ERR_S",
+            ErrorSource::AIM,
+            "LM",
+            2,
+            Severity::ERROR,
+            ImpactScope::SESSION,
+        ),
+        (
+            "ERR-FS-IO-003_WRN_O",
+            ErrorSource::FS,
+            "IO",
+            3,
+            Severity::WARNING,
+            ImpactScope::OPERATION,
+        ),
+        (
+            "ERR-NET-API-004_INF_M",
+            ErrorSource::NET,
+            "API",
+            4,
+            Severity::INFO,
+            ImpactScope::MODULE,
+        ),
     ];
 
-    for (code_str, expected_source, expected_module, expected_sequence, expected_severity, expected_impact) in valid_codes {
+    for (
+        code_str,
+        expected_source,
+        expected_module,
+        expected_sequence,
+        expected_severity,
+        expected_impact,
+    ) in valid_codes
+    {
         let result = ErrorCode::parse(code_str);
         assert!(result.is_ok());
         let error_code = result.unwrap();
@@ -85,17 +122,17 @@ fn test_error_code_parse_valid() {
 #[kani::proof]
 fn test_error_code_parse_invalid() {
     let invalid_codes = vec![
-        "INVALID", // Completely invalid format
-        "ERR-AIM-LM-00_ERR_S", // Invalid sequence (only 2 digits)
-        "ERR-AIM-LM-002_INVALID", // Invalid severity
-        "ERR-AIM-LM-002_ERR_X", // Invalid impact scope
-        "ERR-XXX-LM-002_ERR_S", // Invalid error source
-        "ERR-AIM-LM-ABC_ERR_S", // Non-numeric sequence
-        "ERR-AIM-LM-002_ERR", // Missing impact scope
-        "ERR-AIM-LM_ERR_S", // Missing sequence
-        "ERR-AIM-002_ERR_S", // Missing module
-        "ERR-002_ERR_S", // Missing source
-        "ERR-AIM-LM-002_", // Missing severity and impact scope
+        "INVALID",                      // Completely invalid format
+        "ERR-AIM-LM-00_ERR_S",          // Invalid sequence (only 2 digits)
+        "ERR-AIM-LM-002_INVALID",       // Invalid severity
+        "ERR-AIM-LM-002_ERR_X",         // Invalid impact scope
+        "ERR-XXX-LM-002_ERR_S",         // Invalid error source
+        "ERR-AIM-LM-ABC_ERR_S",         // Non-numeric sequence
+        "ERR-AIM-LM-002_ERR",           // Missing impact scope
+        "ERR-AIM-LM_ERR_S",             // Missing sequence
+        "ERR-AIM-002_ERR_S",            // Missing module
+        "ERR-002_ERR_S",                // Missing source
+        "ERR-AIM-LM-002_",              // Missing severity and impact scope
         "ERR-AIM-LONGMODULE-002_ERR_S", // Module name too long
     ];
 
@@ -198,7 +235,13 @@ fn test_error_code_invalid_module_lengths() {
 #[kani::proof]
 fn kani_proof_sequence_boundary_any() {
     let sequence: u32 = kani::any();
-    let result = ErrorCode::new(ErrorSource::AIM, "LM", sequence, Severity::ERROR, ImpactScope::SESSION);
+    let result = ErrorCode::new(
+        ErrorSource::AIM,
+        "LM",
+        sequence,
+        Severity::ERROR,
+        ImpactScope::SESSION,
+    );
     if sequence <= 999 {
         assert!(result.is_ok());
         let ec = result.unwrap();
@@ -214,7 +257,13 @@ fn kani_proof_sequence_boundary_any() {
 fn kani_proof_new_parse_roundtrip() {
     let sequence: u32 = kani::any();
     kani::assume(sequence <= 999);
-    let result = ErrorCode::new(ErrorSource::FS, "IO", sequence, Severity::WARNING, ImpactScope::OPERATION);
+    let result = ErrorCode::new(
+        ErrorSource::FS,
+        "IO",
+        sequence,
+        Severity::WARNING,
+        ImpactScope::OPERATION,
+    );
     assert!(result.is_ok());
     let ec = result.unwrap();
     let parsed = ErrorCode::parse(ec.code());
@@ -227,7 +276,13 @@ fn kani_proof_new_parse_roundtrip() {
 fn kani_proof_code_format_prefix() {
     let sequence: u32 = kani::any();
     kani::assume(sequence <= 999);
-    let result = ErrorCode::new(ErrorSource::NET, "API", sequence, Severity::INFO, ImpactScope::MODULE);
+    let result = ErrorCode::new(
+        ErrorSource::NET,
+        "API",
+        sequence,
+        Severity::INFO,
+        ImpactScope::MODULE,
+    );
     assert!(result.is_ok());
     assert!(result.unwrap().code().starts_with("ERR-"));
 }

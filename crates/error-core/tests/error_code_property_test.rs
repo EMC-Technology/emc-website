@@ -8,8 +8,8 @@
 
 #![allow(clippy::uninlined_format_args)]
 
+use error_core::classification::{ErrorSource, ImpactScope, Severity};
 use error_core::error_code::ErrorCode;
-use error_core::classification::{ErrorSource, Severity, ImpactScope};
 use proptest::prelude::*;
 
 prop_compose! {

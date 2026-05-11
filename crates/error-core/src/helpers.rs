@@ -3,7 +3,7 @@
 //! All business crates MUST use these helpers to construct errors.
 //! Direct use of `ErrorObject::builder()` is reserved for `From` trait implementations only.
 
-use crate::classification::{ErrorSource, Severity, ImpactScope, Recoverability};
+use crate::classification::{ErrorSource, ImpactScope, Recoverability, Severity};
 use crate::error_code::registry;
 use crate::error_object::ErrorObject;
 
@@ -1160,7 +1160,7 @@ pub fn observability_forbidden(message: &str, code: &str) -> ErrorObject {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::classification::{ErrorSource, Severity, ImpactScope, Recoverability};
+    use crate::classification::{ErrorSource, ImpactScope, Recoverability, Severity};
 
     #[test]
     fn test_validation_error_valid_input_returns_usr_source() {
@@ -1596,7 +1596,10 @@ mod tests {
     #[test]
     fn test_all_helpers_error_code_format_matches_pattern() {
         let cases: Vec<(String, ErrorSource)> = vec![
-            (validation_error("m", "op").code().to_string(), ErrorSource::USR),
+            (
+                validation_error("m", "op").code().to_string(),
+                ErrorSource::USR,
+            ),
             (invalid_record_id("m").code().to_string(), ErrorSource::USR),
             (not_found("r", "id").code().to_string(), ErrorSource::USR),
             (db_error("m").code().to_string(), ErrorSource::FS),
@@ -1609,19 +1612,34 @@ mod tests {
             (crypto_error("m").code().to_string(), ErrorSource::SEC),
             (serde_error("m").code().to_string(), ErrorSource::INT),
             (net_api_error("m").code().to_string(), ErrorSource::NET),
-            (api_deserialize_error("m").code().to_string(), ErrorSource::INT),
-            (api_request_error("m", "op").code().to_string(), ErrorSource::INT),
-            (ws_client_error("m", "op").code().to_string(), ErrorSource::NET),
+            (
+                api_deserialize_error("m").code().to_string(),
+                ErrorSource::INT,
+            ),
+            (
+                api_request_error("m", "op").code().to_string(),
+                ErrorSource::INT,
+            ),
+            (
+                ws_client_error("m", "op").code().to_string(),
+                ErrorSource::NET,
+            ),
             (ws_serialize_error("m").code().to_string(), ErrorSource::INT),
-            (ws_subscribe_limit_error(1).code().to_string(), ErrorSource::SESS),
-            (ws_send_failed_error("m").code().to_string(), ErrorSource::NET),
-            (ws_receive_failed_error("m").code().to_string(), ErrorSource::NET),
+            (
+                ws_subscribe_limit_error(1).code().to_string(),
+                ErrorSource::SESS,
+            ),
+            (
+                ws_send_failed_error("m").code().to_string(),
+                ErrorSource::NET,
+            ),
+            (
+                ws_receive_failed_error("m").code().to_string(),
+                ErrorSource::NET,
+            ),
         ];
         for (code, expected_source) in cases {
-            assert!(
-                code.starts_with("ERR-"),
-                "错误码 '{code}' 不以 'ERR-' 开头",
-            );
+            assert!(code.starts_with("ERR-"), "错误码 '{code}' 不以 'ERR-' 开头",);
             assert!(
                 code.contains(&format!("-{expected_source}-")),
                 "错误码 '{code}' 不包含来源 '-{expected_source}-'",

@@ -134,7 +134,10 @@ async fn test_concurrent_cache_access() {
 
     // 验证最终状态一致性
     let stats = manager.stats();
-    assert!(stats.hits > 0 || stats.misses > 0, "Cache should have recorded operations");
+    assert!(
+        stats.hits > 0 || stats.misses > 0,
+        "Cache should have recorded operations"
+    );
     println!(
         "Concurrent test - Entries: {}, Hits: {}, Misses: {}",
         stats.entries, stats.hits, stats.misses

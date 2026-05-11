@@ -112,8 +112,8 @@ pub struct Gemma4TextConfig {
     /// 共享键值（KV）权重的层数。
     #[serde(default = "default_num_kv_shared_layers")]
     pub num_kv_shared_layers: usize,
-    /// 每层注意力类型标识列表，如 `"sliding_attention"` 或 `"full_attention"`。
-    pub layer_types: Vec<String>,
+    /// 每层注意力类型标识列表。
+    pub layer_types: Vec<LayerType>,
     /// 注意力投影层是否使用偏置项。
     #[serde(default)]
     pub attention_bias: bool,
@@ -135,13 +135,18 @@ impl Gemma4TextConfig {
     fn is_sliding(&self, layer_idx: usize) -> bool {
         self.layer_types
             .get(layer_idx)
-            .is_some_and(|s| s == "sliding_attention")
+            .is_some_and(|lt| *lt == LayerType::SlidingAttention)
     }
 }
 
-#[derive(Debug, Clone)]
-enum LayerType {
+/// Gemma4 注意力层类型枚举
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub enum LayerType {
+    /// 滑动窗口注意力
+    #[serde(rename = "sliding_attention")]
     SlidingAttention,
+    /// 全局注意力
+    #[serde(rename = "full_attention")]
     FullAttention,
 }
 

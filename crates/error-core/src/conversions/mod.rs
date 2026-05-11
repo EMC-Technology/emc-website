@@ -2,13 +2,13 @@
 //!
 //! Provides `From` implementations for converting external error types into ErrorObject.
 
-mod std_conversions;
-#[cfg(feature = "serde-json")]
-mod serde_conversions;
-#[cfg(feature = "db")]
-mod db_conversions;
 #[cfg(feature = "jsonwebtoken")]
 mod auth_conversions;
+#[cfg(feature = "db")]
+mod db_conversions;
+#[cfg(feature = "serde-json")]
+mod serde_conversions;
+mod std_conversions;
 
 #[cfg(test)]
 mod tests {
@@ -133,7 +133,8 @@ mod tests {
     #[cfg(feature = "jsonwebtoken")]
     #[test]
     fn test_from_jsonwebtoken_error_preserves_context() {
-        let jwt_err = jsonwebtoken::errors::Error::from(jsonwebtoken::errors::ErrorKind::InvalidToken);
+        let jwt_err =
+            jsonwebtoken::errors::Error::from(jsonwebtoken::errors::ErrorKind::InvalidToken);
         let err: ErrorObject = jwt_err.into();
         assert_eq!(err.source(), ErrorSource::SEC);
         assert_eq!(err.code(), registry::TOKEN_INVALID);
@@ -168,27 +169,43 @@ mod tests {
         assert_eq!(io_err.source(), ErrorSource::FS, "I/O 错误应归类为 FS 来源");
 
         let str_err: ErrorObject = "test".into();
-        assert_eq!(str_err.source(), ErrorSource::INT, "字符串错误应归类为 INT 来源");
+        assert_eq!(
+            str_err.source(),
+            ErrorSource::INT,
+            "字符串错误应归类为 INT 来源"
+        );
 
         #[cfg(feature = "serde-json")]
         {
-            let serde_err: ErrorObject =
-                serde_json::from_str::<i32>("x").unwrap_err().into();
-            assert_eq!(serde_err.source(), ErrorSource::INT, "Serde 错误应归类为 INT 来源");
+            let serde_err: ErrorObject = serde_json::from_str::<i32>("x").unwrap_err().into();
+            assert_eq!(
+                serde_err.source(),
+                ErrorSource::INT,
+                "Serde 错误应归类为 INT 来源"
+            );
         }
 
         #[cfg(feature = "db")]
         {
             let db_err: ErrorObject =
                 surrealdb::Error::Db(surrealdb::error::Db::Thrown("test".to_string())).into();
-            assert_eq!(db_err.source(), ErrorSource::FS, "数据库错误应归类为 FS 来源");
+            assert_eq!(
+                db_err.source(),
+                ErrorSource::FS,
+                "数据库错误应归类为 FS 来源"
+            );
         }
 
         #[cfg(feature = "jsonwebtoken")]
         {
             let jwt_err: ErrorObject =
-                jsonwebtoken::errors::Error::from(jsonwebtoken::errors::ErrorKind::InvalidToken).into();
-            assert_eq!(jwt_err.source(), ErrorSource::SEC, "JWT 错误应归类为 SEC 来源");
+                jsonwebtoken::errors::Error::from(jsonwebtoken::errors::ErrorKind::InvalidToken)
+                    .into();
+            assert_eq!(
+                jwt_err.source(),
+                ErrorSource::SEC,
+                "JWT 错误应归类为 SEC 来源"
+            );
         }
     }
 }

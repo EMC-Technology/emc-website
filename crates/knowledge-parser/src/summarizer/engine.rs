@@ -2,9 +2,7 @@
 
 use std::sync::Arc;
 
-use knowledge_core::model::{
-    CommunitySummary, RecordIdType, SemanticEntity, SemanticRelation,
-};
+use knowledge_core::model::{CommunitySummary, RecordIdType, SemanticEntity, SemanticRelation};
 use tracing::{debug, info, warn};
 
 use error_core::helpers;
@@ -130,7 +128,11 @@ impl CommunitySummarizer {
         }
         let mut concepts: Vec<_> = concept_scores.into_iter().collect();
         concepts.sort_by_key(|b| std::cmp::Reverse(b.1));
-        concepts.into_iter().take(10).map(|(name, _)| name).collect()
+        concepts
+            .into_iter()
+            .take(10)
+            .map(|(name, _)| name)
+            .collect()
     }
 
     /// 调用LLM生成摘要（带超时和重试）
@@ -186,8 +188,9 @@ impl CommunitySummarizer {
     ) -> crate::Result<Vec<CommunitySummary>> {
         info!(community_count = communities.len(), "开始批量生成社区摘要");
 
-        let semaphore =
-            Arc::new(tokio::sync::Semaphore::new(self.config.max_concurrent_summaries));
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(
+            self.config.max_concurrent_summaries,
+        ));
         let mut futures = Vec::new();
 
         for community in communities {
@@ -199,7 +202,10 @@ impl CommunitySummarizer {
             let summarizer = Arc::new(self);
 
             let fut = async move {
-                let _permit = sem.acquire().await.expect("信号量获取失败: Semaphore 不应被 close"); // SAFETY: 本方法内部创建的 Semaphore 不会被 close
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .expect("信号量获取失败: Semaphore 不应被 close"); // SAFETY: 本方法内部创建的 Semaphore 不会被 close
                 match summarizer
                     .summarize_community(&id, &entities, &relations, score)
                     .await
@@ -244,8 +250,10 @@ impl CommunitySummarizer {
                 .find(|s| s.community_id == community.id);
 
             if let Some(existing_summary) = existing {
-                let entity_change =
-                    Self::extract_entity_change(community.entities.len(), existing_summary.entity_count);
+                let entity_change = Self::extract_entity_change(
+                    community.entities.len(),
+                    existing_summary.entity_count,
+                );
 
                 if entity_change > self.config.entity_change_threshold {
                     let new_summary = self
@@ -464,5 +472,127 @@ mod tests {
         let concepts = CommunitySummarizer::extract_key_concepts(&entities, &[]);
         assert_eq!(concepts.len(), 2);
         assert_eq!(concepts[0], "Rust");
+    }
+
+    struct FailingLlm;
+
+    #[async_trait::async_trait]
+    impl LanguageModel for FailingLlm {
+        async fn generate(&self, _prompt: &str) -> Result<String, String> {
+            Err("LLM 调用失败".to_string())
+        }
+    }
+
+    fn make_failing_summarizer() -> CommunitySummarizer {
+        let llm = Arc::new(FailingLlm);
+        let config = SummarizerConfig {
+            max_retries: 0,
+            ..SummarizerConfig::default()
+        };
+        CommunitySummarizer::new(llm, config)
+    }
+
+    #[tokio::test]
+    async fn test_call_llm_failure_returns_error() {
+        let summarizer = make_failing_summarizer();
+        let community_id = make_rid("community:fail");
+        let entities = vec![SemanticEntity::new("Test".to_string(), EntityType::Concept)];
+
+        let result = summarizer
+            .summarize_community(&community_id, &entities, &[], 0.5)
+            .await;
+        assert!(result.is_err(), "LLM 调用失败应返回错误");
+    }
+
+    #[tokio::test]
+    async fn test_summarize_all_skips_failed_communities() {
+        let summarizer = make_failing_summarizer();
+        let communities = vec![CommunityInput {
+            id: make_rid("community:skip"),
+            entities: vec![SemanticEntity::new("X".to_string(), EntityType::Concept)],
+            relations: vec![],
+            cohesion_score: 0.5,
+        }];
+
+        let result = summarizer.summarize_all(&communities).await;
+        assert!(result.is_ok());
+        let summaries = result.unwrap();
+        assert_eq!(summaries.len(), 0, "失败的社区应被跳过");
+    }
+
+    #[test]
+    fn test_extract_entity_change_zero_previous() {
+        let change = CommunitySummarizer::extract_entity_change(5, 0);
+        assert!(
+            (change - 1.0).abs() < f64::EPSILON,
+            "previous_count 为 0 时变化率应为 1.0"
+        );
+    }
+
+    #[test]
+    fn test_extract_entity_change_nonzero_previous() {
+        let change = CommunitySummarizer::extract_entity_change(15, 10);
+        let expected = (15.0_f64 - 10.0_f64).abs() / 10.0_f64;
+        assert!((change - expected).abs() < f64::EPSILON, "变化率计算应正确");
+    }
+
+    #[test]
+    fn test_extract_key_concepts_with_relations() {
+        let entities = vec![SemanticEntity::new(
+            "Rust".to_string(),
+            EntityType::Technology,
+        )];
+        let relations = vec![SemanticRelation::new(
+            make_rid("semantic_entity:a"),
+            make_rid("semantic_entity:b"),
+            knowledge_core::model::RelationType::DependsOn,
+            "evidence".to_string(),
+        )];
+        let concepts = CommunitySummarizer::extract_key_concepts(&entities, &relations);
+        assert!(concepts.contains(&"Rust".to_string()), "应包含实体名");
+        assert!(
+            concepts.contains(&"depends_on".to_string()),
+            "应包含关系类型"
+        );
+    }
+
+    #[test]
+    fn test_extract_key_concepts_deduplication_and_sort() {
+        let entities: Vec<SemanticEntity> = (0..5)
+            .map(|_| SemanticEntity::new("Repeated".to_string(), EntityType::Concept))
+            .chain((0..3).map(|i| SemanticEntity::new(format!("Unique{i}"), EntityType::Concept)))
+            .collect();
+        let concepts = CommunitySummarizer::extract_key_concepts(&entities, &[]);
+        assert_eq!(concepts[0], "Repeated", "出现最多的概念应排在首位");
+        assert_eq!(concepts.len(), 4, "应去重后保留 4 个概念");
+    }
+
+    #[tokio::test]
+    async fn test_summarize_community_with_relations() {
+        let summarizer = make_summarizer("社区包含多个实体和关系。");
+        let community_id = make_rid("community:with_relations");
+        let entities = vec![
+            SemanticEntity::new("A".to_string(), EntityType::Concept),
+            SemanticEntity::new("B".to_string(), EntityType::Concept),
+        ];
+        let relations = vec![SemanticRelation::new(
+            make_rid("semantic_entity:a"),
+            make_rid("semantic_entity:b"),
+            knowledge_core::model::RelationType::RelatedTo,
+            "A and B are related".to_string(),
+        )];
+
+        let result = summarizer
+            .summarize_community(&community_id, &entities, &relations, 0.9)
+            .await;
+        assert!(result.is_ok());
+        let summary = result.unwrap();
+        assert_eq!(summary.relation_count, 1);
+    }
+
+    #[test]
+    fn test_llm_model_name() {
+        let name = CommunitySummarizer::llm_model_name();
+        assert_eq!(name, "ullm-llm", "模型名称应为 ullm-llm");
     }
 }

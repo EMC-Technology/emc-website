@@ -106,9 +106,15 @@ impl RoleManager {
     /// 当缓存容量为 0 时 panic（硬编码常量保证不会发生）。
     pub fn new(store: Arc<dyn RoleStore>) -> Self {
         info!("初始化 RoleManager");
-        let role_cache = LruCache::new(NonZero::new(ROLE_CACHE_CAPACITY).unwrap());
-        let name_cache = LruCache::new(NonZero::new(ROLE_CACHE_CAPACITY).unwrap());
-        let assignment_cache = LruCache::new(NonZero::new(USER_ROLE_CACHE_CAPACITY).unwrap());
+        let role_cache = LruCache::new(
+            NonZero::new(ROLE_CACHE_CAPACITY).expect("ROLE_CACHE_CAPACITY 为非零常量"),
+        );
+        let name_cache = LruCache::new(
+            NonZero::new(ROLE_CACHE_CAPACITY).expect("ROLE_CACHE_CAPACITY 为非零常量"),
+        );
+        let assignment_cache = LruCache::new(
+            NonZero::new(USER_ROLE_CACHE_CAPACITY).expect("USER_ROLE_CACHE_CAPACITY 为非零常量"),
+        );
         Self {
             store,
             role_cache: Arc::new(RwLock::new(role_cache)),
@@ -295,16 +301,14 @@ impl RoleManager {
                     &p.resource_type == resource_type && p.actions.contains(&action.to_string())
                 });
 
-                if let Some(p) = perm {
-                    if p.conditions.is_some() {
-                        // 存在 ABAC 条件 —— 需要调用 Cedar 引擎完成条件求值
-                        // 此处返回 true 表示"有潜在权限"，具体由 AuthZ 中间件做最终判断
-                        debug!(
-                            permission_id = %p.id,
-                            "权限存在 ABAC 条件，需运行时评估"
-                        );
-                        return Ok(true);
-                    }
+                if let Some(p) = perm
+                    && p.conditions.is_some()
+                {
+                    debug!(
+                        permission_id = %p.id,
+                        "权限存在 ABAC 条件，需运行时评估"
+                    );
+                    return Ok(true);
                 }
                 return Ok(true);
             }
@@ -372,10 +376,10 @@ impl RoleManager {
     ) -> Result<Vec<UserRoleAssignment>> {
         {
             let cache = self.assignment_cache.read().await;
-            if let Some((assignments, ts)) = cache.peek(user_id) {
-                if ts.elapsed() < Duration::from_secs(ASSIGNMENT_CACHE_TTL_SECS) {
-                    return Ok(assignments.clone());
-                }
+            if let Some((assignments, ts)) = cache.peek(user_id)
+                && ts.elapsed() < Duration::from_secs(ASSIGNMENT_CACHE_TTL_SECS)
+            {
+                return Ok(assignments.clone());
             }
         }
 
@@ -396,7 +400,8 @@ impl RoleManager {
     fn collect_inherited_permissions<'a>(
         &'a self,
         role: &'a Role,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<Permission>>> + Send + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<Permission>>> + Send + 'a>>
+    {
         Box::pin(async move {
             if role.parent_roles.is_empty() {
                 return Ok(Vec::new());
@@ -534,7 +539,10 @@ impl RoleManager {
         Permission {
             id: Uuid::new_v4(),
             resource_type: rt,
-            actions: actions.iter().map(std::string::ToString::to_string).collect(),
+            actions: actions
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
             conditions: None,
             scope,
         }

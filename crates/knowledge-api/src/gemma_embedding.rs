@@ -11,13 +11,13 @@
 //! | 上下文长度 | 128K tokens |
 //! | 许可证 | Apache 2.0 |
 
-use crate::embedding_model::EmbeddingError;
 use super::candle_loader::CandleModelLoader;
 use super::embedding_model::{
     EmbeddingConfig, EmbeddingModel as EmbeddingModelTrait, EmbeddingModelInfo, EmbeddingModelType,
     EmbeddingResult,
 };
 use super::model_loader::{LoadedModel, ModelConfig, ModelLoader, PoolingStrategy};
+use crate::embedding_model::EmbeddingError;
 use std::sync::Arc;
 
 /// Gemma 4.0 E4B 嵌入模型实现
@@ -169,7 +169,8 @@ impl EmbeddingModelTrait for GemmaEmbedding {
 
         let start = std::time::Instant::now();
 
-        let result = model.embed(text, PoolingStrategy::Eos)
+        let result = model
+            .embed(text, PoolingStrategy::Eos)
             .await
             .map_err(|e| EmbeddingError::InferenceFailed(e.to_string()))?;
 
@@ -201,7 +202,8 @@ impl EmbeddingModelTrait for GemmaEmbedding {
 
         let start = std::time::Instant::now();
 
-        let results = model.embed_batch(texts, PoolingStrategy::Eos)
+        let results = model
+            .embed_batch(texts, PoolingStrategy::Eos)
             .await
             .map_err(|e| EmbeddingError::InferenceFailed(e.to_string()))?;
 

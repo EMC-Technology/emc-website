@@ -1,5 +1,5 @@
 //! 配置管理模块（从 config.toml / 环境变量加载 MECE-07 配置项）
-//! 
+//!
 //! # 配置层级优先级（从高到低）
 //! 1. 命令行参数（预留，暂未实现）
 //! 2. 环境变量（格式：KNOWLEDGE_<SECTION>_<KEY>）
@@ -13,7 +13,7 @@ use std::io::Read;
 use std::path::Path;
 
 /// 应用程序配置结构体
-/// 
+///
 /// 对应 config.toml 文件的结构，包含所有可配置项。
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
@@ -89,44 +89,41 @@ pub struct ParserConfig {
 }
 
 const fn default_embedding_dim() -> usize {
-    1536
+    2560
 }
 
 /// 配置加载器
-/// 
+///
 /// 负责从 config.toml 文件和环境变量加载配置。
 pub struct ConfigLoader;
 
 impl ConfigLoader {
     /// 从文件加载配置
-    /// 
+    ///
     /// # 参数
     /// - `path` - config.toml 文件路径
-    /// 
+    ///
     /// # Returns
     /// 加载后的配置结构体
     /// # Errors
     ///
     /// 文件打开失败、读取失败或格式错误时返回错误。
     pub fn load_from_file(path: &Path) -> crate::Result<Config> {
-        let mut file = File::open(path).map_err(|e| {
-            helpers::config_error(&format!("无法打开配置文件: {e}"))
-        })?;
-        
+        let mut file = File::open(path)
+            .map_err(|e| helpers::config_error(&format!("无法打开配置文件: {e}")))?;
+
         let mut content = String::new();
-        file.read_to_string(&mut content).map_err(|e| {
-            helpers::config_error(&format!("无法读取配置文件: {e}"))
-        })?;
-        
-        let config: Config = toml::from_str(&content).map_err(|e| {
-            helpers::config_error(&format!("配置文件格式错误: {e}"))
-        })?;
-        
+        file.read_to_string(&mut content)
+            .map_err(|e| helpers::config_error(&format!("无法读取配置文件: {e}")))?;
+
+        let config: Config = toml::from_str(&content)
+            .map_err(|e| helpers::config_error(&format!("配置文件格式错误: {e}")))?;
+
         Ok(config)
     }
-    
+
     /// 从默认位置加载配置
-    /// 
+    ///
     /// 按以下顺序查找：
     /// 1. ./config.toml
     /// 2. ~/.knowledge/config.toml
@@ -141,10 +138,10 @@ impl ConfigLoader {
             return Self::load_from_file(Path::new("./config.toml"));
         }
 
-        if let Some(ref hc) = home_config {
-            if hc.exists() {
-                return Self::load_from_file(hc);
-            }
+        if let Some(ref hc) = home_config
+            && hc.exists()
+        {
+            return Self::load_from_file(hc);
         }
 
         #[cfg(unix)]
@@ -164,8 +161,12 @@ impl ConfigLoader {
         Self::validate(&config)?;
         Ok(config)
     }
-    
+
     /// 获取默认配置
+    ///
+    /// **注意**：此方法返回的配置可能包含空的安全字段（如 `jwt_secret`），
+    /// 必须在调用后立即通过 `ConfigLoader::validate()` 验证。
+    /// 推荐使用 `ConfigLoader::load()` 自动完成验证。
     #[must_use]
     pub fn default_config() -> Config {
         Config {
@@ -181,15 +182,12 @@ impl ConfigLoader {
                 addr: "ws://localhost:8000".to_string(),
                 namespace: "knowledge".to_string(),
                 database: "knowledge".to_string(),
-                username: std::env::var("KNOWLEDGE_DB_USERNAME")
-                    .unwrap_or_default(),
-                password: std::env::var("KNOWLEDGE_DB_PASSWORD")
-                    .unwrap_or_default(),
+                username: std::env::var("KNOWLEDGE_DB_USERNAME").unwrap_or_default(),
+                password: std::env::var("KNOWLEDGE_DB_PASSWORD").unwrap_or_default(),
             },
             security: SecurityConfig {
                 enc_key_path: "./enc.key".to_string(),
-                jwt_secret: std::env::var("KNOWLEDGE_JWT_SECRET")
-                    .unwrap_or_default(),
+                jwt_secret: std::env::var("KNOWLEDGE_JWT_SECRET").unwrap_or_default(),
                 jwt_expiry_hours: 24,
                 audit_log_path: "./audit.log".to_string(),
             },
@@ -198,24 +196,30 @@ impl ConfigLoader {
                 chunk_size: 1000,
                 chunk_overlap: 100,
                 enable_code_parsing: true,
-                embedding_dim: 1536,
+                embedding_dim: default_embedding_dim(),
             },
         }
     }
-    
+
     /// 验证配置的有效性
     /// # Errors
     ///
     /// 配置项不合法时返回错误（如端口为 0、地址为空等）。
     pub fn validate(config: &Config) -> crate::Result<()> {
         if config.server.port == 0 {
-            return Err(helpers::validation_error("服务器端口不能为 0", "validate_server_config"));
+            return Err(helpers::validation_error(
+                "服务器端口不能为 0",
+                "validate_server_config",
+            ));
         }
-        
+
         if config.database.addr.is_empty() {
-            return Err(helpers::validation_error("数据库地址不能为空", "validate_database_config"));
+            return Err(helpers::validation_error(
+                "数据库地址不能为空",
+                "validate_database_config",
+            ));
         }
-        
+
         if config.database.username.is_empty() || config.database.password.is_empty() {
             return Err(helpers::config_error(
                 "数据库凭据未设置，请设置环境变量 KNOWLEDGE_DB_USERNAME 和 KNOWLEDGE_DB_PASSWORD",
@@ -229,9 +233,9 @@ impl ConfigLoader {
         }
         let enc_key_path = Path::new(&config.security.enc_key_path);
         if enc_key_path.exists() {
-            let metadata = enc_key_path.metadata().map_err(|e| {
-                helpers::config_error(&format!("无法读取密钥文件: {e}"))
-            })?;
+            let metadata = enc_key_path
+                .metadata()
+                .map_err(|e| helpers::config_error(&format!("无法读取密钥文件: {e}")))?;
 
             #[cfg(unix)]
             {
@@ -248,25 +252,39 @@ impl ConfigLoader {
             }
         }
 
-        if config.server.tls && (config.server.cert_path.is_none() || config.server.key_path.is_none()) {
-            return Err(helpers::validation_error("启用 TLS 时必须设置 cert_path 和 key_path", "validate_tls_config"));
+        if config.server.tls
+            && (config.server.cert_path.is_none() || config.server.key_path.is_none())
+        {
+            return Err(helpers::validation_error(
+                "启用 TLS 时必须设置 cert_path 和 key_path",
+                "validate_tls_config",
+            ));
         }
 
         if config.parser.max_file_size == 0 {
-            return Err(helpers::validation_error("最大文件大小不能为 0", "validate_parser_config"));
+            return Err(helpers::validation_error(
+                "最大文件大小不能为 0",
+                "validate_parser_config",
+            ));
         }
 
         if config.parser.chunk_overlap >= config.parser.chunk_size {
-            return Err(helpers::validation_error(&format!(
-                "chunk_overlap ({}) 必须小于 chunk_size ({})",
-                config.parser.chunk_overlap, config.parser.chunk_size
-            ), "validate_parser_config"));
+            return Err(helpers::validation_error(
+                &format!(
+                    "chunk_overlap ({}) 必须小于 chunk_size ({})",
+                    config.parser.chunk_overlap, config.parser.chunk_size
+                ),
+                "validate_parser_config",
+            ));
         }
 
         if config.parser.embedding_dim == 0 {
-            return Err(helpers::validation_error("嵌入向量维度不能为 0", "validate_parser_config"));
+            return Err(helpers::validation_error(
+                "嵌入向量维度不能为 0",
+                "validate_parser_config",
+            ));
         }
-        
+
         Ok(())
     }
 }
@@ -275,16 +293,16 @@ impl ConfigLoader {
 mod dir {
     use std::env;
     use std::path::PathBuf;
-    
+
     pub fn home_dir() -> Option<PathBuf> {
         env::var_os("HOME")
             .or_else(|| env::var_os("USERPROFILE"))
             .map(PathBuf::from)
     }
 
+    #[allow(dead_code)]
     pub fn program_data_dir() -> PathBuf {
-        env::var_os("PROGRAMDATA")
-            .map_or_else(|| PathBuf::from("C:\\ProgramData"), PathBuf::from)
+        env::var_os("PROGRAMDATA").map_or_else(|| PathBuf::from("C:\\ProgramData"), PathBuf::from)
     }
 }
 
@@ -294,22 +312,22 @@ mod tests {
     use std::fs::File;
     use std::io::Write;
     use tempfile::tempdir;
-    
+
     #[test]
     fn test_default_config() {
         let config = ConfigLoader::default_config();
-        
+
         assert_eq!(config.server.port, 3000);
         assert_eq!(config.database.addr, "ws://localhost:8000");
         assert_eq!(config.security.enc_key_path, "./enc.key");
         assert_eq!(config.parser.max_file_size, 1024 * 1024 * 1024);
     }
-    
+
     #[test]
     fn test_load_from_file() {
         let dir = tempdir().unwrap();
         let config_path = dir.path().join("config.toml");
-        
+
         let config_content = r#"
 [server]
 port = 8080
@@ -337,18 +355,18 @@ chunk_overlap = 200
 enable_code_parsing = true
 embedding_dim = 768
 "#;
-        
+
         let mut file = File::create(&config_path).unwrap();
         file.write_all(config_content.as_bytes()).unwrap();
-        
+
         let config = ConfigLoader::load_from_file(&config_path).unwrap();
-        
+
         assert_eq!(config.server.port, 8080);
         assert_eq!(config.database.namespace, "test");
         assert_eq!(config.security.jwt_expiry_hours, 12);
         assert_eq!(config.parser.chunk_size, 2000);
     }
-    
+
     #[test]
     fn test_validate_config() {
         let mut config = ConfigLoader::default_config();
@@ -358,7 +376,7 @@ embedding_dim = 768
         let result = ConfigLoader::validate(&config);
         assert!(result.is_ok());
     }
-    
+
     #[test]
     fn test_validate_invalid_port() {
         let mut config = ConfigLoader::default_config();
@@ -366,13 +384,13 @@ embedding_dim = 768
         config.database.password = "test_pass".to_string();
         config.security.jwt_secret = "test-secret".to_string();
         config.server.port = 0;
-        
+
         let result = ConfigLoader::validate(&config);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.message().contains("端口"));
     }
-    
+
     #[test]
     fn test_validate_empty_database_addr() {
         let mut config = ConfigLoader::default_config();
@@ -380,7 +398,7 @@ embedding_dim = 768
         config.database.password = "test_pass".to_string();
         config.security.jwt_secret = "test-secret".to_string();
         config.database.addr = String::new();
-        
+
         let result = ConfigLoader::validate(&config);
         assert!(result.is_err());
         let err = result.unwrap_err();

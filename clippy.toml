@@ -6,6 +6,24 @@ allow-unwrap-in-tests = true
 # 复杂度阈值
 too-many-arguments-threshold = 7
 type-complexity-threshold = 250
+max-struct-bools = 6
 
 # 文档要求（与项目规范一致：所有公开项必须包含 /// 文档注释）
 missing-docs-in-crate-items = true
+
+# 禁止在非测试代码中使用的不安全方法
+# 测试代码中的使用由 allow-unwrap-in-tests / allow-expect-in-tests 覆盖
+disallowed-methods = [
+    { path = "std::mem::transmute", reason = "禁止直接使用 transmute，应使用安全的替代方案（如 bytemuck、From/TryFrom）。若确需使用，必须在 unsafe 块中附带 SAFETY 注释" },
+    { path = "std::mem::transmute_copy", reason = "禁止直接使用 transmute_copy，应使用安全的替代方案。若确需使用，必须在 unsafe 块中附带 SAFETY 注释并添加运行时大小检查" },
+    { path = "std::env::set_var", reason = "Rust 2024 edition 中 set_var 为 unsafe。非测试代码禁止使用，测试代码必须使用 serial_test 保证串行执行，并标注 #[allow(clippy::disallowed_methods)]" },
+    { path = "std::env::remove_var", reason = "Rust 2024 edition 中 remove_var 为 unsafe。非测试代码禁止使用，测试代码必须使用 serial_test 保证串行执行，并标注 #[allow(clippy::disallowed_methods)]" },
+]
+
+# 禁止在库代码中使用的宏
+# allow-invalid = true 因为这些宏在部分 crate 中可能不可达，但仍需全局禁止
+disallowed-macros = [
+    { path = "println", allow-invalid = true, reason = "库代码禁止使用 println!，应使用 tracing::info!/debug! 等结构化日志" },
+    { path = "eprintln", allow-invalid = true, reason = "库代码禁止使用 eprintln!，应使用 tracing::warn!/error! 等结构化日志" },
+    { path = "dbg", allow-invalid = true, reason = "库代码禁止使用 dbg!，应使用 tracing::debug! 等结构化日志" },
+]

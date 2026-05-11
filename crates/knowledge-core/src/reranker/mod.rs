@@ -36,10 +36,10 @@ pub mod candle_reranker;
 /// 基于大语言模型的重排序结果判决
 pub mod llm_judger;
 
-pub use cross_encoder::{CrossEncoderModel, ScoredDocument, Document};
-pub use pipeline::{RerankingPipeline, RerankedResults, PipelineStats, HybridRetriever};
-pub use pipeline::LLMJudger;
+pub use cross_encoder::{CrossEncoderModel, Document, ScoredDocument};
 pub use llm_judger::{LlmJudgerImpl, LlmLanguageModel};
+pub use pipeline::LLMJudger;
+pub use pipeline::{HybridRetriever, PipelineStats, RerankedResults, RerankingPipeline};
 
 #[cfg(feature = "reranker-local")]
 pub use config::CrossEncoderConfig;

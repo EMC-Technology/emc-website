@@ -10,13 +10,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use knowledge_core::event::{
-    EventBus, EventBusConfig, Handler, HandleResult,
-    DocumentEventHandler, NodeEventHandler, SearchEventHandler, EmbeddingEventHandler,
-    AsyncEventHandler,
-};
 use knowledge_core::event::types::*;
-use knowledge_core::model::{SourceType, RefType};
+use knowledge_core::event::{
+    AsyncEventHandler, DocumentEventHandler, EmbeddingEventHandler, EventBus, EventBusConfig,
+    HandleResult, Handler, NodeEventHandler, SearchEventHandler,
+};
+use knowledge_core::model::{RefType, SourceType};
 
 /// 测试辅助：创建一个伪造的文档摄入事件
 fn make_ingest_event() -> KnowledgeEvent {
@@ -72,10 +71,18 @@ async fn test_event_driven_document_flow() {
     let bus: EventBus<KnowledgeEvent> = EventBus::new(EventBusConfig::default());
 
     // 注册所有处理器
-    let doc_handler = AsyncEventHandler::new(DocumentEventHandler::new(), &bus).await.expect("创建文档处理器失败");
-    let node_handler = AsyncEventHandler::new(NodeEventHandler::new(), &bus).await.expect("创建节点处理器失败");
-    let search_handler = AsyncEventHandler::new(SearchEventHandler::new(), &bus).await.expect("创建搜索处理器失败");
-    let embed_handler = AsyncEventHandler::new(EmbeddingEventHandler::new(), &bus).await.expect("创建嵌入处理器失败");
+    let doc_handler = AsyncEventHandler::new(DocumentEventHandler::new(), &bus)
+        .await
+        .expect("创建文档处理器失败");
+    let node_handler = AsyncEventHandler::new(NodeEventHandler::new(), &bus)
+        .await
+        .expect("创建节点处理器失败");
+    let search_handler = AsyncEventHandler::new(SearchEventHandler::new(), &bus)
+        .await
+        .expect("创建搜索处理器失败");
+    let embed_handler = AsyncEventHandler::new(EmbeddingEventHandler::new(), &bus)
+        .await
+        .expect("创建嵌入处理器失败");
 
     let _doc_handle = doc_handler.spawn();
     let _node_handle = node_handler.spawn();
@@ -86,10 +93,7 @@ async fn test_event_driven_document_flow() {
 
     // Step 1: 发布 DocumentIngestedEvent
     let ingest_result = bus.publish(make_ingest_event()).await;
-    assert!(
-        ingest_result.is_ok(),
-        "DocumentIngestedEvent 应成功发布"
-    );
+    assert!(ingest_result.is_ok(), "DocumentIngestedEvent 应成功发布");
     assert_eq!(ingest_result.unwrap(), 4, "4 个订阅者应收到");
 
     // Step 2: 发布 DocumentParsedEvent（模拟解析完成）
@@ -184,17 +188,49 @@ async fn test_all_events_serialization_for_persistence() {
         KnowledgeEvent::DocumentIndexed(DocumentIndexedEvent::new("d", 3, 10, "s")),
         KnowledgeEvent::DocumentDeleted(DocumentDeletedEvent::new("d", 3, 30, 5, "s")),
         make_node_created_event(),
-        KnowledgeEvent::NodeUpdated(NodeUpdatedEvent::new("n", knowledge_core::cqrs::event_store::ChangeSet::new(), "s")),
+        KnowledgeEvent::NodeUpdated(NodeUpdatedEvent::new(
+            "n",
+            knowledge_core::cqrs::event_store::ChangeSet::new(),
+            "s",
+        )),
         KnowledgeEvent::NodeDeleted(NodeDeletedEvent::new("n", NodeType::Block, "s")),
         KnowledgeEvent::NodeLinked(NodeLinkedEvent::new("a", "b", RefType::Usage, "s")),
-        KnowledgeEvent::EdgeCreated(EdgeCreatedEvent::new("e", RefType::Definition, "a", "b", "s")),
+        KnowledgeEvent::EdgeCreated(EdgeCreatedEvent::new(
+            "e",
+            RefType::Definition,
+            "a",
+            "b",
+            "s",
+        )),
         KnowledgeEvent::EdgeDeleted(EdgeDeletedEvent::new("e", RefType::Link, "s")),
         KnowledgeEvent::SearchPerformed(SearchPerformedEvent::new("rust event bus", 10, 5, "s")),
-        KnowledgeEvent::QueryExecuted(QueryExecutedEvent::new(QueryType::Traversal, "MATCH ...", 2, 15, "s")),
+        KnowledgeEvent::QueryExecuted(QueryExecutedEvent::new(
+            QueryType::Traversal,
+            "MATCH ...",
+            2,
+            15,
+            "s",
+        )),
         make_embedding_generated_event(),
-        KnowledgeEvent::EmbeddingCached(EmbeddingCachedEvent::new("e", EmbeddingEntityType::Block, "k", "s")),
-        KnowledgeEvent::UserAction(UserActionEvent::new("user-1", "upload", Some("document"), Some("d"), "api")),
-        KnowledgeEvent::SystemHealthCheck(SystemHealthEvent::new("db", HealthStatus::Healthy, None::<String>, "monitor")),
+        KnowledgeEvent::EmbeddingCached(EmbeddingCachedEvent::new(
+            "e",
+            EmbeddingEntityType::Block,
+            "k",
+            "s",
+        )),
+        KnowledgeEvent::UserAction(UserActionEvent::new(
+            "user-1",
+            "upload",
+            Some("document"),
+            Some("d"),
+            "api",
+        )),
+        KnowledgeEvent::SystemHealthCheck(SystemHealthEvent::new(
+            "db",
+            HealthStatus::Healthy,
+            None::<String>,
+            "monitor",
+        )),
     ];
 
     for (i, event) in events.iter().enumerate() {
@@ -225,18 +261,16 @@ async fn test_all_events_serialization_for_persistence() {
 
 #[test]
 fn test_global_bus_init_and_use() {
-    use knowledge_core::event::{init_global_event_bus, global_event_bus};
+    use knowledge_core::event::{global_event_bus, init_global_event_bus};
 
-    let result = init_global_event_bus(EventBusConfig::builder()
-        .channel_capacity(2048)
-        .max_subscribers(50)
-        .build()
+    let result = init_global_event_bus(
+        EventBusConfig::builder()
+            .channel_capacity(2048)
+            .max_subscribers(50)
+            .build(),
     );
 
-    assert!(
-        result.is_ok(),
-        "首次初始化全局总线应成功"
-    );
+    assert!(result.is_ok(), "首次初始化全局总线应成功");
 
     let bus = global_event_bus();
     assert_eq!(bus.config.channel_capacity, 2048);

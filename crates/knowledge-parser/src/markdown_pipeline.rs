@@ -134,9 +134,14 @@ impl MarkdownPipeline {
     pub fn process(&self, file: &IngestedFile) -> Result<(Document, Vec<Block>, Vec<Token>)> {
         let title = Self::extract_title(&self.parser, &file.content);
         let path_string = file.path.to_string_lossy().into_owned();
-        let document = Document::new(path_string, title, file.source_type.clone(), &file.hash)?;
+        let document = Document::new(
+            path_string.clone(),
+            title,
+            file.source_type.clone(),
+            &file.hash,
+        )?;
 
-        let blocks = self.create_blocks(&file.content, &file.source_type)?;
+        let blocks = self.create_blocks(&file.content, &file.source_type, &path_string)?;
 
         let mut all_tokens = Vec::new();
         let mut global_offset: u64 = 0;
@@ -193,9 +198,16 @@ impl MarkdownPipeline {
     /// - `Markdown` → 使用 `TextSplitterBlocker` 分块（保留段落结构）
     /// - `Plain` → 使用 `TextSplitterBlocker` 分块
     /// - `Code` → 返回错误（应使用 `CodePipeline`）
-    fn create_blocks(&self, content: &str, source_type: &SourceType) -> Result<Vec<Block>> {
+    fn create_blocks(
+        &self,
+        content: &str,
+        source_type: &SourceType,
+        file_path: &str,
+    ) -> Result<Vec<Block>> {
         match source_type {
-            SourceType::Markdown | SourceType::Plain => self.splitter.split_to_blocks(content, "markdown"),
+            SourceType::Markdown | SourceType::Plain => {
+                self.splitter.split_to_blocks(content, file_path)
+            }
             SourceType::Code => Err(helpers::unsupported_format(
                 "Code 类型应使用 CodePipeline 处理",
             )),
@@ -377,5 +389,95 @@ mod tests {
                 "全局偏移应在块间递增"
             );
         }
+    }
+
+    #[test]
+    fn test_default_creates_pipeline() {
+        let pipeline = MarkdownPipeline::default();
+        let file = create_test_ingested_file("# Test", SourceType::Markdown);
+        let result = pipeline.process(&file);
+        assert!(
+            result.is_ok(),
+            "Default 创建的流水线应能正常工作: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_process_with_code_block_uses_code_mapper() {
+        let pipeline = MarkdownPipeline::new();
+        let content = "# Title\n\n```rust\nfn main() {}\n```\n\nParagraph text.";
+        let file = create_test_ingested_file(content, SourceType::Markdown);
+        let result = pipeline.process(&file);
+        assert!(
+            result.is_ok(),
+            "包含代码块的 Markdown 应成功处理: {:?}",
+            result.err()
+        );
+        let (_, _, tokens) = result.unwrap();
+        assert!(!tokens.is_empty(), "应生成 Token");
+    }
+
+    #[test]
+    fn test_title_fallback_to_first_non_empty_line() {
+        let pipeline = MarkdownPipeline::new();
+        let content = "\n\n  \nFirst meaningful line\nMore content";
+        let file = create_test_ingested_file(content, SourceType::Plain);
+        let (document, _, _) = pipeline.process(&file).expect("处理应成功");
+        assert_eq!(
+            document.title, "First meaningful line",
+            "标题应回退到第一个非空行"
+        );
+    }
+
+    #[test]
+    fn test_process_plain_text_creates_paragraph_blocks() {
+        let pipeline = MarkdownPipeline::new();
+        let content = "This is a paragraph.\n\nAnother paragraph.";
+        let file = create_test_ingested_file(content, SourceType::Plain);
+        let (_, blocks, _) = pipeline.process(&file).expect("处理应成功");
+        assert!(!blocks.is_empty(), "纯文本应产生 Block");
+        for block in &blocks {
+            assert_eq!(
+                block.block_type,
+                BlockType::Paragraph,
+                "纯文本 Block 应为 Paragraph 类型"
+            );
+        }
+    }
+
+    #[test]
+    fn test_process_markdown_with_multiple_headings() {
+        let pipeline = MarkdownPipeline::new();
+        let content = "# Title 1\n\nContent 1\n\n## Title 2\n\nContent 2";
+        let file = create_test_ingested_file(content, SourceType::Markdown);
+        let (document, blocks, _) = pipeline.process(&file).expect("处理应成功");
+        assert_eq!(document.title, "Title 1", "标题应从第一个 H1 提取");
+        assert!(!blocks.is_empty(), "多个标题应产生 Block");
+    }
+
+    #[test]
+    fn test_process_with_inline_code_and_regular_text() {
+        let pipeline = MarkdownPipeline::new();
+        let content = "# Heading\n\nText with `inline code` here.";
+        let file = create_test_ingested_file(content, SourceType::Markdown);
+        let result = pipeline.process(&file);
+        assert!(
+            result.is_ok(),
+            "包含行内代码的 Markdown 应成功处理: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_process_document_has_correct_hash() {
+        let pipeline = MarkdownPipeline::new();
+        let file = create_test_ingested_file("# Test", SourceType::Markdown);
+        let (document, _, _) = pipeline.process(&file).expect("处理应成功");
+        assert_eq!(
+            document.hash,
+            "a".repeat(64),
+            "Document hash 应与 IngestedFile 一致"
+        );
     }
 }

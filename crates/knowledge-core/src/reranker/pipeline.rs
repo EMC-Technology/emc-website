@@ -1,11 +1,11 @@
 //! 多阶段重排序管道模块
-//! 
+//!
 //! 提供完整的重排序管道实现，支持三阶段重排序流程：
 //! 1. 检索阶段：从混合检索器获取候选文档
 //! 2. 精排阶段：使用交叉编码器对候选文档精确评分
 //! 3. 判决阶段（可选）：使用 LLM 对结果进行最终判决
 
-use crate::reranker::cross_encoder::{CrossEncoderModel, ScoredDocument, Document};
+use crate::reranker::cross_encoder::{CrossEncoderModel, Document, ScoredDocument};
 use error_core::Result;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
@@ -17,7 +17,11 @@ use tracing::{debug, info};
 /// 抽象检索阶段，支持 BM25、向量检索或混合检索等不同实现。
 pub trait HybridRetriever: Send + Sync {
     /// 检索候选文档
-    fn retrieve(&self, query: &str, top_k: usize) -> impl Future<Output = Result<Vec<Document>>> + Send;
+    fn retrieve(
+        &self,
+        query: &str,
+        top_k: usize,
+    ) -> impl Future<Output = Result<Vec<Document>>> + Send;
 }
 
 /// LLM 判决器 trait
@@ -30,7 +34,11 @@ pub trait LLMJudger: Send + Sync {
     ///
     /// # Errors
     /// LLM 推理失败时返回错误
-    async fn judge_relevance(&self, query: &str, documents: &[ScoredDocument]) -> Result<Vec<ScoredDocument>>;
+    async fn judge_relevance(
+        &self,
+        query: &str,
+        documents: &[ScoredDocument],
+    ) -> Result<Vec<ScoredDocument>>;
 }
 
 /// 管道执行统计
@@ -58,15 +66,23 @@ pub struct RerankedResults {
 impl RerankedResults {
     /// 获取前 k 个结果
     #[must_use]
-    pub fn top_k(&self, k: usize) -> &[ScoredDocument] { &self.results[..k.min(self.results.len())] }
+    pub fn top_k(&self, k: usize) -> &[ScoredDocument] {
+        &self.results[..k.min(self.results.len())]
+    }
 
     /// 获取最佳结果
     #[must_use]
-    pub fn best(&self) -> Option<&ScoredDocument> { self.results.first() }
+    pub fn best(&self) -> Option<&ScoredDocument> {
+        self.results.first()
+    }
 
     /// 按相关性阈值过滤结果
     #[must_use]
-    pub fn filter_by_threshold(mut self, threshold: f64) -> Self { self.results.retain(|d| d.relevance_score >= threshold); self.pipeline_stats.stage3_final = self.results.len(); self }
+    pub fn filter_by_threshold(mut self, threshold: f64) -> Self {
+        self.results.retain(|d| d.relevance_score >= threshold);
+        self.pipeline_stats.stage3_final = self.results.len();
+        self
+    }
 }
 
 /// 重排序管道配置
@@ -83,7 +99,14 @@ pub struct RerankerConfig {
 }
 
 impl Default for RerankerConfig {
-    fn default() -> Self { Self { top_k_initial: 50, top_k_reranked: 20, top_k_final: 10, enable_llm_judge: false } }
+    fn default() -> Self {
+        Self {
+            top_k_initial: 50,
+            top_k_reranked: 20,
+            top_k_final: 10,
+            enable_llm_judge: false,
+        }
+    }
 }
 
 /// 多阶段重排序管道
@@ -101,15 +124,29 @@ pub struct RerankingPipeline<R: HybridRetriever, C: CrossEncoderModel> {
 
 impl<R: HybridRetriever, C: CrossEncoderModel> RerankingPipeline<R, C> {
     /// 创建重排序管道
-    pub fn new(retriever: R, cross_encoder: C) -> Self { Self { retriever: Arc::new(retriever), cross_encoder: Arc::new(cross_encoder), llm_judge: None, config: RerankerConfig::default() } }
+    pub fn new(retriever: R, cross_encoder: C) -> Self {
+        Self {
+            retriever: Arc::new(retriever),
+            cross_encoder: Arc::new(cross_encoder),
+            llm_judge: None,
+            config: RerankerConfig::default(),
+        }
+    }
 
     /// 使用自定义配置
     #[must_use]
-    pub const fn with_config(mut self, config: RerankerConfig) -> Self { self.config = config; self }
+    pub const fn with_config(mut self, config: RerankerConfig) -> Self {
+        self.config = config;
+        self
+    }
 
     /// 启用 LLM 判决阶段
     #[must_use]
-    pub fn with_llm_judge(mut self, judge: Arc<dyn LLMJudger>) -> Self { self.llm_judge = Some(judge); self.config.enable_llm_judge = true; self }
+    pub fn with_llm_judge(mut self, judge: Arc<dyn LLMJudger>) -> Self {
+        self.llm_judge = Some(judge);
+        self.config.enable_llm_judge = true;
+        self
+    }
 
     /// 执行完整重排序流程
     ///
@@ -118,9 +155,15 @@ impl<R: HybridRetriever, C: CrossEncoderModel> RerankingPipeline<R, C> {
     /// 检索、重排序或判决任一阶段失败时返回错误
     pub async fn rerank(&self, query: &str) -> Result<RerankedResults> {
         let start = std::time::Instant::now();
-        info!(query_preview = &query[..query.len().min(50)], "pipeline start");
+        info!(
+            query_preview = &query[..query.len().min(50)],
+            "pipeline start"
+        );
 
-        let candidates = self.retriever.retrieve(query, self.config.top_k_initial).await?;
+        let candidates = self
+            .retriever
+            .retrieve(query, self.config.top_k_initial)
+            .await?;
         debug!(s1 = candidates.len());
 
         let mut scored = self.cross_encoder.rerank(query, &candidates).await?;
@@ -130,26 +173,48 @@ impl<R: HybridRetriever, C: CrossEncoderModel> RerankingPipeline<R, C> {
         let final_results = if self.config.enable_llm_judge {
             if let Some(ref j) = self.llm_judge {
                 let judged = j.judge_relevance(query, &scored).await?;
-                let mut v = judged; v.truncate(self.config.top_k_final); v
-            } else { scored[..self.config.top_k_final.min(scored.len())].to_vec() }
-        } else { scored[..self.config.top_k_final.min(scored.len())].to_vec() };
+                let mut v = judged;
+                v.truncate(self.config.top_k_final);
+                v
+            } else {
+                scored[..self.config.top_k_final.min(scored.len())].to_vec()
+            }
+        } else {
+            scored[..self.config.top_k_final.min(scored.len())].to_vec()
+        };
 
         let final_count = final_results.len();
-        Ok(RerankedResults { results: final_results, pipeline_stats: PipelineStats { stage1_candidates: candidates.len(), stage2_scored: scored.len(), stage3_final: final_count, total_duration_ms: start.elapsed().as_millis() } })
+        Ok(RerankedResults {
+            results: final_results,
+            pipeline_stats: PipelineStats {
+                stage1_candidates: candidates.len(),
+                stage2_scored: scored.len(),
+                stage3_final: final_count,
+                total_duration_ms: start.elapsed().as_millis(),
+            },
+        })
     }
 }
 
 /// Mock 检索器，用于测试
-pub struct MockRetriever { docs: Vec<Document> }
+pub struct MockRetriever {
+    docs: Vec<Document>,
+}
 impl MockRetriever {
     /// 创建新的 Mock 检索器
-    pub const fn new(docs: Vec<Document>) -> Self { Self { docs } }
+    pub const fn new(docs: Vec<Document>) -> Self {
+        Self { docs }
+    }
 }
 
 #[allow(clippy::manual_async_fn)]
 impl HybridRetriever for MockRetriever {
     #[allow(clippy::manual_async_fn)]
-    fn retrieve(&self, _query: &str, top_k: usize) -> impl Future<Output = Result<Vec<Document>>> + Send {
+    fn retrieve(
+        &self,
+        _query: &str,
+        top_k: usize,
+    ) -> impl Future<Output = Result<Vec<Document>>> + Send {
         async move { Ok(self.docs.iter().take(top_k).cloned().collect()) }
     }
 }
@@ -160,15 +225,24 @@ pub struct MockLLMJudger {}
 
 #[async_trait::async_trait]
 impl LLMJudger for MockLLMJudger {
-    async fn judge_relevance(&self, _query: &str, docs: &[ScoredDocument]) -> Result<Vec<ScoredDocument>> {
+    async fn judge_relevance(
+        &self,
+        _query: &str,
+        docs: &[ScoredDocument],
+    ) -> Result<Vec<ScoredDocument>> {
         let mut j = docs.to_vec();
-        for d in &mut j { d.relevance_score = (d.relevance_score * 0.95).min(1.0); }
+        for d in &mut j {
+            d.relevance_score = (d.relevance_score * 0.95).min(1.0);
+        }
         j.sort_by(|a, b| {
-            b.relevance_score.partial_cmp(&a.relevance_score)
+            b.relevance_score
+                .partial_cmp(&a.relevance_score)
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| a.document.id.cmp(&b.document.id))
         });
-        for (i, item) in j.iter_mut().enumerate() { item.rank = i; }
+        for (i, item) in j.iter_mut().enumerate() {
+            item.rank = i;
+        }
         Ok(j)
     }
 }
@@ -187,7 +261,11 @@ mod tests {
             Document::new(Uuid::new_v4(), "Python is interpreted", json!({})),
         ]);
         let cross_encoder: MockCrossEncoder = MockCrossEncoder::new();
-        let pipe = RerankingPipeline::new(retriever, cross_encoder).with_config(RerankerConfig { top_k_initial: 5, top_k_reranked: 2, ..Default::default() });
+        let pipe = RerankingPipeline::new(retriever, cross_encoder).with_config(RerankerConfig {
+            top_k_initial: 5,
+            top_k_reranked: 2,
+            ..Default::default()
+        });
         let res = pipe.rerank("Rust").await.unwrap();
         assert!(!res.results.is_empty());
     }

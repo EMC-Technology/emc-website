@@ -60,10 +60,13 @@ impl EvaluationEngine {
                     let sample_start = Instant::now();
                     let mut scores = Vec::with_capacity(metrics.len());
                     for metric in &metrics {
-                        let score = metric.evaluate(&query, &context, &answer, &expected).await?;
+                        let score = metric
+                            .evaluate(&query, &context, &answer, &expected)
+                            .await?;
                         scores.push(score);
                     }
-                    #[allow(clippy::cast_possible_truncation)] // as_millis() 返回 u128，duration_ms 为 u128，实际不存在截断
+                    #[allow(clippy::cast_possible_truncation)]
+                    // as_millis() 返回 u128，duration_ms 为 u128，实际不存在截断
                     let result = SampleEvalResult {
                         sample_id,
                         scores,
@@ -95,11 +98,17 @@ impl EvaluationEngine {
             report_id: format!(
                 "{:016x}",
                 blake3::hash(
-                    format!("{}:{}:{}", dataset.dataset_id, dataset.version, start.elapsed().as_millis()).as_bytes()
+                    format!(
+                        "{}:{}:{}",
+                        dataset.dataset_id,
+                        dataset.version,
+                        start.elapsed().as_millis()
+                    )
+                    .as_bytes()
                 )
                 .as_bytes()[..8]
-                .try_into()
-                .map_or(0, |b: [u8; 8]| u64::from_le_bytes(b))
+                    .try_into()
+                    .map_or(0, |b: [u8; 8]| u64::from_le_bytes(b))
             ),
             dataset_id: dataset.dataset_id.clone(),
             dataset_version: dataset.version.clone(),
@@ -122,6 +131,7 @@ mod tests {
     use crate::dataset::sample::{GoldenSample, SampleDifficulty};
     use crate::judge::MockJudge;
     use crate::metrics::FaithfulnessMetric;
+    use async_trait::async_trait;
 
     fn make_dataset() -> GoldenDataset {
         GoldenDataset {
@@ -148,10 +158,57 @@ mod tests {
         let engine = EvaluationEngine::new(metrics, EvalConfig::default());
 
         let dataset = make_dataset();
-        let rag_fn = |query: &str| (vec![format!("Context for: {query}")], format!("Answer for: {query}"));
+        let rag_fn = |query: &str| {
+            (
+                vec![format!("Context for: {query}")],
+                format!("Answer for: {query}"),
+            )
+        };
 
         let report = engine.evaluate(&dataset, &rag_fn).await.unwrap();
         assert_eq!(report.total_samples, 1);
         assert_eq!(report.successful_samples, 1);
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_with_metric_error() {
+        struct FailingMetric;
+
+        #[async_trait]
+        impl RAGMetric for FailingMetric {
+            fn name(&self) -> &'static str {
+                "failing_metric"
+            }
+
+            async fn evaluate(
+                &self,
+                _query: &str,
+                _context: &[String],
+                _answer: &str,
+                _ground_truth: &str,
+            ) -> crate::error::Result<crate::dataset::sample::MetricScore> {
+                Err(crate::error::metric_calculation_failed(
+                    "intentional failure",
+                ))
+            }
+        }
+
+        let failing: Arc<dyn RAGMetric> = Arc::new(FailingMetric);
+        assert_eq!(failing.name(), "failing_metric");
+        let metrics: Vec<Arc<dyn RAGMetric>> = vec![failing];
+        let engine = EvaluationEngine::new(metrics, EvalConfig::default());
+
+        let dataset = make_dataset();
+        let rag_fn = |query: &str| {
+            (
+                vec![format!("Context for: {query}")],
+                format!("Answer for: {query}"),
+            )
+        };
+
+        let report = engine.evaluate(&dataset, &rag_fn).await.unwrap();
+        assert_eq!(report.total_samples, 1);
+        assert_eq!(report.successful_samples, 0);
+        assert_eq!(report.failed_samples, 1);
     }
 }

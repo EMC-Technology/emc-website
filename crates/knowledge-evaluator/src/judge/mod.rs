@@ -3,9 +3,11 @@
 //! 详见文档: §4 | 用例: UC-040~UC-041
 
 pub mod mock_judge;
+/// ULLM 评判器实现
 pub mod ullm_judge;
 
 pub use mock_judge::MockJudge;
+#[cfg(feature = "ullm-adapter")]
 pub use ullm_judge::UllmJudge;
 
 use crate::error::Result;

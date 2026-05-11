@@ -275,9 +275,8 @@ impl StsTokenGenerator {
             trust_level,
         };
 
-        let token = encode(&Header::default(), &claims, &self.signing_key).map_err(|e| {
-            error_core::helpers::crypto_error(&format!("STS Token 编码失败: {e}"))
-        })?;
+        let token = encode(&Header::default(), &claims, &self.signing_key)
+            .map_err(|e| error_core::helpers::crypto_error(&format!("STS Token 编码失败: {e}")))?;
 
         debug!(
             target_service = target_service,
@@ -578,11 +577,13 @@ impl CertificateVerifier {
                     |(mut dns, mut uris), gn| {
                         match gn {
                             GeneralName::DNSName(name) => {
-                                dns.push(name.to_string());
+                                dns.push((*name).to_string());
                             }
                             GeneralName::URI(uri) => {
-                                uris.push(uri.to_string());
+                                uris.push((*uri).to_string());
                             }
+                            // GeneralName 来自 x509-parser 外部 crate，
+                            // 变体集合可能随版本更新扩展；非 DNS/URI 类型当前不采集
                             _ => {}
                         }
                         (dns, uris)
@@ -647,7 +648,8 @@ mod tests {
         params.distinguished_name = dn;
 
         let san = rcgen::SanType::DnsName(
-            rcgen::Ia5String::try_from("test-service.internal").expect("IA5String 创建成功"),
+            rcgen::string::Ia5String::try_from("test-service.internal")
+                .expect("IA5String 创建成功"),
         );
         params.subject_alt_names.push(san);
 

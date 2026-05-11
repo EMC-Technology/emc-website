@@ -7,7 +7,7 @@
     clippy::missing_errors_doc,
     clippy::missing_panics_doc,
     clippy::doc_markdown,
-    clippy::manual_async_fn,
+    clippy::manual_async_fn
 )]
 #![warn(missing_docs, unused_imports)]
 //! 知识系统核心数据模型与错误类型
@@ -39,6 +39,9 @@ pub mod crypto;
 
 /// 统一错误构造辅助（委托至 `error_core::helpers`）
 pub mod error;
+
+/// 向量数学工具函数（余弦相似度、欧氏距离、点积）
+pub mod math;
 
 /// 核心领域实体定义（三层节点 + 有向边）
 pub mod model;
@@ -84,20 +87,18 @@ pub mod reranker;
 /// 安全的 SurrealDB RecordId 封装
 pub mod record_id;
 
-pub use crypto::{Encryptor, Decryptor, KeyManager, hash, hash_str};
-pub use search::{Bm25Index, InvertedIndex, HybridSearchResult, RRF_DEFAULT_K};
+pub use crypto::{Decryptor, Encryptor, KeyManager, hash, hash_str};
+pub use math::{cosine_similarity, dot_product, euclidean_distance};
+pub use registry::{Registry, RegistryEntry};
 #[cfg(feature = "db")]
 pub use search::reciprocal_rank_fusion;
+pub use search::{Bm25Index, HybridSearchResult, InvertedIndex, RRF_DEFAULT_K};
 pub use staleness::{StalenessChecker, StalenessStatus};
-pub use registry::{Registry, RegistryEntry};
 
 #[cfg(feature = "kms-local")]
 pub use kms::{
-    traits::KeyManagementService,
-    traits::EncryptionAlgorithm,
-    local::LocalKms,
-    envelope::EnvelopeEncryption,
-    rotation::KeyRotationScheduler,
+    envelope::EnvelopeEncryption, local::LocalKms, rotation::KeyRotationScheduler,
+    traits::EncryptionAlgorithm, traits::KeyManagementService,
 };
 
 #[cfg(feature = "pii")]
@@ -105,8 +106,8 @@ pub use pii::PIIScanner;
 
 #[cfg(feature = "event-driven")]
 pub use event::{
-    SystemEvent, KnowledgeEvent, EventBus, EventBusConfig, EventError, global_event_bus,
-    Handler, HandleResult,
+    EventBus, EventBusConfig, EventError, HandleResult, Handler, KnowledgeEvent, SystemEvent,
+    global_event_bus,
 };
 
 #[cfg(feature = "db")]
@@ -117,15 +118,9 @@ pub use schema_manager::SchemaManager;
 
 #[cfg(feature = "db")]
 pub use repository::{
-    DocumentRepository,
-    BlockRepository,
-    TokenRepository,
-    ReferenceRepository,
-    CommunityRepository,
-    ProcessRepository,
-    KnowledgeRepository,
+    BlockRepository, CommunityRepository, DocumentRepository, KnowledgeRepository,
+    ProcessRepository, ReferenceRepository, TokenRepository, deserialize_value,
     surreal_value_to_json,
-    deserialize_value,
 };
 
 #[cfg(feature = "db")]
@@ -133,25 +128,49 @@ pub use record_id::SafeRecordId;
 
 #[cfg(feature = "db")]
 pub use cqrs::{
-    Command, Query,
-    CommandHandler, QueryHandler, CommandDispatcher, QueryDispatcher,
-    EventStore, Aggregate, AggregateRepository, AggregateError,
+    Aggregate, AggregateError, AggregateRepository, Command, CommandDispatcher, CommandHandler,
+    EventStore, Query, QueryDispatcher, QueryHandler,
 };
 
 #[cfg(feature = "db")]
-pub use audit::{AuditLogger, AuditEvent};
+pub use audit::{AuditEvent, AuditLogger};
 
 #[cfg(feature = "db")]
-pub use cache::{L1Cache, L1CacheConfig, CacheStats, CacheManager, CacheLookupResult};
+pub use cache::{CacheLookupResult, CacheManager, CacheStats, L1Cache, L1CacheConfig};
 
 #[cfg(feature = "db")]
-pub use vector_store::{VectorStore, SearchResult, VectorPoint, CollectionInfo, CollectionStatus};
+pub use vector_store::{CollectionInfo, CollectionStatus, SearchResult, VectorPoint, VectorStore};
 
 #[cfg(feature = "db")]
-pub use reranker::{CrossEncoderModel, RerankingPipeline, ScoredDocument, Document, RerankedResults, PipelineStats, HybridRetriever, LLMJudger};
+pub use reranker::{
+    CrossEncoderModel, Document, HybridRetriever, LLMJudger, PipelineStats, RerankedResults,
+    RerankingPipeline, ScoredDocument,
+};
 
 /// 统一结果类型别名，委托至 [`error_core::Result`]
 pub type Result<T> = error_core::Result<T>;
+
+/// 形式化验证模块
+///
+/// 提供三种形式化验证方法的实现：
+/// - **MIRI**: Rust MIR 解释器，检测未定义行为
+/// - **Kani**: 模型检验工具，验证内存安全性和不变量
+/// - **Proptest**: 属性测试，随机输入验证代码属性
+///
+/// # 启用方式
+///
+/// ```bash
+/// # 属性测试
+/// cargo test --features formal
+///
+/// # Kani 模型检验（需要 cargo-kani）
+/// cargo kani
+///
+/// # MIRI（仅 Unix/Linux/macOS）
+/// cargo +miri test
+/// ```
+#[cfg(feature = "formal")]
+pub mod proofs;
 
 /// 当前 crate 版本号，编译时从 `CARGO_PKG_VERSION` 环境变量注入
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

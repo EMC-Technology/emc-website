@@ -1,0 +1,25 @@
+[database]
+addr = "ws://localhost:8000"
+namespace = "knowledge"
+database = "knowledge"
+username = "leon"
+password = "781013"
+
+[server]
+host = "127.0.0.1"
+port = 3000
+tls = false
+max_request_size = 10485760
+
+[security]
+enc_key_path = "/media/leon/Relax/rust-rag/secrets/key.aes"
+jwt_secret = "31CkfYEPlaZ9eF5kC9gHfYzxf5Wpi+uRU4K+KQAgm3Q="
+jwt_expiry_hours = 24
+audit_log_path = "./audit.log"
+
+[parser]
+max_file_size = 1073741824
+chunk_size = 1000
+chunk_overlap = 100
+enable_code_parsing = true
+embedding_dim = 2560

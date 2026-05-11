@@ -7,7 +7,7 @@
 use knowledge_api::ContextGenerator;
 use knowledge_api::KnowledgeVM;
 use knowledge_core::SurrealDbClient;
-use knowledge_core::model::{Community, Direction, RefType, Reference};
+use knowledge_core::model::{Community, Direction, RefType, Reference, ReferenceStatus};
 
 use std::collections::{HashMap, HashSet};
 
@@ -111,6 +111,7 @@ fn test_mermaid_graph_syntax_with_edges() {
         scope: None,
         from_id: rid("token:a"),
         to_id: rid("token:b"),
+        status: ReferenceStatus::Created,
     }];
 
     let mermaid = format_dependency_graph(&communities, &references);
@@ -138,6 +139,7 @@ fn test_mermaid_graph_syntax_no_cross_community_edges() {
         scope: None,
         from_id: rid("token:a"),
         to_id: rid("token:b"),
+        status: ReferenceStatus::Created,
     }];
 
     let mermaid = format_dependency_graph(&communities, &references);
@@ -168,6 +170,7 @@ fn test_mermaid_graph_syntax_sanitized_ids() {
         scope: None,
         from_id: rid("token:a"),
         to_id: rid("token:b"),
+        status: ReferenceStatus::Created,
     }];
 
     let mermaid = format_dependency_graph(&communities, &references);
@@ -213,8 +216,7 @@ async fn test_context_generator_with_real_db() {
         .await
         .expect("无法连接 SurrealDB，请确保实例正在运行");
 
-    let vm = KnowledgeVM::with_embedding_dim(db_client, 1536)
-        .expect("无法创建 KnowledgeVM");
+    let vm = KnowledgeVM::with_embedding_dim(db_client, 1536).expect("无法创建 KnowledgeVM");
     let generator = ContextGenerator::new(vm);
 
     let overview = generator
@@ -248,8 +250,7 @@ async fn test_context_generator_generate_claude_md() {
         .await
         .expect("无法连接 SurrealDB，请确保实例正在运行");
 
-    let vm = KnowledgeVM::with_embedding_dim(db_client, 1536)
-        .expect("无法创建 KnowledgeVM");
+    let vm = KnowledgeVM::with_embedding_dim(db_client, 1536).expect("无法创建 KnowledgeVM");
     let generator = ContextGenerator::new(vm);
 
     let temp_dir = tempfile::tempdir().expect("创建临时目录失败");

@@ -1,9 +1,9 @@
 /// HNSWLIB 内存向量索引适配器（开发/测试环境）
 ///
 /// 基于内存的 HNSW 图索引实现，无需外部依赖。
-
 use crate::error::{Error, Result};
-use crate::vector_store::store::{VectorStore, VectorPoint, CollectionInfo, CollectionStatus};
+use crate::math::{cosine_similarity, dot_product, euclidean_distance};
+use crate::vector_store::store::{CollectionInfo, CollectionStatus, VectorPoint, VectorStore};
 use crate::vector_store::types::*;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
@@ -87,7 +87,9 @@ impl HnswlibAdapter {
         results
             .into_iter()
             .map(|(id, score)| {
-                let point = collection.points.get(&id)
+                let point = collection
+                    .points
+                    .get(&id)
                     .ok_or_else(|| format!("向量点 {id} 在搜索结果中但不在集合中"))
                     .expect("搜索结果中的 ID 必定存在于集合中; 此不变量由 brute_force_search 保证");
                 SearchResult {
@@ -104,19 +106,35 @@ impl HnswlibAdapter {
 
 #[async_trait::async_trait]
 impl VectorStore for HnswlibAdapter {
-    async fn init_collection(&self, name: &str, dimension: usize, distance: DistanceMetric) -> Result<()> {
+    async fn init_collection(
+        &self,
+        name: &str,
+        dimension: usize,
+        distance: DistanceMetric,
+    ) -> Result<()> {
         debug!(collection = name, dim = dimension, "init collection");
         let mut cols = self.collections.write().await;
         if !cols.contains_key(name) {
-            cols.insert(name.to_string(), InMemoryCollection { points: HashMap::new(), distance, dimension });
+            cols.insert(
+                name.to_string(),
+                InMemoryCollection {
+                    points: HashMap::new(),
+                    distance,
+                    dimension,
+                },
+            );
         }
         Ok(())
     }
 
     async fn upsert(&self, collection: &str, points: Vec<VectorPoint>) -> Result<Vec<Uuid>> {
-        if points.is_empty() { return Ok(vec![]); }
+        if points.is_empty() {
+            return Ok(vec![]);
+        }
         let mut cols = self.collections.write().await;
-        let col = cols.get_mut(collection).ok_or_else(|| Error::new("NOT_FOUND").context(collection))?;
+        let col = cols
+            .get_mut(collection)
+            .ok_or_else(|| Error::new("NOT_FOUND").context(collection))?;
         let ids: Vec<Uuid> = points.iter().map(|p| p.id).collect();
         for p in &points {
             col.points.insert(p.id, p.clone());
@@ -124,35 +142,73 @@ impl VectorStore for HnswlibAdapter {
         Ok(ids)
     }
 
-    async fn similarity_search(&self, collection: &str, query_vector: &[f32], options: SearchOptions) -> Result<Vec<SearchResult>> {
+    async fn similarity_search(
+        &self,
+        collection: &str,
+        query_vector: &[f32],
+        options: SearchOptions,
+    ) -> Result<Vec<SearchResult>> {
         let cols = self.collections.read().await;
-        let col = cols.get(collection).ok_or_else(|| Error::new("NOT_FOUND").context(collection))?;
+        let col = cols
+            .get(collection)
+            .ok_or_else(|| Error::new("NOT_FOUND").context(collection))?;
         Ok(self.brute_force_search(col, query_vector, &options))
     }
 
-    async fn hybrid_search(&self, collection: &str, query: &HybridQuery) -> Result<Vec<SearchResult>> {
-        if let Some(ref v) = query.vector { self.similarity_search(collection, v, query.options.clone()).await } else { Ok(vec![]) }
+    async fn hybrid_search(
+        &self,
+        collection: &str,
+        query: &HybridQuery,
+    ) -> Result<Vec<SearchResult>> {
+        if let Some(ref v) = query.vector {
+            self.similarity_search(collection, v, query.options.clone())
+                .await
+        } else {
+            Ok(vec![])
+        }
     }
 
     async fn get_by_ids(&self, collection: &str, ids: &[Uuid]) -> Result<Vec<SearchResult>> {
         let cols = self.collections.read().await;
         match cols.get(collection) {
-            Some(col) => Ok(ids.iter().filter_map(|id| col.points.get(id).map(|p| SearchResult { id: *id, score: 1.0, payload: p.payload.clone(), vector: None, metadata: extract_metadata(&p.payload) })).collect()),
+            Some(col) => Ok(ids
+                .iter()
+                .filter_map(|id| {
+                    col.points.get(id).map(|p| SearchResult {
+                        id: *id,
+                        score: 1.0,
+                        payload: p.payload.clone(),
+                        vector: None,
+                        metadata: extract_metadata(&p.payload),
+                    })
+                })
+                .collect()),
             None => Err(Error::new("NOT_FOUND").context(collection)),
         }
     }
 
     async fn delete(&self, collection: &str, ids: &[Uuid]) -> Result<()> {
-        if ids.is_empty() { return Ok(()); }
+        if ids.is_empty() {
+            return Ok(());
+        }
         let mut cols = self.collections.write().await;
-        if let Some(col) = cols.get_mut(collection) { for id in ids { col.points.remove(id); } }
+        if let Some(col) = cols.get_mut(collection) {
+            for id in ids {
+                col.points.remove(id);
+            }
+        }
         Ok(())
     }
 
     async fn collection_info(&self, collection: &str) -> Result<CollectionInfo> {
         let cols = self.collections.read().await;
         match cols.get(collection) {
-            Some(col) => Ok(CollectionInfo { name: collection.to_string(), vectors_count: col.points.len() as u64, dimension: col.dimension, status: CollectionStatus::Green }),
+            Some(col) => Ok(CollectionInfo {
+                name: collection.to_string(),
+                vectors_count: col.points.len() as u64,
+                dimension: col.dimension,
+                status: CollectionStatus::Green,
+            }),
             None => Err(Error::new("NOT_FOUND").context(collection)),
         }
     }
@@ -162,22 +218,6 @@ impl VectorStore for HnswlibAdapter {
         cols.clear();
         Ok(())
     }
-}
-
-fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
-    let dot: f64 = a.iter().zip(b.iter()).map(|(x, y)| (*x as f64) * (*y as f64)).sum();
-    let norm_a: f64 = a.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt();
-    let norm_b: f64 = b.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt();
-    if norm_a == 0.0 || norm_b == 0.0 { 0.0 } else { dot / (norm_a * norm_b) }
-}
-
-fn euclidean_distance(a: &[f32], b: &[f32]) -> f64 {
-    let sum: f64 = a.iter().zip(b.iter()).map(|(x, y)| (*x as f64 - *y as f64).powi(2)).sum();
-    -sum.sqrt()
-}
-
-fn dot_product(a: &[f32], b: &[f32]) -> f64 {
-    a.iter().zip(b.iter()).map(|(x, y)| (*x as f64) * (*y as f64)).sum()
 }
 
 fn extract_metadata(payload: &serde_json::Value) -> std::collections::HashMap<String, String> {

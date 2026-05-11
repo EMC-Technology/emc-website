@@ -172,7 +172,6 @@ pub trait EmbeddingModel: Send + Sync {
     /// - `EmbeddingError::TokenizerError`：分词器错误
     async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<EmbeddingResult>, EmbeddingError>;
 
-
     /// 获取嵌入维度
     fn embedding_dim(&self) -> usize;
 
@@ -234,4 +233,158 @@ pub struct EmbeddingResult {
     pub inference_time_ms: f64,
     /// 模型信息
     pub model_info: EmbeddingModelInfo,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_embedding_error_display() {
+        assert!(format!("{}", EmbeddingError::ConfigError("bad".to_string())).contains("bad"));
+        assert!(format!("{}", EmbeddingError::ModelNotLoaded("x".to_string())).contains('x'));
+        assert!(
+            format!("{}", EmbeddingError::ModelLoadFailed("fail".to_string())).contains("fail")
+        );
+        assert!(format!("{}", EmbeddingError::InferenceFailed("err".to_string())).contains("err"));
+        assert!(format!("{}", EmbeddingError::TokenizerError("tok".to_string())).contains("tok"));
+        assert!(format!("{}", EmbeddingError::EmptyInput).contains("空"));
+    }
+
+    #[test]
+    fn test_embedding_error_into_error_object() {
+        let errors = vec![
+            EmbeddingError::ConfigError("c".to_string()),
+            EmbeddingError::ModelNotLoaded("m".to_string()),
+            EmbeddingError::ModelLoadFailed("l".to_string()),
+            EmbeddingError::InferenceFailed("i".to_string()),
+            EmbeddingError::TokenizerError("t".to_string()),
+            EmbeddingError::EmptyInput,
+        ];
+        for err in errors {
+            let _obj: error_core::ErrorObject = err.into();
+        }
+    }
+
+    #[test]
+    fn test_embedding_model_type_display() {
+        assert_eq!(format!("{}", EmbeddingModelType::Hash), "hash");
+        assert_eq!(format!("{}", EmbeddingModelType::Gemma4E4b), "gemma-4-e4b");
+        assert_eq!(
+            format!("{}", EmbeddingModelType::OpenAIAda002),
+            "openai-ada-002"
+        );
+        assert_eq!(
+            format!("{}", EmbeddingModelType::Custom("my".to_string())),
+            "custom-my"
+        );
+    }
+
+    #[test]
+    fn test_embedding_model_type_from_str() {
+        assert_eq!(
+            "hash".parse::<EmbeddingModelType>(),
+            Ok(EmbeddingModelType::Hash)
+        );
+        assert_eq!(
+            "gemma-4-e4b".parse::<EmbeddingModelType>(),
+            Ok(EmbeddingModelType::Gemma4E4b)
+        );
+        assert_eq!(
+            "gemma4e4b".parse::<EmbeddingModelType>(),
+            Ok(EmbeddingModelType::Gemma4E4b)
+        );
+        assert_eq!(
+            "gemma-4-4b".parse::<EmbeddingModelType>(),
+            Ok(EmbeddingModelType::Gemma4E4b)
+        );
+        assert_eq!(
+            "gemma4_4b".parse::<EmbeddingModelType>(),
+            Ok(EmbeddingModelType::Gemma4E4b)
+        );
+        assert_eq!(
+            "openai-ada-002".parse::<EmbeddingModelType>(),
+            Ok(EmbeddingModelType::OpenAIAda002)
+        );
+        assert_eq!(
+            "openai".parse::<EmbeddingModelType>(),
+            Ok(EmbeddingModelType::OpenAIAda002)
+        );
+        assert_eq!(
+            "custom-mymodel".parse::<EmbeddingModelType>(),
+            Ok(EmbeddingModelType::Custom("mymodel".to_string()))
+        );
+        assert!("unknown".parse::<EmbeddingModelType>().is_err());
+    }
+
+    #[test]
+    fn test_embedding_config_default() {
+        let config = EmbeddingConfig::default();
+        assert_eq!(config.model_type, EmbeddingModelType::Gemma4E4b);
+        assert_eq!(config.embedding_dim, 2560);
+        assert!(config.use_gpu);
+        assert_eq!(config.batch_size, 32);
+    }
+
+    #[test]
+    fn test_embedding_model_info_serialization() {
+        let info = EmbeddingModelInfo {
+            name: "test-model".to_string(),
+            model_type: EmbeddingModelType::Hash,
+            embedding_dim: 256,
+            max_seq_length: 512,
+            vocab_size: 30000,
+            is_loaded: true,
+            backend: "cpu".to_string(),
+            version: "1.0".to_string(),
+            model_size_bytes: 1024,
+            gpu_supported: false,
+            device: "cpu".to_string(),
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let de: EmbeddingModelInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.name, "test-model");
+        assert_eq!(de.embedding_dim, 256);
+    }
+
+    #[test]
+    fn test_embedding_result_serialization() {
+        let result = EmbeddingResult {
+            vector: Arc::new(vec![0.1, 0.2, 0.3]),
+            token_count: 10,
+            inference_time_ms: 5.0,
+            model_info: EmbeddingModelInfo {
+                name: "test".to_string(),
+                model_type: EmbeddingModelType::Hash,
+                embedding_dim: 3,
+                max_seq_length: 512,
+                vocab_size: 0,
+                is_loaded: true,
+                backend: "cpu".to_string(),
+                version: "1.0".to_string(),
+                model_size_bytes: 0,
+                gpu_supported: false,
+                device: "cpu".to_string(),
+            },
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let de: EmbeddingResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.token_count, 10);
+        assert_eq!(de.vector.len(), 3);
+    }
+
+    #[test]
+    fn test_embedding_model_type_serialization_roundtrip() {
+        let types = [
+            EmbeddingModelType::Hash,
+            EmbeddingModelType::Gemma4E4b,
+            EmbeddingModelType::OpenAIAda002,
+            EmbeddingModelType::Custom("test".to_string()),
+        ];
+        for t in &types {
+            let json = serde_json::to_string(t).unwrap();
+            let de: EmbeddingModelType = serde_json::from_str(&json).unwrap();
+            assert_eq!(*t, de);
+        }
+    }
 }

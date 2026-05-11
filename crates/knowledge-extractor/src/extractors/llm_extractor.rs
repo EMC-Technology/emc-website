@@ -7,10 +7,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
-use knowledge_core::model::semantic::{
-    EntityType, RelationType, SemanticEntity,
-};
+use knowledge_core::model::semantic::{EntityType, RelationType, SemanticEntity};
 
 use crate::config::ExtractorConfig;
 use crate::error::{self, Result};
@@ -33,8 +32,8 @@ pub trait LanguageModel: Send + Sync {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct EntityRaw {
     name: String,
-    #[serde(rename = "type")]
-    entity_type: String,
+    #[serde(rename = "type", deserialize_with = "deserialize_entity_type_flexible")]
+    entity_type: EntityType,
     #[serde(default)]
     description: Option<String>,
 }
@@ -46,8 +45,27 @@ struct EntityRaw {
 struct RelationRaw {
     source: String,
     target: String,
-    #[serde(rename = "type")]
-    relation_type: String,
+    #[serde(
+        rename = "type",
+        deserialize_with = "deserialize_relation_type_flexible"
+    )]
+    relation_type: RelationType,
+}
+
+fn deserialize_entity_type_flexible<'de, D>(de: D) -> std::result::Result<EntityType, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(de)?;
+    Ok(parse_entity_type(&s))
+}
+
+fn deserialize_relation_type_flexible<'de, D>(de: D) -> std::result::Result<RelationType, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(de)?;
+    parse_relation_type(&s).ok_or_else(|| serde::de::Error::custom(format!("未知关系类型: {s}")))
 }
 
 /// 抽取的关系中间表示
@@ -231,13 +249,13 @@ impl LlmExtractor {
     /// 详见文档: §2.3 | 用例: UC-009 | 方法: M-016
     fn parse_entity_response(response: &str) -> Result<Vec<SemanticEntity>> {
         let json_str = extract_json_array(response);
-        let raw: Vec<EntityRaw> = serde_json::from_str(json_str).map_err(|e| error::serialization_error(&e))?;
+        let raw: Vec<EntityRaw> =
+            serde_json::from_str(json_str).map_err(|e| error::serialization_error(&e))?;
 
         let entities: Vec<_> = raw
             .into_iter()
             .map(|r| {
-                let entity_type = parse_entity_type(&r.entity_type);
-                let mut entity = SemanticEntity::new(r.name, entity_type);
+                let mut entity = SemanticEntity::new(r.name, r.entity_type);
                 entity.description = r.description;
                 entity
             })
@@ -254,7 +272,8 @@ impl LlmExtractor {
         entities: &[SemanticEntity],
     ) -> Result<Vec<ExtractedRelation>> {
         let json_str = extract_json_array(response);
-        let raw: Vec<RelationRaw> = serde_json::from_str(json_str).map_err(|e| error::serialization_error(&e))?;
+        let raw: Vec<RelationRaw> =
+            serde_json::from_str(json_str).map_err(|e| error::serialization_error(&e))?;
 
         let entity_type_map: std::collections::HashMap<&str, &EntityType> = entities
             .iter()
@@ -264,15 +283,20 @@ impl LlmExtractor {
         let relations: Vec<_> = raw
             .into_iter()
             .filter_map(|r| {
-                let relation_type = parse_relation_type(&r.relation_type)?;
-
                 let source_type = entity_type_map.get(r.source.as_str())?;
                 let target_type = entity_type_map.get(r.target.as_str())?;
 
-                if !relation_type.is_valid_type_combination(source_type, target_type) {
+                if !r
+                    .relation_type
+                    .is_valid_type_combination(source_type, target_type)
+                {
                     tracing::warn!(
                         "Skipping relation with invalid type combination: {} ({}) --{}--> {} ({})",
-                        r.source, source_type, relation_type, r.target, target_type
+                        r.source,
+                        source_type,
+                        r.relation_type,
+                        r.target,
+                        target_type
                     );
                     return None;
                 }
@@ -280,7 +304,7 @@ impl LlmExtractor {
                 Some(ExtractedRelation {
                     source_name: r.source,
                     target_name: r.target,
-                    relation_type,
+                    relation_type: r.relation_type,
                     evidence: String::new(),
                     confidence: 1.0,
                 })
@@ -297,10 +321,12 @@ impl LlmExtractor {
 /// 此函数提取第一个 `[` 到最后一个 `]` 之间的内容。
 fn extract_json_array(response: &str) -> &str {
     let start = response.find('[').unwrap_or_else(|| {
-            tracing::warn!("LLM 响应中未找到 JSON 数组起始标记 '['");
-            0
-        });
-    let end = response.rfind(']').map_or_else(|| response.len(), |i| i + 1);
+        tracing::warn!("LLM 响应中未找到 JSON 数组起始标记 '['");
+        0
+    });
+    let end = response
+        .rfind(']')
+        .map_or_else(|| response.len(), |i| i + 1);
     &response[start..end]
 }
 
@@ -314,7 +340,10 @@ fn parse_entity_type(s: &str) -> EntityType {
         "location" => EntityType::Location,
         "event" => EntityType::Event,
         "document" => EntityType::Document,
-        _ => EntityType::Other,
+        other => {
+            warn!(entity_type = other, "LLM 返回未知实体类型，映射为 Other");
+            EntityType::Other
+        }
     }
 }
 
@@ -331,7 +360,10 @@ fn parse_relation_type(s: &str) -> Option<RelationType> {
         "depends_on" => Some(RelationType::DependsOn),
         "conflicts_with" => Some(RelationType::ConflictsWith),
         "similar_to" => Some(RelationType::SimilarTo),
-        _ => None,
+        other => {
+            warn!(relation_type = other, "LLM 返回未知关系类型，已过滤");
+            None
+        }
     }
 }
 
@@ -340,6 +372,8 @@ fn parse_relation_type(s: &str) -> Option<RelationType> {
 struct MockLanguageModel {
     response: String,
     should_fail: bool,
+    fail_count: std::sync::atomic::AtomicUsize,
+    succeed_after: usize,
 }
 
 #[cfg(test)]
@@ -348,6 +382,15 @@ impl LanguageModel for MockLanguageModel {
     async fn generate(&self, _prompt: &str) -> std::result::Result<String, String> {
         if self.should_fail {
             Err("mock error".into())
+        } else if self.succeed_after > 0 {
+            let count = self
+                .fail_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if count < self.succeed_after {
+                Err("transient error".into())
+            } else {
+                Ok(self.response.clone())
+            }
         } else {
             Ok(self.response.clone())
         }
@@ -362,6 +405,8 @@ mod tests {
         Arc::new(MockLanguageModel {
             response: response.to_string(),
             should_fail: false,
+            fail_count: std::sync::atomic::AtomicUsize::new(0),
+            succeed_after: 0,
         })
     }
 
@@ -369,20 +414,38 @@ mod tests {
         Arc::new(MockLanguageModel {
             response: String::new(),
             should_fail: true,
+            fail_count: std::sync::atomic::AtomicUsize::new(0),
+            succeed_after: 0,
+        })
+    }
+
+    fn mock_llm_succeed_after(response: &str, fail_count: usize) -> Arc<dyn LanguageModel> {
+        Arc::new(MockLanguageModel {
+            response: response.to_string(),
+            should_fail: false,
+            fail_count: std::sync::atomic::AtomicUsize::new(0),
+            succeed_after: fail_count,
         })
     }
 
     #[tokio::test]
     async fn test_extract_entities_parses_valid_response() {
-        let response = r#"[{"name": "Rust", "type": "technology", "description": "A systems language"}]"#;
+        let response =
+            r#"[{"name": "Rust", "type": "technology", "description": "A systems language"}]"#;
         let llm = mock_llm(response);
         let extractor = LlmExtractor::new(llm, ExtractorConfig::default()).unwrap();
 
-        let entities = extractor.extract_entities("Rust is a systems language").await.unwrap();
+        let entities = extractor
+            .extract_entities("Rust is a systems language")
+            .await
+            .unwrap();
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0].name, "Rust");
         assert_eq!(entities[0].entity_type, EntityType::Technology);
-        assert_eq!(entities[0].description.as_deref(), Some("A systems language"));
+        assert_eq!(
+            entities[0].description.as_deref(),
+            Some("A systems language")
+        );
     }
 
     #[tokio::test]
@@ -398,7 +461,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_entities_limits_count() {
-        let config = ExtractorConfig { max_entities_per_block: 1, ..Default::default() };
+        let config = ExtractorConfig {
+            max_entities_per_block: 1,
+            ..Default::default()
+        };
         let response = r#"[{"name": "A", "type": "person"}, {"name": "B", "type": "person"}]"#;
         let llm = mock_llm(response);
         let extractor = LlmExtractor::new(llm, config).unwrap();
@@ -427,7 +493,10 @@ mod tests {
             SemanticEntity::new("Rust".into(), EntityType::Technology),
             SemanticEntity::new("Tokio".into(), EntityType::Technology),
         ];
-        let relations = extractor.extract_relations("text", &entities).await.unwrap();
+        let relations = extractor
+            .extract_relations("text", &entities)
+            .await
+            .unwrap();
         assert_eq!(relations.len(), 1);
         assert_eq!(relations[0].source_name, "Rust");
         assert_eq!(relations[0].target_name, "Tokio");
@@ -444,8 +513,11 @@ mod tests {
             SemanticEntity::new("A".into(), EntityType::Person),
             SemanticEntity::new("B".into(), EntityType::Person),
         ];
-        let relations = extractor.extract_relations("text", &entities).await.unwrap();
-        assert!(relations.is_empty());
+        let result = extractor.extract_relations("text", &entities).await;
+        assert!(
+            result.is_err(),
+            "Invalid relation type should cause deserialization error"
+        );
     }
 
     #[tokio::test]
@@ -458,14 +530,24 @@ mod tests {
             SemanticEntity::new("Rust".into(), EntityType::Technology),
             SemanticEntity::new("Tokio".into(), EntityType::Technology),
         ];
-        let relations = extractor.extract_relations("text", &entities).await.unwrap();
-        assert!(relations.is_empty(), "Technology located_in Technology should be filtered");
+        let relations = extractor
+            .extract_relations("text", &entities)
+            .await
+            .unwrap();
+        assert!(
+            relations.is_empty(),
+            "Technology located_in Technology should be filtered"
+        );
     }
 
     #[tokio::test]
     async fn test_call_llm_returns_error_on_failure() {
         let llm = mock_llm_failing();
-        let config = ExtractorConfig { max_retries: 1, llm_timeout_secs: 5, ..Default::default() };
+        let config = ExtractorConfig {
+            max_retries: 1,
+            llm_timeout_secs: 5,
+            ..Default::default()
+        };
         let extractor = LlmExtractor::new(llm, config).unwrap();
 
         let result = extractor.call_llm("test").await;
@@ -489,14 +571,35 @@ mod tests {
     fn test_parse_relation_type_all_variants() {
         assert_eq!(parse_relation_type("is_a"), Some(RelationType::IsA));
         assert_eq!(parse_relation_type("part_of"), Some(RelationType::PartOf));
-        assert_eq!(parse_relation_type("located_in"), Some(RelationType::LocatedIn));
+        assert_eq!(
+            parse_relation_type("located_in"),
+            Some(RelationType::LocatedIn)
+        );
         assert_eq!(parse_relation_type("uses"), Some(RelationType::Uses));
-        assert_eq!(parse_relation_type("related_to"), Some(RelationType::RelatedTo));
-        assert_eq!(parse_relation_type("created_by"), Some(RelationType::CreatedBy));
-        assert_eq!(parse_relation_type("implements"), Some(RelationType::Implements));
-        assert_eq!(parse_relation_type("depends_on"), Some(RelationType::DependsOn));
-        assert_eq!(parse_relation_type("conflicts_with"), Some(RelationType::ConflictsWith));
-        assert_eq!(parse_relation_type("similar_to"), Some(RelationType::SimilarTo));
+        assert_eq!(
+            parse_relation_type("related_to"),
+            Some(RelationType::RelatedTo)
+        );
+        assert_eq!(
+            parse_relation_type("created_by"),
+            Some(RelationType::CreatedBy)
+        );
+        assert_eq!(
+            parse_relation_type("implements"),
+            Some(RelationType::Implements)
+        );
+        assert_eq!(
+            parse_relation_type("depends_on"),
+            Some(RelationType::DependsOn)
+        );
+        assert_eq!(
+            parse_relation_type("conflicts_with"),
+            Some(RelationType::ConflictsWith)
+        );
+        assert_eq!(
+            parse_relation_type("similar_to"),
+            Some(RelationType::SimilarTo)
+        );
         assert_eq!(parse_relation_type("invalid"), None);
     }
 
@@ -505,5 +608,115 @@ mod tests {
         assert_eq!(extract_json_array("[1,2,3]"), "[1,2,3]");
         assert_eq!(extract_json_array("```json\n[1,2,3]\n```"), "[1,2,3]");
         assert_eq!(extract_json_array("text [1,2] more"), "[1,2]");
+    }
+
+    #[test]
+    fn test_extract_json_array_no_opening_bracket() {
+        let result = extract_json_array("no json here");
+        assert_eq!(result, "no json here");
+    }
+
+    #[test]
+    fn test_extract_json_array_no_closing_bracket() {
+        let result = extract_json_array("[1,2,3");
+        assert_eq!(result, "[1,2,3");
+    }
+
+    #[test]
+    fn test_max_retries() {
+        let llm = mock_llm("[]");
+        let extractor = LlmExtractor::new(llm, ExtractorConfig::default()).unwrap();
+        assert_eq!(extractor.max_retries(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_call_llm_retries_then_succeeds() {
+        let llm = mock_llm_succeed_after("success", 1);
+        let config = ExtractorConfig {
+            max_retries: 3,
+            llm_timeout_secs: 5,
+            ..Default::default()
+        };
+        let extractor = LlmExtractor::new(llm, config).unwrap();
+
+        let result = extractor.call_llm("test").await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "success");
+    }
+
+    #[tokio::test]
+    async fn test_extract_entities_returns_error_on_bad_json() {
+        let llm = mock_llm("not valid json");
+        let extractor = LlmExtractor::new(llm, ExtractorConfig::default()).unwrap();
+
+        let result = extractor.extract_entities("text").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_extract_relations_skips_unknown_source() {
+        let response = r#"[{"source": "Unknown", "target": "Rust", "type": "uses"}]"#;
+        let llm = mock_llm(response);
+        let extractor = LlmExtractor::new(llm, ExtractorConfig::default()).unwrap();
+
+        let entities = vec![SemanticEntity::new("Rust".into(), EntityType::Technology)];
+        let relations = extractor
+            .extract_relations("text", &entities)
+            .await
+            .unwrap();
+        assert!(
+            relations.is_empty(),
+            "Source not in entity list should be filtered"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_extract_relations_skips_unknown_target() {
+        let response = r#"[{"source": "Rust", "target": "Unknown", "type": "uses"}]"#;
+        let llm = mock_llm(response);
+        let extractor = LlmExtractor::new(llm, ExtractorConfig::default()).unwrap();
+
+        let entities = vec![SemanticEntity::new("Rust".into(), EntityType::Technology)];
+        let relations = extractor
+            .extract_relations("text", &entities)
+            .await
+            .unwrap();
+        assert!(
+            relations.is_empty(),
+            "Target not in entity list should be filtered"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_extract_relations_limits_count() {
+        let config = ExtractorConfig {
+            max_relations_per_block: 1,
+            ..Default::default()
+        };
+        let response = r#"[{"source": "Rust", "target": "Tokio", "type": "uses"},{"source": "Rust", "target": "Actix", "type": "uses"}]"#;
+        let llm = mock_llm(response);
+        let extractor = LlmExtractor::new(llm, config).unwrap();
+
+        let entities = vec![
+            SemanticEntity::new("Rust".into(), EntityType::Technology),
+            SemanticEntity::new("Tokio".into(), EntityType::Technology),
+            SemanticEntity::new("Actix".into(), EntityType::Technology),
+        ];
+        let relations = extractor
+            .extract_relations("text", &entities)
+            .await
+            .unwrap();
+        assert_eq!(relations.len(), 1);
+    }
+
+    #[test]
+    fn test_llm_extractor_new_rejects_invalid_config() {
+        let llm = mock_llm("[]");
+        let config = ExtractorConfig {
+            max_retries: 0,
+            ..Default::default()
+        };
+        let result = LlmExtractor::new(llm, config);
+        assert!(result.is_err());
     }
 }

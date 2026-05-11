@@ -46,7 +46,11 @@ pub struct HashEmbedding {
 #[inline]
 fn blake3_to_u64(data: &[u8]) -> u64 {
     let hash = blake3::hash(data);
-    u64::from_le_bytes(hash.as_bytes()[..8].try_into().expect("blake3 输出至少 8 字节"))
+    u64::from_le_bytes(
+        hash.as_bytes()[..8]
+            .try_into()
+            .expect("blake3 输出至少 8 字节"),
+    )
 }
 
 impl HashEmbedding {

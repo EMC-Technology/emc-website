@@ -134,21 +134,21 @@ impl<V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static> CacheManag
     pub async fn set(&self, key: &str, value: &V, ttl: Duration) -> Result<()> {
         match self.write_policy {
             WritePolicy::WriteThrough => {
-                if let Some(ref l2) = self.l2 {
-                    if let Err(e) = l2.set(key, value, ttl).await {
-                        return Err(error_core::helpers::cache_manager_l2_error(&format!(
-                            "L2 cache write error for key {key}: {e}"
-                        )));
-                    }
+                if let Some(ref l2) = self.l2
+                    && let Err(e) = l2.set(key, value, ttl).await
+                {
+                    return Err(error_core::helpers::cache_manager_l2_error(&format!(
+                        "L2 cache write error for key {key}: {e}"
+                    )));
                 }
                 self.l1.set(key, value.clone()).await;
             }
             WritePolicy::WriteBehind => {
                 self.l1.set(key, value.clone()).await;
-                if let Some(ref l2) = self.l2 {
-                    if let Err(e) = l2.set(key, value, ttl).await {
-                        tracing::warn!("L2 cache write error for key {}: {}", key, e);
-                    }
+                if let Some(ref l2) = self.l2
+                    && let Err(e) = l2.set(key, value, ttl).await
+                {
+                    tracing::warn!("L2 cache write error for key {}: {}", key, e);
                 }
             }
             WritePolicy::WriteAround => {
@@ -170,10 +170,10 @@ impl<V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static> CacheManag
     ///
     /// 此方法始终返回 `Ok(())`，L2 删除失败仅记录日志
     pub async fn invalidate(&self, key: &str) -> Result<()> {
-        if let Some(ref l2) = self.l2 {
-            if let Err(e) = l2.delete(key).await {
-                tracing::warn!("L2 cache delete error for key {}: {}", key, e);
-            }
+        if let Some(ref l2) = self.l2
+            && let Err(e) = l2.delete(key).await
+        {
+            tracing::warn!("L2 cache delete error for key {}: {}", key, e);
         }
 
         self.l1.invalidate(key).await;
@@ -189,10 +189,10 @@ impl<V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static> CacheManag
     /// # Errors
     /// 此方法始终返回 `Ok(())`，L2 删除失败仅记录日志
     pub async fn invalidate_prefix(&self, prefix: &str) -> Result<()> {
-        if let Some(ref l2) = self.l2 {
-            if let Err(e) = l2.delete_pattern(prefix).await {
-                tracing::warn!("L2 cache pattern delete error for prefix {}: {}", prefix, e);
-            }
+        if let Some(ref l2) = self.l2
+            && let Err(e) = l2.delete_pattern(prefix).await
+        {
+            tracing::warn!("L2 cache pattern delete error for prefix {}: {}", prefix, e);
         }
 
         self.l1.invalidate_prefix(prefix).await;
@@ -207,10 +207,10 @@ impl<V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static> CacheManag
     pub async fn clear(&self) -> Result<()> {
         self.l1.clear();
 
-        if let Some(ref l2) = self.l2 {
-            if let Err(e) = l2.flush().await {
-                tracing::warn!("L2 cache flush error: {}", e);
-            }
+        if let Some(ref l2) = self.l2
+            && let Err(e) = l2.flush().await
+        {
+            tracing::warn!("L2 cache flush error: {}", e);
         }
 
         Ok(())

@@ -1,6 +1,6 @@
-use redis::{AsyncCommands, Client};
-use serde::{de::DeserializeOwned, Serialize};
 use bincode;
+use redis::{AsyncCommands, Client};
+use serde::{Serialize, de::DeserializeOwned};
 use std::time::Duration;
 use thiserror::Error;
 
@@ -79,7 +79,11 @@ impl L2Cache {
     ///
     /// # Errors
     /// 返回 `L2CacheError::Connection` 当 URL 格式无效或连接失败时。
-    pub fn from_url(url: &str, key_prefix: &str, default_ttl: Duration) -> Result<Self, L2CacheError> {
+    pub fn from_url(
+        url: &str,
+        key_prefix: &str,
+        default_ttl: Duration,
+    ) -> Result<Self, L2CacheError> {
         let client = Client::open(url).map_err(|e| L2CacheError::Connection(e.to_string()))?;
 
         Ok(Self {
@@ -101,7 +105,10 @@ impl L2Cache {
         let full_key = format!("{}{}", self.key_prefix, key);
 
         let mut conn = self.get_connection().await?;
-        let data: Option<Vec<u8>> = conn.get(&full_key).await.map_err(|e| L2CacheError::Operation(e.to_string()))?;
+        let data: Option<Vec<u8>> = conn
+            .get(&full_key)
+            .await
+            .map_err(|e| L2CacheError::Operation(e.to_string()))?;
 
         match data {
             Some(bytes) => {
@@ -125,14 +132,20 @@ impl L2Cache {
     /// # Errors
     /// - `L2CacheError::Connection`: Redis 连接失败
     /// - `L2CacheError::Serialization`: 序列化失败
-    pub async fn set<V: Serialize + Sync>(&self, key: &str, value: &V, ttl: Duration) -> Result<(), L2CacheError> {
+    pub async fn set<V: Serialize + Sync>(
+        &self,
+        key: &str,
+        value: &V,
+        ttl: Duration,
+    ) -> Result<(), L2CacheError> {
         let full_key = format!("{}{}", self.key_prefix, key);
 
-        let serialized = bincode::serialize(value)
-            .map_err(|e| L2CacheError::Serialization(e.to_string()))?;
+        let serialized =
+            bincode::serialize(value).map_err(|e| L2CacheError::Serialization(e.to_string()))?;
 
         let mut conn = self.get_connection().await?;
-        let _: () = conn.set_ex(&full_key, serialized, ttl.as_secs())
+        let _: () = conn
+            .set_ex(&full_key, serialized, ttl.as_secs())
             .await
             .map_err(|e| L2CacheError::Operation(e.to_string()))?;
 
@@ -147,7 +160,10 @@ impl L2Cache {
         let full_key = format!("{}{}", self.key_prefix, key);
 
         let mut conn = self.get_connection().await?;
-        let _: () = conn.del(&full_key).await.map_err(|e| L2CacheError::Operation(e.to_string()))?;
+        let _: () = conn
+            .del(&full_key)
+            .await
+            .map_err(|e| L2CacheError::Operation(e.to_string()))?;
 
         Ok(())
     }
@@ -165,14 +181,21 @@ impl L2Cache {
         let mut cursor: u64 = 0;
         loop {
             let mut cmd = redis::cmd("SCAN");
-            cmd.arg(cursor).arg("MATCH").arg(&full_pattern).arg("COUNT").arg(100);
+            cmd.arg(cursor)
+                .arg("MATCH")
+                .arg(&full_pattern)
+                .arg("COUNT")
+                .arg(100);
             let (next_cursor, keys): (u64, Vec<String>) = cmd
                 .query_async(&mut conn)
                 .await
                 .map_err(|e| L2CacheError::Operation(e.to_string()))?;
 
             if !keys.is_empty() {
-                let _: () = conn.del(&keys).await.map_err(|e| L2CacheError::Operation(e.to_string()))?;
+                let _: () = conn
+                    .del(&keys)
+                    .await
+                    .map_err(|e| L2CacheError::Operation(e.to_string()))?;
             }
 
             cursor = next_cursor;
@@ -200,7 +223,9 @@ impl L2Cache {
         let full_key = format!("{}{}", self.key_prefix, key);
 
         let mut conn = self.get_connection().await?;
-        conn.exists(&full_key).await.map_err(|e| L2CacheError::Operation(e.to_string()))
+        conn.exists(&full_key)
+            .await
+            .map_err(|e| L2CacheError::Operation(e.to_string()))
     }
 
     /// 设置过期时间
@@ -212,7 +237,8 @@ impl L2Cache {
         let full_key = format!("{}{}", self.key_prefix, key);
 
         let mut conn = self.get_connection().await?;
-        let _: () = conn.expire(&full_key, ttl.as_secs() as i64)
+        let _: () = conn
+            .expire(&full_key, ttl.as_secs() as i64)
             .await
             .map_err(|e| L2CacheError::Operation(e.to_string()))?;
 
@@ -229,7 +255,9 @@ impl L2Cache {
     }
 
     async fn get_connection(&self) -> Result<redis::aio::MultiplexedConnection, L2CacheError> {
-        self.client.get_multiplexed_async_connection().await
+        self.client
+            .get_multiplexed_async_connection()
+            .await
             .map_err(|e| L2CacheError::Connection(e.to_string()))
     }
 }

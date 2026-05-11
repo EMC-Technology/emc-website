@@ -12,6 +12,7 @@
 //! ```
 
 use error_core::Result;
+use knowledge_core::math::cosine_similarity;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -184,11 +185,14 @@ impl<E: SentenceEmbedder + Send + Sync + 'static> SemanticChunker<E> {
         debug!(embeddings_count = embeddings.len(), "嵌入计算完成");
 
         if embeddings.len() != sentences.len() {
-            return Err(error_core::helpers::validation_error(&format!(
-                "嵌入数量 ({}) 与句子数量 ({}) 不匹配",
-                embeddings.len(),
-                sentences.len()
-            ), "compute_semantic_embeddings"));
+            return Err(error_core::helpers::validation_error(
+                &format!(
+                    "嵌入数量 ({}) 与句子数量 ({}) 不匹配",
+                    embeddings.len(),
+                    sentences.len()
+                ),
+                "compute_semantic_embeddings",
+            ));
         }
 
         // Step 3: 检测语义边界
@@ -351,7 +355,7 @@ impl<E: SentenceEmbedder + Send + Sync + 'static> SemanticChunker<E> {
         let mut boundaries = Vec::new();
 
         for i in 0..embeddings.len().saturating_sub(1) {
-            let sim = cosine_similarity_vec(&embeddings[i], &embeddings[i + 1]);
+            let sim = cosine_similarity(&embeddings[i], &embeddings[i + 1]);
             if sim < self.config.threshold {
                 boundaries.push(i);
             }
@@ -588,28 +592,6 @@ const fn is_chinese(c: char) -> bool {
     matches!(c, '\u{4E00}'..='\u{9FFF}' | '\u{3400}'..='\u{4DBF}' | '\u{F900}'..='\u{FAFF}')
 }
 
-/// 计算两个向量的余弦相似度
-fn cosine_similarity_vec(a: &[f32], b: &[f32]) -> f64 {
-    const NORM_THRESHOLD: f64 = 1e-10;
-    if a.is_empty() || b.is_empty() || a.len() != b.len() {
-        return 0.0;
-    }
-
-    let dot: f64 = a
-        .iter()
-        .zip(b.iter())
-        .map(|(x, y)| f64::from(*x) * f64::from(*y))
-        .sum();
-    let norm_a: f64 = a.iter().map(|x| f64::from(*x).powi(2)).sum::<f64>().sqrt();
-    let norm_b: f64 = b.iter().map(|x| f64::from(*x).powi(2)).sum::<f64>().sqrt();
-
-    if norm_a < NORM_THRESHOLD || norm_b < NORM_THRESHOLD {
-        return 0.0;
-    }
-
-    dot / (norm_a * norm_b)
-}
-
 /// 统计句子数量
 fn count_sentences(text: &str) -> usize {
     text.chars()
@@ -750,7 +732,7 @@ mod tests {
     #[test]
     fn test_cosine_similarity_identical_vectors() {
         let v = vec![1.0, 2.0, 3.0];
-        let sim = cosine_similarity_vec(&v, &v);
+        let sim = cosine_similarity(&v, &v);
         assert!((sim - 1.0).abs() < 1e-6);
     }
 
@@ -758,7 +740,7 @@ mod tests {
     fn test_cosine_similarity_orthogonal_vectors() {
         let a = vec![1.0, 0.0, 0.0];
         let b = vec![0.0, 1.0, 0.0];
-        let sim = cosine_similarity_vec(&a, &b);
+        let sim = cosine_similarity(&a, &b);
         assert!(sim.abs() < 1e-6);
     }
 
@@ -784,5 +766,231 @@ mod tests {
 
         assert_eq!(deserialized.id, chunk.id);
         assert_eq!(deserialized.token_count, chunk.token_count);
+    }
+
+    #[test]
+    fn test_semantic_chunker_new() {
+        let embedder = Arc::new(MockEmbedder { dimension: 128 });
+        let config = SemanticChunkerConfig {
+            threshold: 0.5,
+            max_chunk_size: 256,
+            min_chunk_size: 20,
+            overlap_size: 10,
+        };
+        let _chunker = SemanticChunker::new(embedder, config);
+    }
+
+    #[tokio::test]
+    async fn test_chunk_whitespace_only() {
+        let chunker = create_test_chunker();
+        let result = chunker
+            .chunk("   \n\n  \t  ", "doc-ws")
+            .await
+            .expect("分块失败");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_recursive_split_default_separators() {
+        let chunker = create_test_chunker();
+        let text = "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.";
+        let chunks = chunker.recursive_split(text, "doc-default-sep", &[]);
+        assert!(!chunks.is_empty());
+    }
+
+    #[test]
+    fn test_recursive_split_empty_content_skipped() {
+        let chunker = create_test_chunker();
+        let text = "\n\n\n\n";
+        let chunks = chunker.recursive_split(text, "doc-newlines", &["\n\n"]);
+        assert!(chunks.is_empty(), "仅包含分隔符的文本不应产生块");
+    }
+
+    #[test]
+    fn test_split_sentences_with_quotes() {
+        let text = "He said \"hello.\" Then she replied. End of story.";
+        let sentences = SemanticChunker::<MockEmbedder>::split_sentences(text);
+        assert!(sentences.len() >= 2, "引号后应正确分割句子");
+    }
+
+    #[test]
+    fn test_split_sentences_with_chinese_quotes() {
+        let text = "他说「你好」。然后她回答了。";
+        let sentences = SemanticChunker::<MockEmbedder>::split_sentences(text);
+        assert!(sentences.len() >= 2, "中文引号后应正确分割句子");
+    }
+
+    #[test]
+    fn test_split_sentences_trailing_text() {
+        let text = "First sentence. No terminator at end";
+        let sentences = SemanticChunker::<MockEmbedder>::split_sentences(text);
+        assert_eq!(sentences.len(), 2, "末尾无终止符的文本应作为独立句子");
+    }
+
+    #[test]
+    fn test_find_next_chunk_small_text() {
+        let chunker = create_test_chunker();
+        let text = "Short text.";
+        let (content, advance) = chunker.find_next_chunk(text, &["\n\n", "\n", ". "]);
+        assert!(!content.is_empty());
+        assert!(advance > 0);
+    }
+
+    #[test]
+    fn test_find_next_chunk_oversized_text() {
+        let embedder = Arc::new(MockEmbedder { dimension: 384 });
+        let config = SemanticChunkerConfig {
+            threshold: 0.65,
+            max_chunk_size: 20,
+            min_chunk_size: 5,
+            overlap_size: 2,
+        };
+        let chunker = SemanticChunker::new(embedder, config);
+        let text = "A very long piece of text that exceeds the max chunk size limit.";
+        let (content, advance) = chunker.find_next_chunk(text, &["\n\n", "\n"]);
+        assert!(!content.is_empty());
+        assert!(advance > 0);
+    }
+
+    #[test]
+    fn test_find_next_chunk_separator_at_start() {
+        let chunker = create_test_chunker();
+        let text = "\n\nContent after separator";
+        let (content, advance) = chunker.find_next_chunk(text, &["\n\n"]);
+        assert!(!content.is_empty() || advance > 0);
+    }
+
+    #[test]
+    fn test_recursive_split_with_overlap() {
+        let embedder = Arc::new(MockEmbedder { dimension: 384 });
+        let config = SemanticChunkerConfig {
+            threshold: 0.65,
+            max_chunk_size: 30,
+            min_chunk_size: 5,
+            overlap_size: 10,
+        };
+        let chunker = SemanticChunker::new(embedder, config);
+        let text =
+            "First sentence here. Second sentence follows. Third sentence added. Fourth one too.";
+        let chunks = chunker.recursive_split(text, "doc-overlap", &[". ", "\n"]);
+        assert!(chunks.len() > 1, "长文本应产生多个块");
+    }
+
+    #[test]
+    fn test_calculate_overlap_count_single_sentence() {
+        let chunker = create_test_chunker();
+        let count = chunker.calculate_overlap_count(&[0]);
+        assert_eq!(count, 0, "单句不应有重叠");
+    }
+
+    #[test]
+    fn test_calculate_overlap_count_multiple_sentences() {
+        let chunker = create_test_chunker();
+        let count = chunker.calculate_overlap_count(&[0, 1, 2, 3, 4]);
+        assert!(count > 0, "多句应有重叠");
+    }
+
+    #[test]
+    fn test_estimate_tokens_mixed() {
+        let text = "Hello 你好 world 世界";
+        let tokens = SemanticChunker::<MockEmbedder>::estimate_tokens(text);
+        assert!(tokens >= 4, "混合文本应正确估算 token 数");
+    }
+
+    #[test]
+    fn test_recursive_split_chinese_separators() {
+        let chunker = create_test_chunker();
+        let text = "第一句。第二句！第三句？第四句；第五句，继续";
+        let chunks = chunker.recursive_split(text, "doc-cn-sep", &["。", "！", "？", "；", "，"]);
+        assert!(!chunks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_chunk_with_semantic_boundaries() {
+        struct VaryingEmbedder {
+            dimension: usize,
+        }
+        impl SentenceEmbedder for VaryingEmbedder {
+            async fn embed(&self, _sentence: &str) -> Result<Vec<f32>> {
+                Ok(vec![1.0; self.dimension])
+            }
+            async fn embed_batch(&self, sentences: &[String]) -> Result<Vec<Vec<f32>>> {
+                Ok(sentences
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _)| {
+                        let mut v = vec![0.0; self.dimension];
+                        if i % 2 == 0 {
+                            v[0] = 1.0;
+                        } else {
+                            v[0] = -1.0;
+                        }
+                        v
+                    })
+                    .collect())
+            }
+            fn dimension(&self) -> usize {
+                self.dimension
+            }
+        }
+        let embedder = Arc::new(VaryingEmbedder { dimension: 384 });
+        let chunker = SemanticChunker::with_defaults(embedder);
+        let text = "第一句话。第二句话。第三句话。第四句话。";
+        let result = chunker.chunk(text, "doc-varying").await.expect("分块失败");
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn test_compute_sentence_offsets_fallback() {
+        let offsets = SemanticChunker::<MockEmbedder>::compute_sentence_offsets(
+            "abc",
+            &["notfound".to_string()],
+        );
+        assert_eq!(offsets.len(), 1);
+        assert_eq!(offsets[0].0, 0);
+    }
+
+    #[test]
+    fn test_count_sentences_no_terminator() {
+        let count = count_sentences("No terminator here");
+        assert_eq!(count, 1, "无终止符的文本应计为 1 句");
+    }
+
+    #[test]
+    fn test_count_sentences_with_terminators() {
+        let count = count_sentences("First. Second! Third?");
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn test_recursive_split_hard_split() {
+        let embedder = Arc::new(MockEmbedder { dimension: 384 });
+        let config = SemanticChunkerConfig {
+            threshold: 0.65,
+            max_chunk_size: 10,
+            min_chunk_size: 2,
+            overlap_size: 1,
+        };
+        let chunker = SemanticChunker::new(embedder, config);
+        let text = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        let chunks = chunker.recursive_split(text, "doc-hard", &["\n\n"]);
+        assert!(chunks.len() > 1, "超长无分隔符文本应强制分割");
+    }
+
+    #[test]
+    fn test_is_chinese() {
+        assert!(is_chinese('中'));
+        assert!(is_chinese('国'));
+        assert!(!is_chinese('A'));
+        assert!(!is_chinese('1'));
+    }
+
+    #[test]
+    fn test_is_sentence_terminator() {
+        assert!(is_sentence_terminator('。'));
+        assert!(is_sentence_terminator('.'));
+        assert!(is_sentence_terminator('!'));
+        assert!(is_sentence_terminator('？'));
+        assert!(!is_sentence_terminator(','));
     }
 }

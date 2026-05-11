@@ -1,14 +1,14 @@
-use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use crate::Result;
 use crate::error::helpers;
 use crate::kms::traits::*;
-use crate::Result;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct LeaseInfo {
@@ -21,13 +21,17 @@ struct LeaseInfo {
 impl LeaseInfo {
     fn needs_renewal(&self) -> bool {
         let elapsed = Utc::now() - self.last_renewed;
-        let remaining = self.ttl_seconds.saturating_sub(elapsed.num_seconds().max(0) as u64);
+        let remaining = self
+            .ttl_seconds
+            .saturating_sub(elapsed.num_seconds().max(0) as u64);
         remaining > 0 && remaining < self.ttl_seconds / 3
     }
 
     fn is_expired(&self) -> bool {
         let elapsed = Utc::now() - self.last_renewed;
-        self.ttl_seconds.saturating_sub(elapsed.num_seconds().max(0) as u64) == 0
+        self.ttl_seconds
+            .saturating_sub(elapsed.num_seconds().max(0) as u64)
+            == 0
     }
 }
 
@@ -94,9 +98,20 @@ impl VaultKms {
     /// 当 Vault 配置构建失败或无法创建 Vault 客户端时返回错误。
     pub async fn new(config: &VaultKmsConfig) -> Result<Self> {
         let mut settings_builder = vaultrs::client::VaultClientSettingsBuilder::default();
-        settings_builder.address(&config.address).token(&config.token);
+        settings_builder
+            .address(&config.address)
+            .token(&config.token);
 
         if config.tls.as_ref().is_some_and(|tls| tls.skip_verify) {
+            let is_dev = std::env::var("APP_ENV")
+                .map_or(true, |v| v == "development" || v == "dev" || v == "test");
+            if !is_dev {
+                return Err(helpers::crypto_error(
+                    "生产环境禁止跳过 Vault TLS 证书验证 (skip_verify=true)，\
+                     请设置 APP_ENV=development 以显式允许（仅限开发环境）",
+                ));
+            }
+            tracing::warn!("⚠️ Vault TLS 证书验证已禁用 — 仅限开发环境使用，生产环境必须启用验证");
             settings_builder.verify(false);
         }
 
@@ -117,8 +132,7 @@ impl VaultKms {
             .clone()
             .unwrap_or_else(|| "transit".to_string());
 
-        let leases: Arc<RwLock<HashMap<String, LeaseInfo>>> =
-            Arc::new(RwLock::new(HashMap::new()));
+        let leases: Arc<RwLock<HashMap<String, LeaseInfo>>> = Arc::new(RwLock::new(HashMap::new()));
 
         let lease_handle = if config.auto_lease_renew.unwrap_or(false) {
             Some(tokio::spawn(Self::lease_renewal_task(
@@ -149,8 +163,12 @@ impl VaultKms {
     ///
     /// 当 `VAULT_TOKEN` 未设置或连接 Vault 失败时返回错误。
     pub async fn from_env() -> Result<Self> {
-        let address =
-            std::env::var("VAULT_ADDR").unwrap_or_else(|_| "http://127.0.0.1:8200".to_string());
+        let address = std::env::var("VAULT_ADDR").unwrap_or_else(|_| {
+            tracing::warn!(
+                "VAULT_ADDR 未设置，使用默认值 https://127.0.0.1:8200 — 生产环境必须显式配置"
+            );
+            "https://127.0.0.1:8200".to_string()
+        });
         let token = std::env::var("VAULT_TOKEN")
             .map_err(|_| helpers::config_error("未设置 VAULT_TOKEN 环境变量"))?;
 
@@ -185,8 +203,7 @@ impl VaultKms {
             };
 
             for info in leases_to_renew {
-                let result =
-                    Self::renew_lease(&client, &info.lease_id, info.ttl_seconds).await;
+                let result = Self::renew_lease(&client, &info.lease_id, info.ttl_seconds).await;
 
                 let mut leases_map = leases.write().await;
                 match result {
@@ -326,7 +343,6 @@ impl VaultKms {
             vaultrs::api::transit::KeyType::Ed25519 => KeySpec::Ed25519,
         }
     }
-
 }
 
 #[async_trait::async_trait]
@@ -398,6 +414,24 @@ impl KeyManagementService for VaultKms {
         )
         .await
         .map_err(|e| helpers::io_error(&format!("Vault 解密失败: {}", e)))?;
+
+        BASE64
+            .decode(&response.plaintext)
+            .map_err(|e| helpers::crypto_error(&format!("Base64 解码失败: {}", e)))
+    }
+
+    async fn decrypt_dek(&self, dek: &EncryptedKey) -> Result<Vec<u8>> {
+        let ct_b64 = BASE64.encode(&dek.ciphertext_blob);
+
+        let response = vaultrs::transit::data::decrypt(
+            self.client.as_ref(),
+            &self.transit_mount,
+            &dek.encrypted_with,
+            &ct_b64,
+            None,
+        )
+        .await
+        .map_err(|e| helpers::io_error(&format!("Vault 解密 DEK 失败: {}", e)))?;
 
         BASE64
             .decode(&response.plaintext)
@@ -638,8 +672,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_register_lease() {
-        let leases: Arc<RwLock<HashMap<String, LeaseInfo>>> =
-            Arc::new(RwLock::new(HashMap::new()));
+        let leases: Arc<RwLock<HashMap<String, LeaseInfo>>> = Arc::new(RwLock::new(HashMap::new()));
 
         let lease_id = "lease-abc123".to_string();
         let info = LeaseInfo {
@@ -659,8 +692,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_lease_removed_after_three_failures() {
-        let leases: Arc<RwLock<HashMap<String, LeaseInfo>>> =
-            Arc::new(RwLock::new(HashMap::new()));
+        let leases: Arc<RwLock<HashMap<String, LeaseInfo>>> = Arc::new(RwLock::new(HashMap::new()));
 
         let lease_id = "lease-fail".to_string();
         let info = LeaseInfo {
@@ -688,8 +720,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_lease_retain_removes_expired() {
-        let leases: Arc<RwLock<HashMap<String, LeaseInfo>>> =
-            Arc::new(RwLock::new(HashMap::new()));
+        let leases: Arc<RwLock<HashMap<String, LeaseInfo>>> = Arc::new(RwLock::new(HashMap::new()));
 
         let expired_id = "lease-expired".to_string();
         let active_id = "lease-active".to_string();

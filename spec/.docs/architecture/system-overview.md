@@ -187,9 +187,9 @@ graph TB
     end
 
     subgraph Storage["数据存储层"]
-        SurrealDB[("SurrealDB<br/>主数据库<br/>(KV-RocksDB)")]
-        Qdrant[("Qdrant<br/>向量数据库<br/>(gRPC)")]
-        Redis[("Redis<br/>分布式缓存")]
+        SurrealDB[("SurrealDB<br/>主数据库<br/>(KV-RocksDB)<br/>必需")]
+        Qdrant[("Qdrant<br/>向量数据库<br/>(gRPC)<br/>可选 (qdrant feature)")]
+        Redis[("Redis<br/>分布式缓存<br/>可选 (db feature)")]
     end
 
     %% 连接关系
@@ -304,7 +304,7 @@ flowchart TD
     ES --> Apply["聚合根应用事件"]
     Apply --> WriteDB["SurrealDB 写入"]
     Apply --> Embed["Embedding 计算"]
-    Embed --> VecDB["Qdrant 向量索引"]
+    Embed --> VecDB["向量索引<br/>(SurrealDB MTREE / Qdrant)"]
 
     WriteDB --> CacheInvalid["缓存失效通知"]
     CacheInvalid --> L1Evict["L1 Cache 驱逐"]
@@ -358,6 +358,9 @@ flowchart TD
 │   ├── knowledge-core/           # 🟣 核心领域逻辑
 │   ├── knowledge-api/            # 🟠 HTTP/WebSocket API
 │   ├── knowledge-parser/         # 🟢 多格式解析器
+│   ├── knowledge-extractor/      # 🟡 实体/关系抽取器
+│   ├── knowledge-evaluator/      # ⚪ 质量评估引擎
+│   ├── ullm/                     # 🔶 统一 LLM 客户端
 │   └── knowledge-frontend/       # 🔵 Dioxus WASM 前端
 │
 ├── tests/                        # 集成测试
@@ -389,14 +392,21 @@ error-core 是本项目的统一错误处理核心库，也是公司全栈软件
 **Feature Flags**：
 | Feature | 说明 |
 |---------|------|
-| `std` | 标准库支持（默认启用） |
+| `default` (= `std`, `logging`) | 默认启用标准库和日志 |
+| `std` | 标准库支持 |
 | `serde` | serde 序列化/反序列化 |
 | `uuid` | UUID 错误标识符 |
 | `chrono` | 时间戳支持 |
-| `async` | 异步运行时集成 |
 | `db` | SurrealDB 数据库错误转换 |
-| `wasm` | WASM 目标支持 |
-| `full` | 启用所有特性 |
+| `wasm` | WASM 目标支持（含 serde + uuid） |
+| `serde-json` | JSON 序列化（含 serde） |
+| `jsonwebtoken` | JWT 错误处理 |
+| `logging` | tracing 结构化日志 |
+| `regex` | 正则表达式错误分类 |
+| `kani` | Kani 形式化验证 |
+| `fuzz` | 模糊测试支持 |
+| `testing` | 测试辅助工具 |
+| `full` | 启用所有特性（不含 kani/fuzz/testing） |
 
 ### 4.3 knowledge-core — 核心业务逻辑
 
@@ -424,11 +434,18 @@ error-core 是本项目的统一错误处理核心库，也是公司全栈软件
 **Feature Flags**：
 | Feature | 说明 |
 |---------|------|
-| `default` (= `db`) | 默认启用数据库支持 |
+| `default` (= `db`, `kms-local`, `pii`) | 默认启用数据库、本地 KMS 和 PII 脱敏 |
 | `db` | SurrealDB 集成 |
 | `event-driven` | 事件总线（Tokio + UUID） |
 | `qdrant` | Qdrant 向量数据库后端 |
 | `hnswlib` | HNSWLIB 内存向量索引 |
+| `kms-local` | 本地密钥管理（LRU 缓存） |
+| `kms-aws` | AWS KMS 密钥管理 |
+| `kms-vault` | HashiCorp Vault 密钥管理 |
+| `pii` | PII 字段自动脱敏 |
+| `reranker-local` | 本地 Cross-Encoder 重排序（Candle） |
+| `cuda` | CUDA 加速（Candle） |
+| `metal` | Apple Metal 加速（Candle） |
 
 ### 4.4 knowledge-api — HTTP/WebSocket API 层
 
@@ -444,15 +461,32 @@ error-core 是本项目的统一错误处理核心库，也是公司全栈软件
 | [`application`](crates/knowledge-api/src/application.rs) | 应用生命周期 | `AppState`, 启动/关闭钩子 |
 | [`config`](crates/knowledge-api/src/config.rs) | 配置管理 | `AppConfig`, TOML 加载 |
 | [`auth`](crates/knowledge-api/src/auth.rs) | 认证授权 | JWT + Argon2 密码哈希 |
+| [`authz`](crates/knowledge-api/src/authz/mod.rs) | 授权策略引擎 | ABAC 策略评估 |
 | [`dto`](crates/knowledge-api/src/dto.rs) | 数据传输对象 | 请求/响应类型定义 |
 | [`mcp`](crates/knowledge-api/src/mcp/mod.rs) | MCP 服务端 | `run_mcp_server()`, Tool/Prompt/Resource 注册 |
 | [`agent`](crates/knowledge-api/src/agent/mod.rs) | ReAct Agent 引擎 | `ReActAgent`, `Executor`, `Memory`, `Tools` |
 | [`rag`](crates/knowledge-api/src/rag/mod.rs) | RAG 引擎 | `RagEngine`, SSE 流式输出 |
-| [`embedding_service`](crates/knowledge-api/src/embedding_service.rs) | 嵌入计算服务 | `EmbeddingService`, `EmbeddingModel` |
+| [`embedding_service`](crates/knowledge-api/src/embedding_service.rs) | 嵌入计算服务 | `EmbeddingService`, `EmbeddingModel`(enum) |
+| [`embedding_worker`](crates/knowledge-api/src/embedding_worker.rs) | 嵌入后台任务 | 异步嵌入计算调度 |
+| [`embedding_factory`](crates/knowledge-api/src/embedding_factory.rs) | 嵌入模型工厂 | 模型实例化 |
+| [`embedding_model`](crates/knowledge-api/src/embedding_model.rs) | 嵌入模型 trait | `EmbeddingModelTrait` |
+| [`gemma_embedding`](crates/knowledge-api/src/gemma_embedding.rs) | Gemma 嵌入实现 | GEMMA4-E4B 本地推理 |
+| [`hash_embedding`](crates/knowledge-api/src/hash_embedding.rs) | 哈希嵌入实现 | SIMHash 快速嵌入 |
+| [`candle_loader`](crates/knowledge-api/src/candle_loader.rs) | Candle 模型加载 | 模型权重加载 |
+| [`gemma4_model`](crates/knowledge-api/src/gemma4_model.rs) | Gemma4 模型定义 | Candle 模型结构 |
+| [`hf_downloader`](crates/knowledge-api/src/hf_downloader.rs) | HuggingFace 下载 | 模型文件下载 |
+| [`model_factory`](crates/knowledge-api/src/model_factory.rs) | 模型工厂 | 统一模型创建 |
+| [`model_loader`](crates/knowledge-api/src/model_loader.rs) | 模型加载器 | 模型加载与缓存 |
 | [`knowledge_vm`](crates/knowledge-api/src/knowledge_vm.rs) | 知识 ViewModel | `KnowledgeVM`, 影响分析 |
 | [`observability`](crates/knowledge-api/src/observability/mod.rs) | 可观测性基础设施 | OTel Tracer, Metrics Recorder |
+| [`observability_endpoints`](crates/knowledge-api/src/observability_endpoints.rs) | 可观测性端点 | `/metrics`, `/health` |
 | [`middleware`](crates/knowledge-api/src/middleware/mod.rs) | 中间件集合 | PII 脱敏、限流、DB 事务 |
+| [`logging_middleware`](crates/knowledge-api/src/logging_middleware.rs) | 日志中间件 | 请求/响应日志 |
+| [`error_handler`](crates/knowledge-api/src/error_handler.rs) | 错误处理中间件 | 统一错误响应 |
 | [`context_generator`](crates/knowledge-api/src/context_generator.rs) | AI 上下文生成 | `ContextGenerator` |
+| [`query_types`](crates/knowledge-api/src/query_types.rs) | 查询类型定义 | 搜索查询结构 |
+| [`rbac`](crates/knowledge-api/src/rbac.rs) | 角色访问控制 | RBAC 权限管理 |
+| [`plugins`](crates/knowledge-api/src/plugins.rs) | 插件系统 | 动态插件加载 |
 
 ### 4.5 knowledge-parser — 多格式解析器
 
@@ -462,17 +496,29 @@ error-core 是本项目的统一错误处理核心库，也是公司全栈软件
 
 | 模块 | 职责 | 关键类型 |
 |------|------|----------|
-| [`markdown_parser`](crates/knowledge-parser/src/markdown_parser.rs) | Markdown 解析 | comrak AST → Block/Token 转换 |
-| [`tree_sitter_parser`](crates/knowledge-parser/src/tree_sitter_parser.rs) | 源代码解析 | tree-sitter AST → 符号表 |
-| [`text_splitter`](crates/knowledge-parser/src/text_splitter.rs) | 纯文本分割 | ICU 分词 + 语义分块 |
 | [`chunker`](crates/knowledge-parser/src/chunker.rs) | 语义分块器 | `SemanticChunker`, 重叠窗口策略 |
-| [`pipeline`](crates/knowledge-parser/src/pipeline.rs) | DAG 编排引擎 | `ParsePipeline`, 并行调度 |
 | [`code_pipeline`](crates/knowledge-parser/src/code_pipeline.rs) | 代码分析管道 | 符号解析 + 引用抽取 |
-| [`symbol_resolver`](crates/knowledge-parser/src/symbol_resolver.rs) | 符号解析器 | 作用域栈、类型推断辅助 |
-| [`graph_builder`](crates/knowledge-parser/src/graph_builder.rs) | 知识图谱构建 | Community/Process 发现 |
-| [`semantic_chunker`](crates/knowledge-parser/src/semantic_chunker.rs) | 语义分块优化 | 嵌入相似度边界检测 |
+| [`code_token_mapper`](crates/knowledge-parser/src/code_token_mapper.rs) | 代码 Token 映射 | 语言关键字 → TokenType 转换 |
+| [`community_detector`](crates/knowledge-parser/src/community_detector.rs) | 社区发现算法 | 图聚类、模块度优化 |
 | [`dag`](crates/knowledge-parser/src/dag.rs) | DAG 数据结构 | 有向无环图（用于解析依赖） |
-| [`icu_tokenizer`](crates/knowledge-parser/src/icu_tokenizer.rs) | ICU 分词封装 | Unicode 边界分段 |
+| [`event_emitter`](crates/knowledge-parser/src/event_emitter.rs) | 解析事件发射 | Axiom-2 事件溯源适配 *(需 `event-driven` feature)* |
+| [`ast_cache`](crates/knowledge-parser/src/ast_cache.rs) | AST 缓存管理 | tree-sitter 语法树缓存 |
+| [`grammar_cache`](crates/knowledge-parser/src/grammar_cache.rs) | 语法缓存 | tree-sitter Language 缓存与版本兼容 |
+| [`pipeline`](crates/knowledge-parser/src/pipeline.rs) | DAG 编排引擎 | `ParsePipeline`, 并行调度 |
+| [`file_ingester`](crates/knowledge-parser/src/file_ingester.rs) | 文件摄入 | 文件读取与格式检测 |
+| [`icu_tokenizer`](crates/knowledge-parser/src/icu_tokenizer.rs) | ICU 分词器 | Unicode 边界分词 |
+| [`markdown_parser`](crates/knowledge-parser/src/markdown_parser.rs) | Markdown 解析 | comrak AST 解析 |
+| [`markdown_pipeline`](crates/knowledge-parser/src/markdown_pipeline.rs) | Markdown 管道 | Markdown 专用解析流水线 |
+| [`source_type_detector`](crates/knowledge-parser/src/source_type_detector.rs) | 格式检测 | 文件类型自动识别 |
+| [`text_splitter`](crates/knowledge-parser/src/text_splitter.rs) | 文本分割 | ICU Segmenter 分割 |
+| [`tree_sitter_parser`](crates/knowledge-parser/src/tree_sitter_parser.rs) | 代码解析 | tree-sitter 增量解析 |
+| [`execution_flow`](crates/knowledge-parser/src/execution_flow.rs) | 执行流分析 | 控制流图构建 |
+| [`graph_builder`](crates/knowledge-parser/src/graph_builder.rs) | 图构建 | 引用关系图构建 |
+| [`idempotency`](crates/knowledge-parser/src/idempotency.rs) | 幂等性 | BLAKE3 去重键 |
+| [`scope_stack`](crates/knowledge-parser/src/scope_stack.rs) | 作用域栈 | 嵌套作用域追踪 |
+| [`symbol_resolver`](crates/knowledge-parser/src/symbol_resolver.rs) | 符号解析 | 定义/引用解析 |
+| [`semantic_chunker`](crates/knowledge-parser/src/semantic_chunker.rs) | 语义分块 | 语义边界检测分块 |
+| [`summarizer`](crates/knowledge-parser/src/summarizer.rs) | 摘要生成 | 文档摘要提取 *(需 `db` feature)* |
 
 **Language Feature Flags**：
 支持 15 种编程语言的按需加载（每个 grammar 约 1-3 MB）：
@@ -482,7 +528,69 @@ error-core 是本项目的统一错误处理核心库，也是公司全栈软件
 - 数据格式：`lang-toml`, `lang-yaml`, `lang-json`
 - 便捷组合：`lang-full`（启用全部）
 
-### 4.6 knowledge-frontend — Dioxus WASM 前端
+### 4.6 knowledge-extractor — 实体/关系抽取器
+
+**定位**：负责从文本中抽取结构化实体和关系，构建语义知识图谱。
+
+**模块架构**：
+
+| 模块 | 职责 | 关键类型 |
+|------|------|----------|
+| [`config`](crates/knowledge-extractor/src/config.rs) | 抽取配置 | `ExtractorConfig`, `DisambiguationStrategy` |
+| [`extractors`](crates/knowledge-extractor/src/extractors/mod.rs) | 抽取器集合 | `LlmExtractor`, `ExtractedRelation`, `LanguageModel` |
+| [`deduplication`](crates/knowledge-extractor/src/deduplication.rs) | 实体去重 | `Deduplicator` |
+| [`disambiguation`](crates/knowledge-extractor/src/disambiguation.rs) | 实体消歧 | `Disambiguator` |
+| [`pipeline`](crates/knowledge-extractor/src/pipeline.rs) | 抽取管道 | `ExtractionPipeline`, `RecoveryAction` |
+| [`error`](crates/knowledge-extractor/src/error.rs) | 错误类型 | `Result<T>` |
+
+> **注意**：早期设计文档中列出的 `rule_extractor` 和 `regex_extractor` 尚未实现，
+> 当前仅提供 `llm_extractor`。`disambiguator` 模块已重命名为 `disambiguation`。
+
+### 4.7 knowledge-evaluator — 质量评估引擎
+
+**定位**：对知识图谱和抽取结果进行质量评估，支持 LLM 判决和指标计算。
+
+**模块架构**：
+
+| 模块 | 职责 | 关键类型 |
+|------|------|----------|
+| [`config`](crates/knowledge-evaluator/src/config.rs) | 评估配置 | `EvalConfig` |
+| [`metrics`](crates/knowledge-evaluator/src/metrics.rs) | 评估指标计算 | `FaithfulnessMetric`, `AnswerRelevancyMetric`, `ContextPrecisionMetric`, `ContextRecallMetric` |
+| [`judge`](crates/knowledge-evaluator/src/judge.rs) | LLM 判决评估 | `LLMJudge`, `MockJudge`, `UllmJudge`, `JudgeResult` |
+| [`dataset`](crates/knowledge-evaluator/src/dataset.rs) | 评估数据集管理 | `GoldenDataset`, `GoldenSample`, `SampleDifficulty` |
+| [`engine`](crates/knowledge-evaluator/src/engine.rs) | 评估引擎 | `EvaluationEngine` |
+| [`report`](crates/knowledge-evaluator/src/report.rs) | 报告生成 | `MarkdownExporter`, `MetricAggregator` |
+| [`error`](crates/knowledge-evaluator/src/error.rs) | 错误类型 | `Result<T>` |
+
+### 4.8 ullm — 统一 LLM 客户端
+
+**定位**：统一的 LLM API 客户端库，支持多供应商（OpenAI/Kimi/Qwen/DeepSeek/Ollama）的统一接口。
+
+**模块架构**：
+
+| 模块 | 职责 | 关键类型 |
+|------|------|----------|
+| [`provider`](crates/ullm/src/provider/mod.rs) | 供应商适配器 | `OpenAiCompatibleProvider`, `KimiProvider`, `QwenProvider`, `AnthropicProvider`, `OllamaProvider`, `XaiProvider`, `CodeGeexProvider` |
+| [`credential`](crates/ullm/src/credential/mod.rs) | 凭证管理 | `CredentialsProvider`, `AliasCredentialProvider`, `PortalAuthProvider`, `EnvCredentialProvider`, `OAuthCredentialProvider` |
+| [`thinking`](crates/ullm/src/thinking.rs) | 推理模型检测 | `is_reasoning_model()`, 思考标签解析 |
+| [`error_bridge`](crates/ullm/src/error_bridge.rs) | 错误桥接 | LLM 错误 → error-core 四维分类 |
+| [`process_bridge`](crates/ullm/src/process_bridge.rs) | 流程桥接 | Axiom-3 定义/实例 ID 分离 |
+| [`stream`](crates/ullm/src/stream.rs) | 流式响应 | SSE 解析, chunk 迭代器 |
+| [`api`](crates/ullm/src/api.rs) | API 层 | LLM 请求/响应类型 |
+| [`cancel`](crates/ullm/src/cancel.rs) | 取消令牌 | `CancellationToken` |
+| [`error`](crates/ullm/src/error.rs) | 错误类型 | `LlmError` |
+| [`middleware`](crates/ullm/src/middleware.rs) | 中间件 | 请求/响应拦截 |
+| [`observability`](crates/ullm/src/observability.rs) | 可观测性 | OTel Tracing/Metrics |
+| [`prelude`](crates/ullm/src/prelude.rs) | 预导入 | 常用类型重导出 |
+| [`rate_limit`](crates/ullm/src/rate_limit.rs) | 速率限制 | 令牌桶算法 |
+| [`registry`](crates/ullm/src/registry.rs) | 供应商注册 | Provider 注册表 |
+| [`response`](crates/ullm/src/response.rs) | 响应类型 | 统一响应结构 |
+| [`retry`](crates/ullm/src/retry.rs) | 重试策略 | 确定性指数退避 |
+| [`stream_bridge`](crates/ullm/src/stream_bridge.rs) | 流桥接 | Axiom-2 事件适配 |
+| [`token_count`](crates/ullm/src/token_count.rs) | Token 计数 | tiktoken-rs 集成 |
+| [`tool`](crates/ullm/src/tool.rs) | 工具调用 | Function Calling |
+
+### 4.9 knowledge-frontend — Dioxus WASM 前端
 
 **定位**：基于 Dioxus 框架编译为 WebAssembly 的单页应用，提供知识图谱的可视化交互界面。
 
@@ -642,7 +750,7 @@ graph TD
 | **Cargo 包名前缀** | `knowledge-*` |
 | **当前版本** | 0.1.0 (pre-alpha) |
 | **Rust Edition** | 2024 |
-| **MSRV (最低支持)** | 1.85 |
+| **MSRV (最低支持)** | 1.91 |
 | **许可证** | MIT |
 | **版本策略** | 语义化版本 (SemVer) |
 

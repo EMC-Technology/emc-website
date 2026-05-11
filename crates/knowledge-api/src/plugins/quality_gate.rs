@@ -113,3 +113,93 @@ pub struct RuleInfo {
     /// 是否启用
     pub enabled: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_code_change_serialization() {
+        let change = CodeChange {
+            repository: "my-repo".to_string(),
+            branch: "main".to_string(),
+            commit_sha: "abc123".to_string(),
+            changed_files: vec!["src/main.rs".to_string()],
+            diff: Some("@@ -1,3 +1,3 @@".to_string()),
+            author: Some("dev".to_string()),
+            message: Some("fix bug".to_string()),
+        };
+        let json = serde_json::to_string(&change).unwrap();
+        let de: CodeChange = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.repository, "my-repo");
+        assert_eq!(de.commit_sha, "abc123");
+        assert!(de.diff.is_some());
+    }
+
+    #[test]
+    fn test_quality_verdict_serialization() {
+        let verdict = QualityVerdict {
+            passed: true,
+            score: 0.95,
+            violations: vec![],
+            auto_fix_available: false,
+            details: serde_json::json!({"checks": 10}),
+        };
+        let json = serde_json::to_string(&verdict).unwrap();
+        let de: QualityVerdict = serde_json::from_str(&json).unwrap();
+        assert!(de.passed);
+        assert!((de.score - 0.95).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_violation_serialization() {
+        let violation = Violation {
+            rule_id: "R001".to_string(),
+            severity: Severity::Warning,
+            message: "Unused variable".to_string(),
+            file: "src/main.rs".to_string(),
+            line: Some(42),
+        };
+        let json = serde_json::to_string(&violation).unwrap();
+        let de: Violation = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.rule_id, "R001");
+        assert_eq!(de.severity, Severity::Warning);
+    }
+
+    #[test]
+    fn test_severity_ordering() {
+        assert!(Severity::Info < Severity::Warning);
+        assert!(Severity::Warning < Severity::Error);
+        assert!(Severity::Error < Severity::Critical);
+    }
+
+    #[test]
+    fn test_severity_serialization_roundtrip() {
+        let severities = [
+            Severity::Info,
+            Severity::Warning,
+            Severity::Error,
+            Severity::Critical,
+        ];
+        for s in &severities {
+            let json = serde_json::to_string(s).unwrap();
+            let de: Severity = serde_json::from_str(&json).unwrap();
+            assert_eq!(*s, de);
+        }
+    }
+
+    #[test]
+    fn test_rule_info_serialization() {
+        let rule = RuleInfo {
+            rule_id: "R001".to_string(),
+            name: "No Unused".to_string(),
+            description: "Checks for unused variables".to_string(),
+            severity: Severity::Warning,
+            enabled: true,
+        };
+        let json = serde_json::to_string(&rule).unwrap();
+        let de: RuleInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.rule_id, "R001");
+        assert!(de.enabled);
+    }
+}

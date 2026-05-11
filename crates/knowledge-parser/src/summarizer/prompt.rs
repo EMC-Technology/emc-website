@@ -175,4 +175,49 @@ mod tests {
         assert!(prompt.contains("注"));
         assert!(prompt.contains("100 个实体"));
     }
+
+    #[test]
+    fn test_community_summary_no_truncation_note_when_all_entities_shown() {
+        let entities: Vec<SemanticEntity> = (0..3)
+            .map(|i| SemanticEntity::new(format!("Entity{i}"), EntityType::Concept))
+            .collect();
+        let context = SummarizationContext {
+            entities: entities.clone(),
+            relations: vec![],
+            total_entity_count: 3,
+            total_relation_count: 0,
+        };
+        let prompt = SummarizationPromptTemplate::community_summary(&context);
+        assert!(!prompt.contains("注"), "所有实体都已展示时不应有截断提示");
+        assert!(prompt.contains("3 个"), "应显示实体数量");
+    }
+
+    #[test]
+    fn test_community_summary_empty_entities_and_relations() {
+        let context = SummarizationContext {
+            entities: vec![],
+            relations: vec![],
+            total_entity_count: 0,
+            total_relation_count: 0,
+        };
+        let prompt = SummarizationPromptTemplate::community_summary(&context);
+        assert!(prompt.contains("0 个"), "应显示 0 个实体");
+    }
+
+    #[test]
+    fn test_community_summary_entity_with_description() {
+        let mut entity = SemanticEntity::new("Rust".to_string(), EntityType::Technology);
+        entity.description = Some("A systems programming language".to_string());
+        let context = SummarizationContext {
+            entities: vec![entity],
+            relations: vec![],
+            total_entity_count: 1,
+            total_relation_count: 0,
+        };
+        let prompt = SummarizationPromptTemplate::community_summary(&context);
+        assert!(
+            prompt.contains("A systems programming language"),
+            "应包含实体描述"
+        );
+    }
 }

@@ -5,7 +5,7 @@
 //!
 //! # 架构设计
 //!
-//! ```
+//! ```text
 //! ┌─────────────────────────────────────┐
 //! │       Application Layer             │
 //! │   (KnowledgeVM / EmbeddingService)  │
@@ -101,13 +101,21 @@ impl From<ModelLoaderError> for error_core::ErrorObject {
     fn from(err: ModelLoaderError) -> Self {
         use error_core::helpers;
         match err {
-            ModelLoaderError::UnsupportedModel(msg) => helpers::embedding_config_error(&format!("不支持的模型: {msg}")),
-            ModelLoaderError::UnsupportedBackend(msg) => helpers::embedding_config_error(&format!("不支持的后端: {msg}")),
-            ModelLoaderError::ModelNotFound(path) => helpers::not_found("model", &path.display().to_string()),
+            ModelLoaderError::UnsupportedModel(msg) => {
+                helpers::embedding_config_error(&format!("不支持的模型: {msg}"))
+            }
+            ModelLoaderError::UnsupportedBackend(msg) => {
+                helpers::embedding_config_error(&format!("不支持的后端: {msg}"))
+            }
+            ModelLoaderError::ModelNotFound(path) => {
+                helpers::not_found("model", &path.display().to_string())
+            }
             ModelLoaderError::LoadFailed(msg) => helpers::embedding_model_load_failed(&msg),
             ModelLoaderError::TokenizerFailed(msg) => helpers::embedding_tokenizer_error(&msg),
             ModelLoaderError::InferenceFailed(msg) => helpers::embedding_inference_failed(&msg),
-            ModelLoaderError::DeviceInitFailed(msg) => helpers::embedding_model_load_failed(&format!("设备初始化失败: {msg}")),
+            ModelLoaderError::DeviceInitFailed(msg) => {
+                helpers::embedding_model_load_failed(&format!("设备初始化失败: {msg}"))
+            }
             ModelLoaderError::ConfigError(msg) => helpers::embedding_config_error(&msg),
             ModelLoaderError::Io(e) => helpers::embedding_io_error(&e.to_string()),
             ModelLoaderError::Serialization(e) => helpers::serde_error(&e.to_string()),

@@ -1,8 +1,9 @@
 //! Error object module formal verification tests using Kani
+#![cfg(kani)]
 
-use error_core::error_object::*;
 use error_core::classification::*;
-use error_core::propagation::{ContextFrame, RecoveryHint, RetryConfig};
+use error_core::error_object::*;
+use error_core::propagation::{ContextFrame, RecoveryAction, RecoveryHint, RetryConfig};
 use std::collections::HashMap;
 
 // Test ErrorObjectBuilder::build with all required fields
@@ -26,7 +27,10 @@ fn test_error_object_build_valid() {
     assert_eq!(error.impact_scope(), ImpactScope::SESSION);
     assert_eq!(error.recoverability(), Recoverability::AutoRecoverable);
     assert_eq!(error.message(), "AI model call timed out");
-    assert_eq!(error.user_message(), "AI model service is temporarily unavailable");
+    assert_eq!(
+        error.user_message(),
+        "AI model service is temporarily unavailable"
+    );
     assert_eq!(error.module_path(), "ai_model::lm_manager");
     assert_eq!(error.operation(), "generate_code_completion");
 }
@@ -176,12 +180,18 @@ fn test_error_object_getters() {
     assert_eq!(error.impact_scope(), ImpactScope::SESSION);
     assert_eq!(error.recoverability(), Recoverability::AutoRecoverable);
     assert_eq!(error.message(), "AI model call timed out");
-    assert_eq!(error.user_message(), "AI model service is temporarily unavailable");
+    assert_eq!(
+        error.user_message(),
+        "AI model service is temporarily unavailable"
+    );
     assert_eq!(error.module_path(), "ai_model::lm_manager");
     assert_eq!(error.operation(), "generate_code_completion");
     assert_eq!(error.session_id().unwrap(), "session_123");
     assert_eq!(error.request_id().unwrap(), "request_456");
-    assert_eq!(error.details().get("model_name").unwrap(), &serde_json::json!("gpt-4"));
+    assert_eq!(
+        error.details().get("model_name").unwrap(),
+        &serde_json::json!("gpt-4")
+    );
     assert!(error.cause().is_none());
     assert!(error.retry_config().is_none());
     assert!(error.recovery_hints().is_empty());
@@ -246,7 +256,8 @@ fn test_error_object_set_cause() {
 #[kani::proof]
 fn test_error_object_builder_optional_fields() {
     let context_frame = ContextFrame::new("api_gateway", HashMap::new());
-    let recovery_hint = RecoveryHint::new("Retry", "Retry the operation", HashMap::new());
+    let recovery_hint =
+        RecoveryHint::new(RecoveryAction::Retry, "Retry the operation", HashMap::new());
     let retry_config = RetryConfig::new(3, 1000, 10000, 2.0, true);
 
     let error = ErrorObject::builder()
@@ -269,7 +280,10 @@ fn test_error_object_builder_optional_fields() {
 
     assert_eq!(error.session_id().unwrap(), "session_123");
     assert_eq!(error.request_id().unwrap(), "request_456");
-    assert_eq!(error.details().get("model_name").unwrap(), &serde_json::json!("gpt-4"));
+    assert_eq!(
+        error.details().get("model_name").unwrap(),
+        &serde_json::json!("gpt-4")
+    );
     assert_eq!(error.context_chain().len(), 1);
     assert_eq!(error.recovery_hints().len(), 1);
     assert!(error.retry_config().is_some());

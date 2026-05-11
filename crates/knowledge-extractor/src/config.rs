@@ -87,19 +87,29 @@ impl ExtractorConfig {
             return Err(error::invalid_config("max_retries must be > 0"));
         }
         if !(0.0..=1.0).contains(&self.entity_similarity_threshold) {
-            return Err(error::invalid_config("entity_similarity_threshold must be in [0.0, 1.0]"));
+            return Err(error::invalid_config(
+                "entity_similarity_threshold must be in [0.0, 1.0]",
+            ));
         }
         if !(0.0..=1.0).contains(&self.dedup_threshold) {
-            return Err(error::invalid_config("dedup_threshold must be in [0.0, 1.0]"));
+            return Err(error::invalid_config(
+                "dedup_threshold must be in [0.0, 1.0]",
+            ));
         }
         if !(0.0..=1.0).contains(&self.disambiguation_llm_lower_bound) {
-            return Err(error::invalid_config("disambiguation_llm_lower_bound must be in [0.0, 1.0]"));
+            return Err(error::invalid_config(
+                "disambiguation_llm_lower_bound must be in [0.0, 1.0]",
+            ));
         }
         if !(0.0..=1.0).contains(&self.disambiguation_llm_upper_bound) {
-            return Err(error::invalid_config("disambiguation_llm_upper_bound must be in [0.0, 1.0]"));
+            return Err(error::invalid_config(
+                "disambiguation_llm_upper_bound must be in [0.0, 1.0]",
+            ));
         }
         if self.disambiguation_llm_lower_bound >= self.disambiguation_llm_upper_bound {
-            return Err(error::invalid_config("disambiguation_llm_lower_bound must be < disambiguation_llm_upper_bound"));
+            return Err(error::invalid_config(
+                "disambiguation_llm_lower_bound must be < disambiguation_llm_upper_bound",
+            ));
         }
         Ok(())
     }
@@ -117,43 +127,103 @@ mod tests {
 
     #[test]
     fn test_config_validate_zero_max_entities() {
-        let config = ExtractorConfig { max_entities_per_block: 0, ..Default::default() };
+        let config = ExtractorConfig {
+            max_entities_per_block: 0,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn test_config_validate_zero_max_relations() {
-        let config = ExtractorConfig { max_relations_per_block: 0, ..Default::default() };
+        let config = ExtractorConfig {
+            max_relations_per_block: 0,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn test_config_validate_zero_timeout() {
-        let config = ExtractorConfig { llm_timeout_secs: 0, ..Default::default() };
+        let config = ExtractorConfig {
+            llm_timeout_secs: 0,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn test_config_validate_zero_retries() {
-        let config = ExtractorConfig { max_retries: 0, ..Default::default() };
+        let config = ExtractorConfig {
+            max_retries: 0,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn test_config_validate_similarity_threshold_out_of_range() {
-        let config = ExtractorConfig { entity_similarity_threshold: 1.5, ..Default::default() };
+        let config = ExtractorConfig {
+            entity_similarity_threshold: 1.5,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn test_config_validate_dedup_threshold_out_of_range() {
-        let config = ExtractorConfig { dedup_threshold: -0.1, ..Default::default() };
+        let config = ExtractorConfig {
+            dedup_threshold: -0.1,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn test_config_validate_boundary_values() {
-        let config = ExtractorConfig { entity_similarity_threshold: 0.0, dedup_threshold: 1.0, ..Default::default() };
+        let config = ExtractorConfig {
+            entity_similarity_threshold: 0.0,
+            dedup_threshold: 1.0,
+            ..Default::default()
+        };
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_config_validate_llm_lower_bound_out_of_range() {
+        let config = ExtractorConfig {
+            disambiguation_llm_lower_bound: -0.1,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_validate_llm_upper_bound_out_of_range() {
+        let config = ExtractorConfig {
+            disambiguation_llm_upper_bound: 1.5,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_validate_llm_lower_bound_ge_upper_bound() {
+        let config = ExtractorConfig {
+            disambiguation_llm_lower_bound: 0.95,
+            disambiguation_llm_upper_bound: 0.95,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_validate_llm_lower_bound_gt_upper_bound() {
+        let config = ExtractorConfig {
+            disambiguation_llm_lower_bound: 0.96,
+            disambiguation_llm_upper_bound: 0.95,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
     }
 }

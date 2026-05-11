@@ -582,4 +582,181 @@ mod tests {
         let (level, _) = stack.lookup_symbol("name").expect("应找到 name");
         assert_eq!(level, 0, "内层定义应在 level 0 找到（遮蔽外层）");
     }
+
+    #[test]
+    fn test_default_creates_empty_stack() {
+        let stack = ScopeStack::default();
+        assert_eq!(stack.depth(), 0, "Default 创建的栈应为空");
+        assert!(stack.current_scope_id().is_none());
+    }
+
+    #[test]
+    fn test_handle_ast_node_module_inference() {
+        let mut stack = ScopeStack::new();
+
+        let module_node = AstNode {
+            kind: "module_declaration".to_string(),
+            start_byte: 0,
+            end_byte: 50,
+            start_char: 0,
+            start_row: 0,
+            start_column: 0,
+            is_named: true,
+            text: "module M {}".to_string(),
+        };
+
+        stack.handle_ast_node(&module_node, true);
+        assert_eq!(
+            stack.current_scope_type(),
+            Some(&ScopeType::Module),
+            "module_declaration 节点应推入 Module 作用域"
+        );
+    }
+
+    #[test]
+    fn test_handle_ast_node_namespace_inference() {
+        let mut stack = ScopeStack::new();
+
+        let namespace_node = AstNode {
+            kind: "namespace_definition".to_string(),
+            start_byte: 0,
+            end_byte: 50,
+            start_char: 0,
+            start_row: 0,
+            start_column: 0,
+            is_named: true,
+            text: "namespace N {}".to_string(),
+        };
+
+        stack.handle_ast_node(&namespace_node, true);
+        assert_eq!(
+            stack.current_scope_type(),
+            Some(&ScopeType::Module),
+            "namespace 节点应推入 Module 作用域"
+        );
+    }
+
+    #[test]
+    fn test_handle_ast_node_package_inference() {
+        let mut stack = ScopeStack::new();
+
+        let package_node = AstNode {
+            kind: "package_statement".to_string(),
+            start_byte: 0,
+            end_byte: 50,
+            start_char: 0,
+            start_row: 0,
+            start_column: 0,
+            is_named: true,
+            text: "package com.example".to_string(),
+        };
+
+        stack.handle_ast_node(&package_node, true);
+        assert_eq!(
+            stack.current_scope_type(),
+            Some(&ScopeType::Module),
+            "package 节点应推入 Module 作用域"
+        );
+    }
+
+    #[test]
+    fn test_handle_ast_node_struct_inference() {
+        let mut stack = ScopeStack::new();
+
+        let struct_node = AstNode {
+            kind: "struct_item".to_string(),
+            start_byte: 0,
+            end_byte: 50,
+            start_char: 0,
+            start_row: 0,
+            start_column: 0,
+            is_named: true,
+            text: "struct S {}".to_string(),
+        };
+
+        stack.handle_ast_node(&struct_node, true);
+        assert_eq!(
+            stack.current_scope_type(),
+            Some(&ScopeType::Class),
+            "struct 节点应推入 Class 作用域"
+        );
+    }
+
+    #[test]
+    fn test_handle_ast_node_enum_inference() {
+        let mut stack = ScopeStack::new();
+
+        let enum_node = AstNode {
+            kind: "enum_item".to_string(),
+            start_byte: 0,
+            end_byte: 50,
+            start_char: 0,
+            start_row: 0,
+            start_column: 0,
+            is_named: true,
+            text: "enum E {}".to_string(),
+        };
+
+        stack.handle_ast_node(&enum_node, true);
+        assert_eq!(
+            stack.current_scope_type(),
+            Some(&ScopeType::Class),
+            "enum 节点应推入 Class 作用域"
+        );
+    }
+
+    #[test]
+    fn test_handle_ast_node_method_inference() {
+        let mut stack = ScopeStack::new();
+
+        let method_node = AstNode {
+            kind: "method_definition".to_string(),
+            start_byte: 0,
+            end_byte: 50,
+            start_char: 0,
+            start_row: 5,
+            start_column: 0,
+            is_named: true,
+            text: "def method() {}".to_string(),
+        };
+
+        stack.handle_ast_node(&method_node, true);
+        assert_eq!(
+            stack.current_scope_type(),
+            Some(&ScopeType::Function),
+            "method 节点应推入 Function 作用域"
+        );
+    }
+
+    #[test]
+    fn test_handle_ast_node_procedure_inference() {
+        let mut stack = ScopeStack::new();
+
+        let proc_node = AstNode {
+            kind: "procedure_declaration".to_string(),
+            start_byte: 0,
+            end_byte: 50,
+            start_char: 0,
+            start_row: 0,
+            start_column: 0,
+            is_named: true,
+            text: "procedure P() {}".to_string(),
+        };
+
+        stack.handle_ast_node(&proc_node, true);
+        assert_eq!(
+            stack.current_scope_type(),
+            Some(&ScopeType::Function),
+            "procedure 节点应推入 Function 作用域"
+        );
+    }
+
+    #[test]
+    fn test_scope_type_display() {
+        assert_eq!(ScopeType::Function.to_string(), "function");
+        assert_eq!(ScopeType::Block.to_string(), "block");
+        assert_eq!(ScopeType::Module.to_string(), "module");
+        assert_eq!(ScopeType::Class.to_string(), "class");
+        assert_eq!(ScopeType::Global.to_string(), "global");
+    }
 }

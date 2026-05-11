@@ -4,14 +4,13 @@
 //! 每个 Worker 持有独立的 mpsc::Receiver，调度器通过轮询
 //! 将任务分发到最空闲的 Worker，避免共享 Receiver 的持锁 await 问题。
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
+use error_core::helpers;
 use tokio::sync::mpsc;
 
 use crate::embedding_service::EmbeddingService;
-use knowledge_core::model::Block;
-use error_core::helpers;
 
 /// 嵌入计算任务（工作线程池版本）
 pub struct PoolEmbeddingTask {
@@ -32,24 +31,22 @@ pub struct EmbeddingWorker {
 impl EmbeddingWorker {
     /// 创建新的嵌入计算工作线程
     #[must_use]
-    pub const fn new(service: Arc<EmbeddingService>, rx: mpsc::Receiver<PoolEmbeddingTask>) -> Self {
+    pub const fn new(
+        service: Arc<EmbeddingService>,
+        rx: mpsc::Receiver<PoolEmbeddingTask>,
+    ) -> Self {
         Self { service, rx }
     }
 
     /// 启动工作线程的事件循环，持续接收并处理嵌入计算任务
     pub async fn run(&mut self) {
         while let Some(task) = self.rx.recv().await {
-            let block = Block {
-                id: None,
-                doc_id: surrealdb::sql::Thing::from(("block".to_string(), "worker".to_string())),
-                block_type: knowledge_core::model::BlockType::Paragraph,
-                start_line: 0,
-                end_line: 0,
-                embedding: None,
-                idempotency_key: None,
-            };
-            let result = self.service.embed_block(&block, &task.text).await;
-            let _ = task.callback.send(result.map(|r| Arc::try_unwrap(r.embedding).unwrap_or_else(|arc| (*arc).clone())));
+            let result = self.service.embed_block("worker_block", &task.text).await;
+            let _ =
+                task.callback
+                    .send(result.map(|r| {
+                        Arc::try_unwrap(r.embedding).unwrap_or_else(|arc| (*arc).clone())
+                    }));
         }
     }
 }
@@ -118,10 +115,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_worker_pool_embed_success() {
-        let service = Arc::new(
-            EmbeddingService::new(EmbeddingModel::LocalBgeLarge, 64, 1, 100)
-                .unwrap(),
-        );
+        let service =
+            Arc::new(EmbeddingService::new(EmbeddingModel::LocalBgeLarge, 64, 1, 100).unwrap());
         let pool = EmbeddingWorkerPool::new(service, 2);
 
         let result = pool.embed("hello world".to_string()).await;
@@ -132,10 +127,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_worker_pool_multiple_tasks() {
-        let service = Arc::new(
-            EmbeddingService::new(EmbeddingModel::LocalBgeLarge, 64, 1, 100)
-                .unwrap(),
-        );
+        let service =
+            Arc::new(EmbeddingService::new(EmbeddingModel::LocalBgeLarge, 64, 1, 100).unwrap());
         let pool = EmbeddingWorkerPool::new(service, 2);
 
         let mut results = Vec::new();
@@ -151,10 +144,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_worker_pool_single_worker() {
-        let service = Arc::new(
-            EmbeddingService::new(EmbeddingModel::LocalBgeLarge, 32, 1, 100)
-                .unwrap(),
-        );
+        let service =
+            Arc::new(EmbeddingService::new(EmbeddingModel::LocalBgeLarge, 32, 1, 100).unwrap());
         let pool = EmbeddingWorkerPool::new(service, 1);
 
         let result = pool.embed("single worker test".to_string()).await;

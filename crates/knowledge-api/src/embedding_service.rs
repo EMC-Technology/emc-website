@@ -21,7 +21,6 @@ use crate::embedding_model::{
 };
 use crate::gemma_embedding::GemmaEmbedding;
 use error_core::helpers;
-use knowledge_core::model::Block;
 use reqwest;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
@@ -131,28 +130,23 @@ impl EmbeddingService {
 
     /// 计算单个文本块的嵌入向量
     ///
-    /// `content` 参数提供块的语义文本内容，用于嵌入计算。
-    /// 若 `content` 为空，则回退到块的元数据（`idempotency_key` + 行号范围）。
+    /// `block_id` 标识目标块，`content` 提供语义文本内容。
+    /// 若 `content` 为空，则使用 `block_id` 作为回退内容。
     ///
     /// # Errors
     ///
     /// 嵌入队列已关闭或结果接收失败时返回错误。
-    pub async fn embed_block(&self, block: &Block, content: &str) -> Result<EmbeddingResult> {
+    pub async fn embed_block(&self, block_id: &str, content: &str) -> Result<EmbeddingResult> {
         let (response_tx, response_rx) = oneshot::channel();
 
-        let extracted = extract_block_content(block);
         let effective_content = if content.is_empty() {
-            extracted
+            block_id.to_string()
         } else {
             content.to_string()
         };
 
         let task = EmbeddingTask {
-            block_id: block
-                .id
-                .as_ref()
-                .map(ToString::to_string)
-                .unwrap_or_default(),
+            block_id: block_id.to_string(),
             content: effective_content,
             response_tx,
         };
@@ -169,8 +163,8 @@ impl EmbeddingService {
 
     /// 批量计算文本块的嵌入向量
     ///
-    /// `contents` 与 `blocks` 等长，`contents[i]` 为 `blocks[i]` 的语义文本内容。
-    /// 若某项 content 为空，则回退到该块的元数据。
+    /// `block_ids` 与 `contents` 等长，`contents[i]` 为 `block_ids[i]` 的语义文本内容。
+    /// 若某项 content 为空，则回退到对应的 `block_id`。
     ///
     /// # Errors
     ///
@@ -178,21 +172,21 @@ impl EmbeddingService {
     ///
     /// # Panics
     ///
-    /// 当 `contents.len() != blocks.len()` 时 panic。
+    /// 当 `block_ids.len() != contents.len()` 时 panic。
     pub async fn embed_batch(
         &self,
-        blocks: &[Block],
+        block_ids: &[String],
         contents: &[String],
     ) -> Result<Vec<EmbeddingResult>> {
         assert_eq!(
-            blocks.len(),
+            block_ids.len(),
             contents.len(),
-            "blocks 与 contents 长度必须一致"
+            "block_ids 与 contents 长度必须一致"
         );
-        let futures: Vec<_> = blocks
+        let futures: Vec<_> = block_ids
             .iter()
             .zip(contents.iter())
-            .map(|(block, content)| self.embed_block(block, content))
+            .map(|(block_id, content)| self.embed_block(block_id, content))
             .collect();
         let results = futures::future::join_all(futures).await;
         results.into_iter().collect()
@@ -217,21 +211,6 @@ impl EmbeddingService {
     }
 }
 
-fn extract_block_content(block: &Block) -> String {
-    let mut parts = Vec::new();
-
-    if let Some(key) = &block.idempotency_key {
-        parts.push(key.clone());
-    }
-
-    parts.push(format!(
-        "{:?}:L{}-L{}",
-        block.block_type, block.start_line, block.end_line
-    ));
-
-    parts.join(" ")
-}
-
 struct EmbeddingWorker {
     model: EmbeddingModel,
     dimension: usize,
@@ -251,27 +230,27 @@ impl EmbeddingWorker {
                     if let Some(task) = task {
                         pending_tasks.push(task);
 
-                        if pending_tasks.len() >= self.batch_size {
-                            if let Err(e) = self.process_batch(&mut pending_tasks).await {
-                                tracing::error!("批量嵌入计算失败: {e}");
-                            }
+                        if pending_tasks.len() >= self.batch_size
+                            && let Err(e) = self.process_batch(&mut pending_tasks).await
+                        {
+                            tracing::error!("批量嵌入计算失败: {e}");
                         }
                     } else {
                         tracing::info!("EmbeddingWorker 通道已关闭，处理剩余任务后退出");
-                        if !pending_tasks.is_empty() {
-                            if let Err(e) = self.process_batch(&mut pending_tasks).await {
-                                tracing::error!("最终批量嵌入计算失败: {e}");
-                            }
+                        if !pending_tasks.is_empty()
+                            && let Err(e) = self.process_batch(&mut pending_tasks).await
+                        {
+                            tracing::error!("最终批量嵌入计算失败: {e}");
                         }
                         break;
                     }
                 }
 
                 () = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
-                    if !pending_tasks.is_empty() {
-                        if let Err(e) = self.process_batch(&mut pending_tasks).await {
-                            tracing::error!("批量嵌入计算失败: {e}");
-                        }
+                    if !pending_tasks.is_empty()
+                        && let Err(e) = self.process_batch(&mut pending_tasks).await
+                    {
+                        tracing::error!("批量嵌入计算失败: {e}");
                     }
                 }
             }
@@ -291,7 +270,9 @@ impl EmbeddingWorker {
             EmbeddingModel::LocalBgeLarge => self.compute_bge_large(&contents),
             EmbeddingModel::OpenAiAda002 => {
                 let api_key = std::env::var("OPENAI_API_KEY").map_err(|_| {
-                    helpers::config_error("使用 OpenAiAda002 模型时必须设置 OPENAI_API_KEY 环境变量")
+                    helpers::config_error(
+                        "使用 OpenAiAda002 模型时必须设置 OPENAI_API_KEY 环境变量",
+                    )
                 })?;
                 self.compute_openai(&contents, &api_key).await?
             }
@@ -367,7 +348,9 @@ impl EmbeddingWorker {
             .json(&body)
             .send()
             .await
-            .map_err(|e| helpers::llm_api_error(&format!("OpenAI API 请求失败: {e}"), "embed_openai"))?;
+            .map_err(|e| {
+                helpers::llm_api_error(&format!("OpenAI API 请求失败: {e}"), "embed_openai")
+            })?;
 
         let status = response.status();
         if !status.is_success() {
@@ -378,10 +361,9 @@ impl EmbeddingWorker {
             ));
         }
 
-        let json: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| helpers::llm_api_error(&format!("OpenAI 响应解析失败: {e}"), "embed_openai"))?;
+        let json: serde_json::Value = response.json().await.map_err(|e| {
+            helpers::llm_api_error(&format!("OpenAI 响应解析失败: {e}"), "embed_openai")
+        })?;
 
         let mut embeddings = Vec::with_capacity(texts.len());
         if let Some(data) = json.get("data").and_then(|d| d.as_array()) {
@@ -418,20 +400,21 @@ impl EmbeddingWorker {
             .ok_or_else(|| helpers::config_error("Gemma 嵌入模型未初始化"))?;
 
         if !gemma_embedding.is_loaded() {
-            gemma_embedding
-                .load_model()
-                .await
-                .map_err(|e| helpers::llm_api_error(&format!("加载 Gemma 模型失败: {e}"), "embed_gemma"))?;
+            gemma_embedding.load_model().await.map_err(|e| {
+                helpers::llm_api_error(&format!("加载 Gemma 模型失败: {e}"), "embed_gemma")
+            })?;
         }
 
         let text_refs: Vec<&str> = texts.iter().map(String::as_str).collect();
 
-        let results = gemma_embedding
-            .embed_batch(&text_refs)
-            .await
-            .map_err(|e| helpers::llm_api_error(&format!("Gemma 批量嵌入计算失败: {e}"), "embed_gemma"))?;
+        let results = gemma_embedding.embed_batch(&text_refs).await.map_err(|e| {
+            helpers::llm_api_error(&format!("Gemma 批量嵌入计算失败: {e}"), "embed_gemma")
+        })?;
 
-        let embeddings: Vec<Vec<f32>> = results.into_iter().map(|r| Arc::try_unwrap(r.vector).unwrap_or_else(|arc| (*arc).clone())).collect();
+        let embeddings: Vec<Vec<f32>> = results
+            .into_iter()
+            .map(|r| Arc::try_unwrap(r.vector).unwrap_or_else(|arc| (*arc).clone()))
+            .collect();
 
         Ok(embeddings)
     }
@@ -495,36 +478,27 @@ fn simhash_embedding(text: &str, dimension: usize) -> Vec<f32> {
 #[inline]
 fn blake3_to_u64(data: &[u8]) -> u64 {
     let hash = blake3::hash(data);
-    u64::from_le_bytes(hash.as_bytes()[..8].try_into().expect("blake3 输出至少 8 字节"))
+    u64::from_le_bytes(
+        hash.as_bytes()[..8]
+            .try_into()
+            .expect("blake3 输出至少 8 字节"),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn create_test_block(_id: &str, line: u32) -> Block {
-        Block {
-            id: None,
-            doc_id: knowledge_core::model::RecordIdType::from((
-                "doc".to_string(),
-                "test".to_string(),
-            )),
-            block_type: knowledge_core::model::BlockType::Paragraph,
-            start_line: line,
-            end_line: line + 10,
-            embedding: None,
-            idempotency_key: None,
-        }
-    }
-
     #[tokio::test]
     async fn test_embed_single_block_success() {
         let service = EmbeddingService::new(EmbeddingModel::LocalBgeLarge, 1536, 32, 100).unwrap();
 
-        let block = create_test_block("test001", 1);
-        let result = service.embed_block(&block, "test content for embedding").await.unwrap();
+        let result = service
+            .embed_block("test001", "test content for embedding")
+            .await
+            .unwrap();
 
-        assert_eq!(result.block_id, "");
+        assert_eq!(result.block_id, "test001");
         assert_eq!(result.embedding.len(), 1536);
     }
 
@@ -532,10 +506,10 @@ mod tests {
     async fn test_batch_embedding_order_preserved() {
         let service = EmbeddingService::new(EmbeddingModel::LocalBgeLarge, 1536, 32, 100).unwrap();
 
-        let blocks = vec![
-            create_test_block("block1", 1),
-            create_test_block("block2", 20),
-            create_test_block("block3", 50),
+        let block_ids = vec![
+            "block1".to_string(),
+            "block2".to_string(),
+            "block3".to_string(),
         ];
         let contents = vec![
             "first block content".to_string(),
@@ -543,7 +517,7 @@ mod tests {
             "third block content".to_string(),
         ];
 
-        let results = service.embed_batch(&blocks, &contents).await.unwrap();
+        let results = service.embed_batch(&block_ids, &contents).await.unwrap();
 
         assert_eq!(results.len(), 3);
         for result in &results {
@@ -618,9 +592,8 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_block_content() {
-        let block = create_test_block("test", 42);
-        let content = extract_block_content(&block);
+    fn test_embed_block_content_with_number() {
+        let content = "test block 42";
         assert!(!content.is_empty());
         assert!(content.contains("42"));
     }

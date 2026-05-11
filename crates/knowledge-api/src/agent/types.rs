@@ -79,8 +79,7 @@ impl Task {
 /// 任务上下文
 ///
 /// 包含执行任务所需的环境信息和前置条件。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TaskContext {
     /// 用户 ID（可选）
     pub user_id: Option<String>,
@@ -93,7 +92,6 @@ pub struct TaskContext {
     /// 当前可用的工具名称列表
     pub available_tools: Vec<String>,
 }
-
 
 /// 约束条件
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,8 +118,7 @@ pub enum ConstraintType {
 }
 
 /// 任务优先级
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 pub enum TaskPriority {
     /// 低优先级
     Low = 0,
@@ -150,7 +147,6 @@ pub enum AgentType {
     /// 协调型 Agent - 擅长任务分配和流程编排
     Coordinator,
 }
-
 
 // ============================================================================
 // 任务结果
@@ -479,6 +475,262 @@ impl From<AgentError> for error_core::ErrorObject {
             AgentError::SerializationError(msg) => helpers::agent_serialization_error(&msg),
             AgentError::PermissionDenied(msg) => helpers::agent_permission_denied(&msg),
             AgentError::SafetyCheckFailed(msg) => helpers::agent_safety_check_failed(&msg),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_task_creation() {
+        let task = Task::new("Analyze code", "Find bugs");
+        assert_eq!(task.description, "Analyze code");
+        assert_eq!(task.goal, "Find bugs");
+        assert_eq!(task.priority, TaskPriority::Normal);
+        assert!(task.constraints.is_empty());
+    }
+
+    #[test]
+    fn test_task_with_context_and_constraint() {
+        let ctx = TaskContext {
+            user_id: Some("u1".to_string()),
+            session_id: None,
+            relevant_documents: vec!["doc1".to_string()],
+            previous_results: None,
+            available_tools: vec!["search".to_string()],
+        };
+        let task = Task::new("test", "goal")
+            .with_context(ctx.clone())
+            .with_constraint(Constraint {
+                constraint_type: ConstraintType::MaxSteps(10),
+                value: "10".to_string(),
+            })
+            .with_priority(TaskPriority::High);
+        assert_eq!(task.context.user_id, Some("u1".to_string()));
+        assert_eq!(task.constraints.len(), 1);
+        assert_eq!(task.priority, TaskPriority::High);
+    }
+
+    #[test]
+    fn test_task_result_success() {
+        let id = Uuid::new_v4();
+        let result = TaskResult::success(id, serde_json::json!({"ok": true}), "Done");
+        assert!(result.success);
+        assert_eq!(result.task_id, id);
+    }
+
+    #[test]
+    fn test_task_result_failure() {
+        let id = Uuid::new_v4();
+        let result = TaskResult::failure(id, "Something went wrong");
+        assert!(!result.success);
+        assert!(result.output["error"].is_string());
+    }
+
+    #[test]
+    fn test_task_priority_ordering() {
+        assert!(TaskPriority::Low < TaskPriority::Normal);
+        assert!(TaskPriority::Normal < TaskPriority::High);
+        assert!(TaskPriority::High < TaskPriority::Critical);
+    }
+
+    #[test]
+    fn test_completion_options_default() {
+        let opts = CompletionOptions::default();
+        assert!((opts.temperature - 0.7).abs() < f64::EPSILON);
+        assert_eq!(opts.max_tokens, 4096);
+        assert!(opts.stop.is_none());
+        assert!(opts.tools.is_none());
+    }
+
+    #[test]
+    fn test_llm_message_serialization() {
+        let msg = LLMMessage {
+            role: MessageRole::User,
+            content: "Hello".to_string(),
+            tool_calls: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let de: LLMMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.role, MessageRole::User);
+        assert_eq!(de.content, "Hello");
+    }
+
+    #[test]
+    fn test_message_role_serialization_roundtrip() {
+        let roles = [
+            MessageRole::System,
+            MessageRole::User,
+            MessageRole::Assistant,
+            MessageRole::Tool,
+        ];
+        for r in &roles {
+            let json = serde_json::to_string(r).unwrap();
+            let de: MessageRole = serde_json::from_str(&json).unwrap();
+            assert_eq!(*r, de);
+        }
+    }
+
+    #[test]
+    fn test_finish_reason_serialization() {
+        let reasons = [
+            FinishReason::Stop,
+            FinishReason::Length,
+            FinishReason::ToolCalls,
+            FinishReason::ContentFilter,
+            FinishReason::Other("custom".to_string()),
+        ];
+        for r in &reasons {
+            let json = serde_json::to_string(r).unwrap();
+            let de: FinishReason = serde_json::from_str(&json).unwrap();
+            assert_eq!(*r, de);
+        }
+    }
+
+    #[test]
+    fn test_agent_error_display() {
+        assert!(format!("{}", AgentError::LlmError("timeout".to_string())).contains("timeout"));
+        assert!(
+            format!(
+                "{}",
+                AgentError::ToolError {
+                    tool: "search".to_string(),
+                    error: "fail".to_string()
+                }
+            )
+            .contains("search")
+        );
+        assert!(format!("{}", AgentError::ToolNotFound("x".to_string())).contains('x'));
+        assert!(format!("{}", AgentError::MaxIterationsReached(10)).contains("10"));
+        assert!(format!("{}", AgentError::Timeout).contains("超时"));
+        assert!(
+            format!("{}", AgentError::NeedsClarification("what?".to_string())).contains("what?")
+        );
+        assert!(format!("{}", AgentError::ParseActionError("bad".to_string())).contains("bad"));
+        assert!(format!("{}", AgentError::MemoryError("oom".to_string())).contains("oom"));
+        assert!(format!("{}", AgentError::WorkflowError("fail".to_string())).contains("fail"));
+        assert!(format!("{}", AgentError::SerializationError("json".to_string())).contains("json"));
+        assert!(
+            format!("{}", AgentError::PermissionDenied("denied".to_string())).contains("denied")
+        );
+        assert!(
+            format!("{}", AgentError::SafetyCheckFailed("unsafe".to_string())).contains("unsafe")
+        );
+    }
+
+    #[test]
+    fn test_agent_error_into_error_object() {
+        let errors = vec![
+            AgentError::LlmError("err".to_string()),
+            AgentError::ToolError {
+                tool: "t".to_string(),
+                error: "e".to_string(),
+            },
+            AgentError::ToolNotFound("t".to_string()),
+            AgentError::MaxIterationsReached(5),
+            AgentError::Timeout,
+            AgentError::NeedsClarification("w".to_string()),
+            AgentError::ParseActionError("p".to_string()),
+            AgentError::MemoryError("m".to_string()),
+            AgentError::InvalidStateTransition {
+                from: ExecutionStatus::Idle,
+                to: ExecutionStatus::Completed,
+            },
+            AgentError::WorkflowError("w".to_string()),
+            AgentError::SerializationError("s".to_string()),
+            AgentError::PermissionDenied("p".to_string()),
+            AgentError::SafetyCheckFailed("s".to_string()),
+        ];
+        for err in errors {
+            let _obj: error_core::ErrorObject = err.into();
+        }
+    }
+
+    #[test]
+    fn test_agent_error_into_result() {
+        let err = AgentError::Timeout;
+        let result: crate::Result<()> = err.into();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_artifact_type_serialization() {
+        let json = serde_json::to_string(&ArtifactType::KnowledgeGraph).unwrap();
+        let de: ArtifactType = serde_json::from_str(&json).unwrap();
+        match de {
+            ArtifactType::KnowledgeGraph => {}
+            _ => panic!("Expected KnowledgeGraph"),
+        }
+        let json = serde_json::to_string(&ArtifactType::Other("custom".to_string())).unwrap();
+        let de: ArtifactType = serde_json::from_str(&json).unwrap();
+        match de {
+            ArtifactType::Other(name) => assert_eq!(name, "custom"),
+            _ => panic!("Expected Other"),
+        }
+    }
+
+    #[test]
+    fn test_tool_call_schema_serialization() {
+        let schema = ToolCallSchema {
+            id: "call_1".to_string(),
+            name: "search".to_string(),
+            arguments: r#"{"query": "test"}"#.to_string(),
+        };
+        let json = serde_json::to_string(&schema).unwrap();
+        let de: ToolCallSchema = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.id, "call_1");
+    }
+
+    #[test]
+    fn test_tool_schema_serialization() {
+        let schema = ToolSchema {
+            name: "search".to_string(),
+            description: "Search tool".to_string(),
+            parameters: serde_json::json!({"type": "object"}),
+        };
+        let json = serde_json::to_string(&schema).unwrap();
+        let de: ToolSchema = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.name, "search");
+    }
+
+    #[test]
+    fn test_llm_response_serialization() {
+        let response = LLMResponse {
+            content: "Hello".to_string(),
+            tool_calls: None,
+            prompt_tokens: 10,
+            completion_tokens: 5,
+            total_tokens: 15,
+            finish_reason: FinishReason::Stop,
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        let de: LLMResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.content, "Hello");
+        assert_eq!(de.total_tokens, 15);
+    }
+
+    #[test]
+    fn test_constraint_type_serialization() {
+        let json = serde_json::to_string(&ConstraintType::MaxSteps(10)).unwrap();
+        let de: ConstraintType = serde_json::from_str(&json).unwrap();
+        match de {
+            ConstraintType::MaxSteps(n) => assert_eq!(n, 10),
+            _ => panic!("Expected MaxSteps"),
+        }
+        let json = serde_json::to_string(&ConstraintType::MaxDuration(60)).unwrap();
+        let de: ConstraintType = serde_json::from_str(&json).unwrap();
+        match de {
+            ConstraintType::MaxDuration(n) => assert_eq!(n, 60),
+            _ => panic!("Expected MaxDuration"),
+        }
+        let json = serde_json::to_string(&ConstraintType::RequiredOutputFormat("json".to_string()))
+            .unwrap();
+        let de: ConstraintType = serde_json::from_str(&json).unwrap();
+        match de {
+            ConstraintType::RequiredOutputFormat(fmt) => assert_eq!(fmt, "json"),
+            _ => panic!("Expected RequiredOutputFormat"),
         }
     }
 }

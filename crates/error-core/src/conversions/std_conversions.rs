@@ -1,18 +1,12 @@
 //! Standard library error conversions
 
-use crate::error_object::ErrorObject;
-use crate::classification::{ErrorSource, Severity, ImpactScope, Recoverability};
+use crate::classification::{ErrorSource, ImpactScope, Recoverability, Severity};
 use crate::error_code::registry;
+use crate::error_object::ErrorObject;
 
 impl From<std::io::Error> for ErrorObject {
     fn from(e: std::io::Error) -> Self {
         let cause_msg = e.to_string();
-        let mut source_chain: Vec<String> = Vec::new();
-        let mut source = std::error::Error::source(&e);
-        while let Some(err) = source {
-            source_chain.push(err.to_string());
-            source = err.source();
-        }
 
         let mut obj = Self::builder()
             .code(registry::IO_FAILED)
@@ -26,22 +20,22 @@ impl From<std::io::Error> for ErrorObject {
             .operation("io_operation")
             .build();
 
-        // NOTE: cause chain 被扁平化为单个 ErrorObject（用 → 连接），
-        // 而非嵌套的 cause.cause.cause 结构。这是为了简化错误展示，
-        // 但丢失了因果链的层级关系。未来可改为递归嵌套。
-        if !source_chain.is_empty() {
+        let mut source = std::error::Error::source(&e);
+        while let Some(err) = source {
+            let inner_msg = err.to_string();
             let cause_obj = Self::builder()
                 .code(registry::IO_FAILED)
                 .source(ErrorSource::FS)
                 .severity(Severity::ERROR)
                 .impact_scope(ImpactScope::OPERATION)
                 .recoverability(Recoverability::SemiAuto)
-                .message(&source_chain.join(" → "))
+                .message(&inner_msg)
                 .user_message("文件操作失败")
                 .module_path("io")
                 .operation("io_operation")
                 .build();
-            obj.set_cause(cause_obj);
+            obj = obj.with_cause(cause_obj);
+            source = err.source();
         }
 
         obj

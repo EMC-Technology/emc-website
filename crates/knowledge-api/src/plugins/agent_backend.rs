@@ -140,3 +140,95 @@ pub struct AgentCapabilities {
     /// 是否支持人机协作（Human-in-the-loop）
     pub supports_human_in_loop: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_agent_task_serialization() {
+        let task = AgentTask {
+            task_id: "t1".to_string(),
+            instruction: "Analyze code".to_string(),
+            context: serde_json::json!({"repo": "test"}),
+            max_steps: Some(10),
+            tools: vec!["search".to_string()],
+        };
+        let json = serde_json::to_string(&task).unwrap();
+        let de: AgentTask = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.task_id, "t1");
+        assert_eq!(de.tools.len(), 1);
+    }
+
+    #[test]
+    fn test_agent_result_serialization() {
+        let result = AgentResult {
+            task_id: "t1".to_string(),
+            success: true,
+            output: "Done".to_string(),
+            steps_taken: 5,
+            artifacts: vec![],
+            duration_ms: 1000,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let de: AgentResult = serde_json::from_str(&json).unwrap();
+        assert!(de.success);
+        assert_eq!(de.steps_taken, 5);
+    }
+
+    #[test]
+    fn test_agent_chunk_serialization() {
+        let chunk = AgentChunk {
+            task_id: "t1".to_string(),
+            chunk_type: AgentChunkType::Thinking,
+            content: "Analyzing...".to_string(),
+        };
+        let json = serde_json::to_string(&chunk).unwrap();
+        let de: AgentChunk = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.chunk_type, AgentChunkType::Thinking);
+    }
+
+    #[test]
+    fn test_agent_chunk_type_serialization_roundtrip() {
+        let types = [
+            AgentChunkType::Thinking,
+            AgentChunkType::Action,
+            AgentChunkType::Observation,
+            AgentChunkType::FinalAnswer,
+            AgentChunkType::Error,
+        ];
+        for t in &types {
+            let json = serde_json::to_string(t).unwrap();
+            let de: AgentChunkType = serde_json::from_str(&json).unwrap();
+            assert_eq!(*t, de);
+        }
+    }
+
+    #[test]
+    fn test_agent_artifact_serialization() {
+        let artifact = AgentArtifact {
+            artifact_type: "report".to_string(),
+            name: "analysis.md".to_string(),
+            content: "# Analysis".to_string(),
+        };
+        let json = serde_json::to_string(&artifact).unwrap();
+        let de: AgentArtifact = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.name, "analysis.md");
+    }
+
+    #[test]
+    fn test_agent_capabilities_serialization() {
+        let caps = AgentCapabilities {
+            supports_streaming: true,
+            supports_cancellation: true,
+            max_context_tokens: 8192,
+            available_tools: vec!["search".to_string()],
+            supports_multi_agent: false,
+            supports_human_in_loop: false,
+        };
+        let json = serde_json::to_string(&caps).unwrap();
+        let de: AgentCapabilities = serde_json::from_str(&json).unwrap();
+        assert!(de.supports_streaming);
+        assert_eq!(de.max_context_tokens, 8192);
+    }
+}

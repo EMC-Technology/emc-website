@@ -1,10 +1,10 @@
-use chrono::{DateTime, Utc, Timelike, Datelike};
+use chrono::{DateTime, Datelike, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::audit::tamper_proof::{
-    TamperProofAuditLog, AuditEntry, AuditEventType, Actor,
+    Actor, AuditEntry, AuditEventType, AuditResourceType, TamperProofAuditLog,
 };
 type Result<T> = crate::Result<T>;
 
@@ -262,6 +262,37 @@ pub struct DataSharingRecord {
 }
 
 /// 数据主体权利行使记录
+/// 权利行使状态
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConsentStatus {
+    /// 待处理
+    Pending,
+    /// 已批准
+    Approved,
+    /// 已拒绝
+    Denied,
+    /// 已撤回
+    Withdrawn,
+    /// 已过期
+    Expired,
+}
+
+impl ConsentStatus {
+    /// 从字符串解析状态
+    pub fn from_str_loose(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "pending" | "待处理" => Some(Self::Pending),
+            "approved" | "已批准" => Some(Self::Approved),
+            "denied" | "已拒绝" => Some(Self::Denied),
+            "withdrawn" | "已撤回" => Some(Self::Withdrawn),
+            "expired" | "已过期" => Some(Self::Expired),
+            _ => None,
+        }
+    }
+}
+
+/// 权利行使记录
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RightsExerciseRecord {
     /// 行使的权利类型
@@ -271,7 +302,7 @@ pub struct RightsExerciseRecord {
     /// 处理时间
     pub processed_at: DateTime<Utc>,
     /// 状态
-    pub status: String,
+    pub status: ConsentStatus,
     /// 备注
     pub notes: Option<String>,
 }
@@ -516,8 +547,10 @@ impl ComplianceReporter {
                 AuditEventType::SecurityAlert | AuditEventType::BruteForceAttempt => {
                     failed_auth_attempts += 1;
                 }
-                AuditEventType::PermissionGranted | AuditEventType::PermissionRevoked |
-                AuditEventType::RoleAssigned | AuditEventType::RoleRemoved => {
+                AuditEventType::PermissionGranted
+                | AuditEventType::PermissionRevoked
+                | AuditEventType::RoleAssigned
+                | AuditEventType::RoleRemoved => {
                     permission_changes += 1;
                 }
                 AuditEventType::ConfigChanged | AuditEventType::PolicyUpdated => {
@@ -526,7 +559,30 @@ impl ComplianceReporter {
                 AuditEventType::DataExported => {
                     data_exports += 1;
                 }
-                _ => {}
+                AuditEventType::SystemStart
+                | AuditEventType::SystemShutdown
+                | AuditEventType::SystemError
+                | AuditEventType::UserCreated
+                | AuditEventType::UserUpdated
+                | AuditEventType::UserDeleted
+                | AuditEventType::UserLogin
+                | AuditEventType::UserLogout
+                | AuditEventType::PasswordChanged
+                | AuditEventType::DataCreated
+                | AuditEventType::DataRead
+                | AuditEventType::DataUpdated
+                | AuditEventType::DataDeleted
+                | AuditEventType::DataImported
+                | AuditEventType::KeyCreated
+                | AuditEventType::KeyRotated
+                | AuditEventType::KeyRevoked
+                | AuditEventType::KeyDestroyed
+                | AuditEventType::KeyAccessed
+                | AuditEventType::IntrusionDetected
+                | AuditEventType::AnomalyDetected => {}
+                AuditEventType::Custom(ref code) => {
+                    tracing::debug!(code = %code, "SOC2 审计跳过自定义事件类型");
+                }
             }
         }
 
@@ -551,54 +607,79 @@ impl ComplianceReporter {
         let mut assessments = HashMap::new();
 
         // CC6.1: 逻辑访问控制
-        assessments.insert("CC6.1".to_string(), ControlAssessment {
-            control_id: "CC6.1".to_string(),
-            description: "Logical Access Controls".to_string(),
-            is_compliant: true,
-            evidence_count: entries.len(),
-            findings: vec![],
-            assessed_at: Utc::now(),
-        });
+        assessments.insert(
+            "CC6.1".to_string(),
+            ControlAssessment {
+                control_id: "CC6.1".to_string(),
+                description: "Logical Access Controls".to_string(),
+                is_compliant: true,
+                evidence_count: entries.len(),
+                findings: vec![],
+                assessed_at: Utc::now(),
+            },
+        );
 
         // CC6.2: 系统访问和权限管理
-        let perm_events = entries.iter()
-            .filter(|e| matches!(e.event_type,
-                AuditEventType::PermissionGranted | AuditEventType::PermissionRevoked))
+        let perm_events = entries
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e.event_type,
+                    AuditEventType::PermissionGranted | AuditEventType::PermissionRevoked
+                )
+            })
             .count();
 
-        assessments.insert("CC6.2".to_string(), ControlAssessment {
-            control_id: "CC6.2".to_string(),
-            description: "System Access and Permission Management".to_string(),
-            is_compliant: true,
-            evidence_count: perm_events,
-            findings: vec![],
-            assessed_at: Utc::now(),
-        });
+        assessments.insert(
+            "CC6.2".to_string(),
+            ControlAssessment {
+                control_id: "CC6.2".to_string(),
+                description: "System Access and Permission Management".to_string(),
+                is_compliant: true,
+                evidence_count: perm_events,
+                findings: vec![],
+                assessed_at: Utc::now(),
+            },
+        );
 
         // CC7.1: 入侵检测
-        let security_events = entries.iter()
-            .filter(|e| matches!(e.event_type,
-                AuditEventType::SecurityAlert | AuditEventType::IntrusionDetected |
-                AuditEventType::BruteForceAttempt | AuditEventType::AnomalyDetected))
+        let security_events = entries
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e.event_type,
+                    AuditEventType::SecurityAlert
+                        | AuditEventType::IntrusionDetected
+                        | AuditEventType::BruteForceAttempt
+                        | AuditEventType::AnomalyDetected
+                )
+            })
             .count();
 
-        assessments.insert("CC7.1".to_string(), ControlAssessment {
-            control_id: "CC7.1".to_string(),
-            description: "Intrusion Detection and Prevention".to_string(),
-            is_compliant: security_events == 0,
-            evidence_count: security_events,
-            findings: if security_events > 0 {
-                vec![ComplianceFinding {
-                    severity: if security_events > 10 { FindingSeverity::High } else { FindingSeverity::Medium },
-                    description: format!("发现 {security_events} 个安全相关事件"),
-                    related_entries_count: security_events,
-                    recommendation: "建议审查安全事件的详情并采取相应措施".to_string(),
-                }]
-            } else {
-                vec![]
+        assessments.insert(
+            "CC7.1".to_string(),
+            ControlAssessment {
+                control_id: "CC7.1".to_string(),
+                description: "Intrusion Detection and Prevention".to_string(),
+                is_compliant: security_events == 0,
+                evidence_count: security_events,
+                findings: if security_events > 0 {
+                    vec![ComplianceFinding {
+                        severity: if security_events > 10 {
+                            FindingSeverity::High
+                        } else {
+                            FindingSeverity::Medium
+                        },
+                        description: format!("发现 {security_events} 个安全相关事件"),
+                        related_entries_count: security_events,
+                        recommendation: "建议审查安全事件的详情并采取相应措施".to_string(),
+                    }]
+                } else {
+                    vec![]
+                },
+                assessed_at: Utc::now(),
             },
-            assessed_at: Utc::now(),
-        });
+        );
 
         assessments
     }
@@ -619,7 +700,8 @@ impl ComplianceReporter {
         let entries = self.audit_log.query(period.start, period.end).await?;
 
         // 过滤与该数据主体相关的条目
-        let subject_entries: Vec<&AuditEntry> = entries.iter()
+        let subject_entries: Vec<&AuditEntry> = entries
+            .iter()
             .filter(|e| match &e.actor {
                 Actor::User { id, .. } => id == subject_id,
                 Actor::ApiClient { client_id } => client_id == subject_id,
@@ -649,12 +731,15 @@ impl ComplianceReporter {
     /// 提取处理活动
     #[allow(clippy::unused_self)]
     fn extract_processing_activities(&self, entries: &[&AuditEntry]) -> Vec<ProcessingActivity> {
-        entries.iter().map(|e| ProcessingActivity {
-            activity: format!("{:?}", e.event_type),
-            timestamp: e.timestamp,
-            resource: format!("{}:{}", e.resource.resource_type, e.resource.resource_id),
-            actor: e.actor.actor_id().to_string(),
-        }).collect()
+        entries
+            .iter()
+            .map(|e| ProcessingActivity {
+                activity: format!("{:?}", e.event_type),
+                timestamp: e.timestamp,
+                resource: format!("{}:{}", e.resource.resource_type, e.resource.resource_id),
+                actor: e.actor.actor_id().to_string(),
+            })
+            .collect()
     }
 
     /// 对数据进行分类
@@ -665,27 +750,35 @@ impl ComplianceReporter {
         let mut categories_map: HashMap<String, Vec<&AuditEntry>> = HashMap::new();
 
         for entry in entries {
-            let cat_name = match &entry.resource.resource_type as &str {
-                "document" | "file" => "文档内容",
-                "user" => "个人信息",
-                "key" | "credential" => "认证凭据",
-                "config" => "配置偏好",
+            let cat_name = match entry.resource.resource_type {
+                AuditResourceType::Document => "文档内容",
+                AuditResourceType::User => "个人信息",
+                AuditResourceType::Key => "认证凭据",
+                AuditResourceType::Config => "配置偏好",
                 _ => "其他数据",
-            }.to_string();
+            }
+            .to_string();
 
             categories_map.entry(cat_name).or_default().push(*entry);
         }
 
-        categories_map.into_iter().map(|(name, ents)| {
-            let last_processed = ents.iter().map(|e| e.timestamp).max().unwrap_or_else(Utc::now);
+        categories_map
+            .into_iter()
+            .map(|(name, ents)| {
+                let last_processed = ents
+                    .iter()
+                    .map(|e| e.timestamp)
+                    .max()
+                    .unwrap_or_else(Utc::now);
 
-            GDPRDataCategory {
-                category_name: name.clone(),
-                legal_basis: "合法利益 / 合同履行".to_string(),
-                sample_data: serde_json::json!({"category": name, "record_count": ents.len()}),
-                last_processed,
-            }
-        }).collect()
+                GDPRDataCategory {
+                    category_name: name.clone(),
+                    legal_basis: "合法利益 / 合同履行".to_string(),
+                    sample_data: serde_json::json!({"category": name, "record_count": ents.len()}),
+                    last_processed,
+                }
+            })
+            .collect()
     }
 
     /// 生成访问模式分析报告
@@ -724,12 +817,15 @@ impl ComplianceReporter {
     fn compute_user_activity_stats(&self, entries: &[AuditEntry]) -> UserActivityStats {
         use std::collections::HashMap;
 
-        let mut user_actions: HashMap<String, (DateTime<Utc>, DateTime<Utc>, usize)> = HashMap::new();
+        let mut user_actions: HashMap<String, (DateTime<Utc>, DateTime<Utc>, usize)> =
+            HashMap::new();
 
         for entry in entries {
             if let Actor::User { id, .. } = &entry.actor {
-                let entry_data = user_actions.entry(id.clone())
-                    .or_insert((entry.timestamp, entry.timestamp, 0));
+                let entry_data =
+                    user_actions
+                        .entry(id.clone())
+                        .or_insert((entry.timestamp, entry.timestamp, 0));
                 if entry.timestamp < entry_data.0 {
                     entry_data.0 = entry.timestamp;
                 }
@@ -752,7 +848,8 @@ impl ComplianceReporter {
             0.0
         };
 
-        let mut top_users: Vec<UserActivityEntry> = user_actions.into_iter()
+        let mut top_users: Vec<UserActivityEntry> = user_actions
+            .into_iter()
             .map(|(id, (first, last, count))| UserActivityEntry {
                 user_id: id,
                 action_count: count,
@@ -780,16 +877,19 @@ impl ComplianceReporter {
         let mut resource_counts: HashMap<String, HashSet<String>> = HashMap::new();
 
         for entry in entries {
-            let key = format!("{}:{}", entry.resource.resource_type, entry.resource.resource_id);
-            let visitors = resource_counts.entry(key)
-                .or_default();
+            let key = format!(
+                "{}:{}",
+                entry.resource.resource_type, entry.resource.resource_id
+            );
+            let visitors = resource_counts.entry(key).or_default();
             visitors.insert(entry.actor.actor_id().to_string());
         }
 
         let total_resources = resource_counts.len();
         let accessed_resources = resource_counts.len();
 
-        let mut top_resources: Vec<ResourceAccessEntry> = resource_counts.into_iter()
+        let mut top_resources: Vec<ResourceAccessEntry> = resource_counts
+            .into_iter()
             .map(|(resource_id, visitors)| ResourceAccessEntry {
                 resource_id,
                 access_count: visitors.len(),
@@ -826,9 +926,10 @@ impl ComplianceReporter {
         }
 
         let max_hourly = *hourly.iter().max().unwrap_or(&0);
-        let peak_hours: Vec<usize> = hourly.iter()
+        let peak_hours: Vec<usize> = hourly
+            .iter()
             .enumerate()
-            .filter(|(_, c)| **c >= max_hourly * 8 / 10) 
+            .filter(|(_, c)| **c >= max_hourly * 8 / 10)
             .map(|(h, _)| h)
             .collect();
 
@@ -845,10 +946,7 @@ impl ComplianceReporter {
     ///
     /// # Errors
     /// 当审计日志查询失败时返回错误
-    pub async fn detect_anomalies(
-        &self,
-        rules: Vec<AnomalyRule>,
-    ) -> Result<Vec<AnomalyAlert>> {
+    pub async fn detect_anomalies(&self, rules: Vec<AnomalyRule>) -> Result<Vec<AnomalyAlert>> {
         let now = Utc::now();
         let period = DateRange::last_n_days(7);
         let entries = self.audit_log.query(period.start, period.end).await?;
@@ -860,7 +958,8 @@ impl ComplianceReporter {
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 let threshold = rule.threshold.value as usize;
 
-                let high_freq_users: HashMap<String, usize> = entries.iter()
+                let high_freq_users: HashMap<String, usize> = entries
+                    .iter()
                     .filter_map(|e| match &e.actor {
                         Actor::User { id, .. } => Some(id.as_str()),
                         _ => None,
@@ -925,7 +1024,7 @@ impl ComplianceReporter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audit::{HmacSigner, FileAuditWriter, Action, ResourceRef};
+    use crate::audit::{Action, AuditActionType, FileAuditWriter, HmacSigner, ResourceRef};
     use tempfile::tempdir;
 
     #[allow(clippy::unused_async)]
@@ -943,19 +1042,35 @@ mod tests {
         let (audit, _dir) = create_test_audit().await;
 
         for i in 0..50 {
-            audit.log_event(
-                AuditEventType::DataRead,
-                Actor::User { id: format!("user-{}", i % 10), name: None },
-                Action { action_type: "read".to_string(), details: HashMap::new() },
-                ResourceRef { resource_type: "document".to_string(), resource_id: format!("doc-{i}"), path: None },
-                serde_json::json!({}),
-                None,
-            ).await.unwrap();
+            audit
+                .log_event(
+                    AuditEventType::DataRead,
+                    Actor::User {
+                        id: format!("user-{}", i % 10),
+                        name: None,
+                    },
+                    Action {
+                        action_type: AuditActionType::Read,
+                        details: HashMap::new(),
+                    },
+                    ResourceRef {
+                        resource_type: AuditResourceType::Document,
+                        resource_id: format!("doc-{i}"),
+                        path: None,
+                    },
+                    serde_json::json!({}),
+                    None,
+                )
+                .await
+                .unwrap();
         }
 
         let reporter = ComplianceReporter::new(Arc::new(audit), None);
         let period = DateRange::last_n_days(30);
-        let report = reporter.generate_soc2_report(period, ScopeConfig::default()).await.unwrap();
+        let report = reporter
+            .generate_soc2_report(period, ScopeConfig::default())
+            .await
+            .unwrap();
 
         assert_eq!(report.report_info.report_type, "SOC 2 Type II");
         assert!(report.summary.total_events >= 50);
@@ -967,17 +1082,33 @@ mod tests {
     async fn test_gdpr_report_generation() {
         let (audit, _dir) = create_test_audit().await;
 
-        audit.log_event(
-            AuditEventType::DataCreated,
-            Actor::User { id: "subject-123".to_string(), name: Some("测试用户".to_string()) },
-            Action { action_type: "create".to_string(), details: HashMap::new() },
-            ResourceRef { resource_type: "document".to_string(), resource_id: "doc-1".to_string(), path: None },
-            serde_json::json!({"title": "个人文档"}),
-            None,
-        ).await.unwrap();
+        audit
+            .log_event(
+                AuditEventType::DataCreated,
+                Actor::User {
+                    id: "subject-123".to_string(),
+                    name: Some("测试用户".to_string()),
+                },
+                Action {
+                    action_type: AuditActionType::Create,
+                    details: HashMap::new(),
+                },
+                ResourceRef {
+                    resource_type: AuditResourceType::Document,
+                    resource_id: "doc-1".to_string(),
+                    path: None,
+                },
+                serde_json::json!({"title": "个人文档"}),
+                None,
+            )
+            .await
+            .unwrap();
 
         let reporter = ComplianceReporter::new(Arc::new(audit), None);
-        let report = reporter.generate_gdpr_subject_access_report("subject-123").await.unwrap();
+        let report = reporter
+            .generate_gdpr_subject_access_report("subject-123")
+            .await
+            .unwrap();
 
         assert_eq!(report.subject_id, "subject-123");
         assert_eq!(report.report_info.report_type, "GDPR Subject Access Report");
@@ -989,19 +1120,35 @@ mod tests {
         let (audit, _dir) = create_test_audit().await;
 
         for i in 0..100 {
-            audit.log_event(
-                AuditEventType::DataRead,
-                Actor::User { id: format!("user-{}", i % 5), name: None },
-                Action { action_type: "read".to_string(), details: HashMap::new() },
-                ResourceRef { resource_type: "document".to_string(), resource_id: format!("doc-{}", i % 20), path: None },
-                serde_json::json!({}),
-                None,
-            ).await.unwrap();
+            audit
+                .log_event(
+                    AuditEventType::DataRead,
+                    Actor::User {
+                        id: format!("user-{}", i % 5),
+                        name: None,
+                    },
+                    Action {
+                        action_type: AuditActionType::Read,
+                        details: HashMap::new(),
+                    },
+                    ResourceRef {
+                        resource_type: AuditResourceType::Document,
+                        resource_id: format!("doc-{}", i % 20),
+                        path: None,
+                    },
+                    serde_json::json!({}),
+                    None,
+                )
+                .await
+                .unwrap();
         }
 
         let reporter = ComplianceReporter::new(Arc::new(audit), None);
         let period = DateRange::last_n_days(7);
-        let report = reporter.generate_access_pattern_report(period).await.unwrap();
+        let report = reporter
+            .generate_access_pattern_report(period)
+            .await
+            .unwrap();
 
         assert!(report.user_activity_stats.total_users > 0);
         assert!(report.resource_access_heatmap.accessed_resources > 0);

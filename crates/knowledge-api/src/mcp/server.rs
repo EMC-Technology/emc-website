@@ -9,10 +9,14 @@ use rmcp::model::{PromptMessage, PromptMessageRole, ServerCapabilities, ServerIn
 use rmcp::{ServerHandler, prompt, prompt_router, tool, tool_handler, tool_router};
 
 use super::prompts::{DetectImpactParams, GenerateMapParams};
-#[allow(clippy::wildcard_imports)]
-use super::tools::*;
+use super::tools::{
+    ChangeStatus, ContextParams, ContextResult, DetectChangesParams, DetectChangesResult,
+    GraphParams, GraphResult, ImpactLayer, ImpactParams, ImpactResult, QueryParams, QueryResult,
+    SearchParams, SearchResult, TraceParams, TraceResult, TraceStep,
+};
 use crate::KnowledgeVM;
 use crate::config::ConfigLoader;
+use crate::knowledge_vm::RiskLevel;
 
 /// `MCP` 协议服务端
 ///
@@ -168,7 +172,10 @@ impl McpServer {
             match r.ref_type {
                 knowledge_core::model::RefType::Definition => callees.push(val),
                 knowledge_core::model::RefType::Usage => callers.push(val),
-                _ => {}
+                knowledge_core::model::RefType::Link
+                | knowledge_core::model::RefType::Inherit
+                | knowledge_core::model::RefType::Implement
+                | knowledge_core::model::RefType::Constrain => {}
             }
         }
         let result = ContextResult {
@@ -229,11 +236,10 @@ impl McpServer {
 
         let total_affected: usize = layers.iter().map(|l| l.count).sum();
         let risk_level = match total_affected {
-            n if n <= 3 => "low",
-            n if n <= 10 => "medium",
-            _ => "high",
-        }
-        .to_string();
+            n if n <= 3 => RiskLevel::Low,
+            n if n <= 10 => RiskLevel::Medium,
+            _ => RiskLevel::High,
+        };
 
         let result = ImpactResult {
             symbol: params.symbol,
@@ -277,12 +283,15 @@ impl McpServer {
                     let confidence = match r.ref_type {
                         knowledge_core::model::RefType::Usage => 0.9,
                         knowledge_core::model::RefType::Definition => 0.8,
-                        _ => 0.5,
+                        knowledge_core::model::RefType::Link => 0.5,
+                        knowledge_core::model::RefType::Inherit => 0.7,
+                        knowledge_core::model::RefType::Implement => 0.6,
+                        knowledge_core::model::RefType::Constrain => 0.65,
                     };
                     steps.push(TraceStep {
                         step: step_num,
                         symbol: target.clone(),
-                        ref_type: format!("{:?}", r.ref_type),
+                        ref_type: r.ref_type.clone(),
                         confidence,
                     });
                     current = target;
@@ -388,11 +397,10 @@ impl McpServer {
 
         let affected_references = affected_refs_detail.len();
         let status = if doc.is_valid_hash() {
-            "unchanged"
+            ChangeStatus::Unchanged
         } else {
-            "modified"
-        }
-        .to_string();
+            ChangeStatus::Modified
+        };
 
         let result = DetectChangesResult {
             doc_id: params.doc_id,
@@ -576,4 +584,3 @@ impl ServerHandler for McpServer {
         })
     }
 }
-

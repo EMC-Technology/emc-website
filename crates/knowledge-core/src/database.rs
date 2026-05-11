@@ -52,10 +52,18 @@ pub trait DatabaseClient: Send + Sync {
     ) -> impl Future<Output = Result<Option<T>>> + Send;
 
     /// 执行参数化查询
-    fn query(&self, sql: &str, bindings: impl serde::Serialize + Send) -> impl Future<Output = Result<Vec<Value>>> + Send;
+    fn query(
+        &self,
+        sql: &str,
+        bindings: impl serde::Serialize + Send,
+    ) -> impl Future<Output = Result<Vec<Value>>> + Send;
 
     /// 在指定表中创建记录
-    fn create<T: serde::Serialize + Send>(&self, table: &str, data: T) -> impl Future<Output = Result<Vec<Value>>> + Send;
+    fn create<T: serde::Serialize + Send>(
+        &self,
+        table: &str,
+        data: T,
+    ) -> impl Future<Output = Result<Vec<Value>>> + Send;
 
     /// 按 RecordId 更新记录
     #[allow(clippy::manual_async_fn)]
@@ -69,7 +77,11 @@ pub trait DatabaseClient: Send + Sync {
     fn delete(&self, id: RecordId) -> impl Future<Output = Result<Option<Value>>> + Send;
 
     /// 批量插入记录
-    fn insert_batch(&self, table: &str, items: Vec<serde_json::Value>) -> impl Future<Output = Result<Vec<Value>>> + Send;
+    fn insert_batch(
+        &self,
+        table: &str,
+        items: Vec<serde_json::Value>,
+    ) -> impl Future<Output = Result<Vec<Value>>> + Send;
 
     /// 在事务中执行多条查询
     #[allow(clippy::manual_async_fn)]
@@ -126,7 +138,11 @@ impl DatabaseClient for SurrealDbClient {
     }
 
     #[allow(clippy::manual_async_fn)]
-    fn query(&self, sql: &str, bindings: impl serde::Serialize + Send) -> impl Future<Output = Result<Vec<Value>>> + Send {
+    fn query(
+        &self,
+        sql: &str,
+        bindings: impl serde::Serialize + Send,
+    ) -> impl Future<Output = Result<Vec<Value>>> + Send {
         async move {
             let mut response = self
                 .db
@@ -139,7 +155,11 @@ impl DatabaseClient for SurrealDbClient {
     }
 
     #[allow(clippy::manual_async_fn)]
-    fn create<T: serde::Serialize + Send>(&self, table: &str, data: T) -> impl Future<Output = Result<Vec<Value>>> + Send {
+    fn create<T: serde::Serialize + Send>(
+        &self,
+        table: &str,
+        data: T,
+    ) -> impl Future<Output = Result<Vec<Value>>> + Send {
         async move {
             validate_table_name(table)?;
             self.db
@@ -176,7 +196,11 @@ impl DatabaseClient for SurrealDbClient {
     }
 
     #[allow(clippy::manual_async_fn)]
-    fn insert_batch(&self, table: &str, items: Vec<serde_json::Value>) -> impl Future<Output = Result<Vec<Value>>> + Send {
+    fn insert_batch(
+        &self,
+        table: &str,
+        items: Vec<serde_json::Value>,
+    ) -> impl Future<Output = Result<Vec<Value>>> + Send {
         async move {
             validate_table_name(table)?;
             let mut results = Vec::with_capacity(items.len());
@@ -352,7 +376,11 @@ impl DatabaseClient for MockDbClient {
     }
 
     #[allow(clippy::manual_async_fn)]
-    fn create<T: serde::Serialize + Send>(&self, table: &str, data: T) -> impl Future<Output = Result<Vec<Value>>> + Send {
+    fn create<T: serde::Serialize + Send>(
+        &self,
+        table: &str,
+        data: T,
+    ) -> impl Future<Output = Result<Vec<Value>>> + Send {
         async move {
             let json = serde_json::to_value(data).map_err(error_core::ErrorObject::from)?;
             let key = format!("CREATE {table} CONTENT");
@@ -389,7 +417,11 @@ impl DatabaseClient for MockDbClient {
     }
 
     #[allow(clippy::manual_async_fn)]
-    fn insert_batch(&self, table: &str, items: Vec<serde_json::Value>) -> impl Future<Output = Result<Vec<Value>>> + Send {
+    fn insert_batch(
+        &self,
+        table: &str,
+        items: Vec<serde_json::Value>,
+    ) -> impl Future<Output = Result<Vec<Value>>> + Send {
         async move {
             let mut r = Vec::with_capacity(items.len());
             for i in items {

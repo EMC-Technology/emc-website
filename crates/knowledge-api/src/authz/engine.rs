@@ -25,6 +25,7 @@ use crate::Result;
 use crate::authz::policy::{
     Action, AuthorizationDecision, AuthorizationRequest, ConditionExpr, DecisionType, DenialReason,
     DiagnosticInfo, DiagnosticLevel, LiteralValue, Policy, PolicyEffect, Principal, Resource,
+    ResourceType,
 };
 use error_core::helpers;
 
@@ -35,15 +36,17 @@ const CACHE_TTL_SECS: u64 = 300;
 /// 批量授权最大请求数
 const MAX_BATCH_SIZE: usize = 1000;
 
+use super::middleware::PrincipalEntityType;
+
 /// 缓存键 —— 由请求的确定性字段哈希生成
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 #[allow(clippy::struct_field_names)]
 struct CacheKey {
     principal: String,
-    principal_entity_type: String,
+    principal_entity_type: PrincipalEntityType,
     action: String,
     resource: String,
-    resource_type: String,
+    resource_type: ResourceType,
     owner_id: Option<String>,
     scope_id: Option<String>,
     context_hash: u64,
@@ -170,7 +173,7 @@ pub trait PolicyStore: Send + Sync {
     /// 根据资源类型和动作加载全局策略
     async fn load_policies_for_resource_action(
         &self,
-        resource_type: &str,
+        resource_type: &ResourceType,
         action: &str,
     ) -> Result<Vec<Policy>>;
 
@@ -229,7 +232,10 @@ impl DbPolicyStore {
     }
 
     fn default_policies() -> Vec<Policy> {
-        use crate::authz::policy::{ActionExpr, PolicyEffect, PrincipalExpr, ResourceExpr};
+        use crate::authz::policy::{
+            ActionExpr, ConditionExpr, ConditionOperator, ContextValue, PolicyEffect,
+            PrincipalExpr, ResourceExpr,
+        };
 
         vec![
             Policy {
@@ -288,6 +294,41 @@ impl DbPolicyStore {
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
             },
+            Policy {
+                id: uuid::Uuid::new_v4(),
+                version: 1,
+                effect: PolicyEffect::Allow,
+                principal: PrincipalExpr::Specific {
+                    entity_type: PrincipalEntityType::ServiceAccount,
+                    entity_id: "*".to_string(),
+                },
+                action: ActionExpr::Prefix("document::read".to_string()),
+                resource: ResourceExpr::Any,
+                conditions: Some(ConditionExpr::Attribute {
+                    attribute: "resource.scope".to_string(),
+                    operator: ConditionOperator::In,
+                    value: ContextValue::PrincipalAttr("scopes".to_string()),
+                }),
+                description: "服务账户可读取其授权范围内的数据".to_string(),
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            },
+            Policy {
+                id: uuid::Uuid::new_v4(),
+                version: 1,
+                effect: PolicyEffect::Allow,
+                principal: PrincipalExpr::AnyAuthenticated,
+                action: ActionExpr::Specific("document::read".to_string()),
+                resource: ResourceExpr::Any,
+                conditions: Some(ConditionExpr::Attribute {
+                    attribute: "resource.visibility".to_string(),
+                    operator: ConditionOperator::Equals,
+                    value: ContextValue::Literal(LiteralValue::String("public".to_string())),
+                }),
+                description: "已认证用户可读取公开资源".to_string(),
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            },
         ]
     }
 
@@ -313,7 +354,7 @@ impl PolicyStore for DbPolicyStore {
 
     async fn load_policies_for_resource_action(
         &self,
-        _resource_type: &str,
+        _resource_type: &ResourceType,
         _action: &str,
     ) -> Result<Vec<Policy>> {
         Ok(self.policies.read().await.clone())
@@ -339,6 +380,7 @@ impl PolicyStore for DbPolicyStore {
 pub struct AuthorizationEngine {
     policy_store: Arc<dyn PolicyStore>,
     cache: Arc<RwLock<LruCache<CacheKey, CacheEntry>>>,
+    regex_cache: Arc<RwLock<LruCache<String, regex::Regex>>>,
     metrics: Arc<AuthzMetrics>,
     audit_logger: Arc<dyn AuditLogger>,
 }
@@ -362,10 +404,13 @@ impl AuthorizationEngine {
     ) -> Self {
         let capacity = cache_capacity.unwrap_or(DEFAULT_CACHE_CAPACITY);
         info!(cache_capacity = capacity, "初始化 AuthorizationEngine");
-        let cache = LruCache::new(NonZero::new(capacity).unwrap());
+        let cache =
+            LruCache::new(NonZero::new(capacity).expect("DEFAULT_CACHE_CAPACITY 为非零常量"));
+        let regex_cache = LruCache::new(NonZero::new(256).expect("256 is non-zero"));
         Self {
             policy_store,
             cache: Arc::new(RwLock::new(cache)),
+            regex_cache: Arc::new(RwLock::new(regex_cache)),
             metrics: Arc::new(AuthzMetrics::new()),
             audit_logger,
         }
@@ -421,7 +466,7 @@ impl AuthorizationEngine {
         }
 
         // 3. 执行策略评估
-        let decision = self.evaluate_policies(req, &all_policies);
+        let decision = self.evaluate_policies(req, &all_policies).await;
 
         // 4. 缓存决策结果
         self.cache_decision(req, &decision).await;
@@ -497,13 +542,16 @@ impl AuthorizationEngine {
             for pid in &principal_ids {
                 if !all_policies_map.contains_key(*pid) {
                     let mut policies = self.policy_store.load_policies_for_principal(pid).await?;
-                    let pid_string = pid.to_string();
+                    let pid_string = (*pid).to_string();
                     let key = pid_string.clone();
                     for (_, req) in &uncached_requests {
                         if req.principal.id == pid_string {
                             let resource_policies = self
                                 .policy_store
-                                .load_policies_for_resource_action(&req.resource.id, &req.action.id)
+                                .load_policies_for_resource_action(
+                                    &req.resource.resource_type,
+                                    &req.action.id,
+                                )
                                 .await?;
                             policies.extend(resource_policies);
                         }
@@ -517,7 +565,7 @@ impl AuthorizationEngine {
                     .get(&req.principal.id)
                     .map(Vec::as_slice)
                     .unwrap_or_default();
-                let decision = self.evaluate_policies(req, policies);
+                let decision = self.evaluate_policies(req, policies).await;
                 self.cache_decision(req, &decision).await;
                 self.audit_logger
                     .log_authorization_decision(req, &decision)
@@ -633,7 +681,7 @@ impl AuthorizationEngine {
     /// 1. 任何显式 Deny 匹配 → Deny（最高优先级）
     /// 2. 存在显式 Allow 且条件满足 → Allow
     /// 3. 否则 → Deny（默认拒绝）
-    fn evaluate_policies(
+    async fn evaluate_policies(
         &self,
         req: &AuthorizationRequest,
         policies: &[Policy],
@@ -647,7 +695,7 @@ impl AuthorizationEngine {
                 continue;
             }
 
-            match Self::matches_policy(req, policy) {
+            match self.matches_policy(req, policy).await {
                 Ok(matches) => {
                     if matches {
                         diagnostics.push(DiagnosticInfo {
@@ -698,7 +746,7 @@ impl AuthorizationEngine {
                 continue;
             }
 
-            match Self::matches_policy(req, policy) {
+            match self.matches_policy(req, policy).await {
                 Ok(matches) => {
                     if matches {
                         diagnostics.push(DiagnosticInfo {
@@ -745,7 +793,7 @@ impl AuthorizationEngine {
     /// 判断请求是否匹配给定策略
     ///
     /// 依次检查 principal、action、resource 是否匹配，最后评估 conditions。
-    fn matches_policy(req: &AuthorizationRequest, policy: &Policy) -> Result<bool> {
+    async fn matches_policy(&self, req: &AuthorizationRequest, policy: &Policy) -> Result<bool> {
         // Principal 匹配
         if !Self::match_principal(&req.principal, &policy.principal) {
             return Ok(false);
@@ -762,10 +810,10 @@ impl AuthorizationEngine {
         }
 
         // Conditions 评估
-        if let Some(ref conditions) = policy.conditions {
-            if !Self::evaluate_conditions(conditions, req)? {
-                return Ok(false);
-            }
+        if let Some(ref conditions) = policy.conditions
+            && !self.evaluate_conditions(conditions, req).await?
+        {
+            return Ok(false);
         }
 
         Ok(true)
@@ -790,7 +838,7 @@ impl AuthorizationEngine {
             ActionExpr::Any => true,
             ActionExpr::Specific(pattern) => action.id == *pattern,
             ActionExpr::Prefix(prefix) => action.id.starts_with(prefix.as_str()),
-            ActionExpr::AllForResource(rt) => action.resource_type == *rt,
+            ActionExpr::AllForResource(rt) => action.resource_type.as_str() == rt,
         }
     }
 
@@ -803,46 +851,52 @@ impl AuthorizationEngine {
                 entity_type,
                 entity_id,
             } => resource.resource_type == *entity_type && resource.id == *entity_id,
-            ResourceExpr::TypePrefix(prefix) => resource.resource_type.starts_with(prefix),
+            ResourceExpr::TypePrefix(prefix) => resource.resource_type.as_str().starts_with(prefix),
         }
     }
 
     /// 递归评估条件表达式树
-    fn evaluate_conditions(condition: &ConditionExpr, req: &AuthorizationRequest) -> Result<bool> {
+    fn evaluate_conditions<'a>(
+        &'a self,
+        condition: &'a ConditionExpr,
+        req: &'a AuthorizationRequest,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool>> + Send + 'a>> {
         use crate::authz::policy::ConditionExpr;
-        match condition {
-            ConditionExpr::Attribute {
-                attribute,
-                operator,
-                value,
-            } => {
-                let left = Self::resolve_context_value(value, req)?;
-                let right = Self::resolve_attr_from_request(attribute, req);
-                let Some(right) = right else {
-                    warn!(attribute = %attribute, "条件评估引用的属性不存在，安全策略要求拒绝");
-                    return Ok(false);
-                };
-
-                Ok(Self::compare_values(operator, &left, &right))
-            }
-            ConditionExpr::And(children) => {
-                for child in children {
-                    if !Self::evaluate_conditions(child, req)? {
+        Box::pin(async move {
+            match condition {
+                ConditionExpr::Attribute {
+                    attribute,
+                    operator,
+                    value,
+                } => {
+                    let left = Self::resolve_context_value(value, req)?;
+                    let right = Self::resolve_attr_from_request(attribute, req);
+                    let Some(right) = right else {
+                        warn!(attribute = %attribute, "条件评估引用的属性不存在，安全策略要求拒绝");
                         return Ok(false);
-                    }
+                    };
+
+                    Ok(self.compare_values(operator, &left, &right).await)
                 }
-                Ok(true)
-            }
-            ConditionExpr::Or(children) => {
-                for child in children {
-                    if Self::evaluate_conditions(child, req)? {
-                        return Ok(true);
+                ConditionExpr::And(children) => {
+                    for child in children {
+                        if !self.evaluate_conditions(child, req).await? {
+                            return Ok(false);
+                        }
                     }
+                    Ok(true)
                 }
-                Ok(false)
+                ConditionExpr::Or(children) => {
+                    for child in children {
+                        if self.evaluate_conditions(child, req).await? {
+                            return Ok(true);
+                        }
+                    }
+                    Ok(false)
+                }
+                ConditionExpr::Not(inner) => Ok(!self.evaluate_conditions(inner, req).await?),
             }
-            ConditionExpr::Not(inner) => Ok(!Self::evaluate_conditions(inner, req)?),
-        }
+        })
     }
 
     /// 解析 `ContextValue` 为实际字面量值
@@ -859,9 +913,15 @@ impl AuthorizationEngine {
                 }
                 match attr.as_str() {
                     "id" => Ok(LiteralValue::String(req.principal.id.clone())),
-                    "entity_type" => Ok(LiteralValue::String(req.principal.entity_type.clone())),
+                    "entity_type" => {
+                        Ok(LiteralValue::String(req.principal.entity_type.to_string()))
+                    }
                     "roles" => Ok(LiteralValue::String(req.principal.roles.clone().join(","))),
-                    _ => Err(helpers::not_found("PrincipalAttr", &format!("主体属性不存在: {attr}"))),
+                    // 属性名为开放集合，无法穷举；未知属性名视为不存在
+                    _ => Err(helpers::not_found(
+                        "PrincipalAttr",
+                        &format!("主体属性不存在: {attr}"),
+                    )),
                 }
             }
             ContextValue::ResourceAttr(attr) => {
@@ -870,35 +930,45 @@ impl AuthorizationEngine {
                 }
                 match attr.as_str() {
                     "id" => Ok(LiteralValue::String(req.resource.id.clone())),
-                    "resource_type" => Ok(LiteralValue::String(req.resource.resource_type.clone())),
+                    "resource_type" => {
+                        Ok(LiteralValue::String(req.resource.resource_type.to_string()))
+                    }
                     "owner_id" => req
                         .resource
                         .owner_id
                         .as_ref()
                         .map(|v| LiteralValue::String(v.clone()))
-                        .ok_or_else(|| helpers::not_found("ResourceAttr", &format!("资源属性不存在: {attr}"))),
+                        .ok_or_else(|| {
+                            helpers::not_found("ResourceAttr", &format!("资源属性不存在: {attr}"))
+                        }),
                     "scope_id" => req
                         .resource
                         .scope_id
                         .as_ref()
                         .map(|v| LiteralValue::String(v.clone()))
-                        .ok_or_else(|| helpers::not_found("ResourceAttr", &format!("资源属性不存在: {attr}"))),
-                    _ => Err(helpers::not_found("ResourceAttr", &format!("资源属性不存在: {attr}"))),
+                        .ok_or_else(|| {
+                            helpers::not_found("ResourceAttr", &format!("资源属性不存在: {attr}"))
+                        }),
+                    // 属性名为开放集合，无法穷举；未知属性名视为不存在
+                    _ => Err(helpers::not_found(
+                        "ResourceAttr",
+                        &format!("资源属性不存在: {attr}"),
+                    )),
                 }
             }
             ContextValue::ActionAttr(attr) => match attr.as_str() {
                 "id" => Ok(LiteralValue::String(req.action.id.clone())),
-                "resource_type" => Ok(LiteralValue::String(req.action.resource_type.clone())),
-                other => Err(helpers::validation_error(&format!(
-                    "不支持的动作属性: {other}"
-                ), "resolve_context_value")),
+                "resource_type" => Ok(LiteralValue::String(req.action.resource_type.to_string())),
+                other => Err(helpers::validation_error(
+                    &format!("不支持的动作属性: {other}"),
+                    "resolve_context_value",
+                )),
             },
-            ContextValue::ContextAttr(attr) => req
-                .context
-                .extra
-                .get(attr)
-                .cloned()
-                .ok_or_else(|| helpers::not_found("ContextAttr", &format!("上下文属性不存在: {attr}"))),
+            ContextValue::ContextAttr(attr) => {
+                req.context.extra.get(attr).cloned().ok_or_else(|| {
+                    helpers::not_found("ContextAttr", &format!("上下文属性不存在: {attr}"))
+                })
+            }
         }
     }
 
@@ -921,6 +991,8 @@ impl AuthorizationEngine {
                     return Some(LiteralValue::String(scope_id.clone()));
                 }
             }
+            // 属性名为开放集合，无法穷举；未知属性名跳过内建字段，
+            // 继续在 attrs / extra 中查找
             _ => {}
         }
         if let Some(v) = req.resource.attrs.get(attribute) {
@@ -933,7 +1005,8 @@ impl AuthorizationEngine {
     }
 
     /// 执行两个字面量值的比较运算
-    fn compare_values(
+    async fn compare_values(
+        &self,
         op: &crate::authz::policy::ConditionOperator,
         left: &LiteralValue,
         right: &LiteralValue,
@@ -949,6 +1022,11 @@ impl AuthorizationEngine {
                 LiteralValue::String(haystack),
                 LiteralValue::String(needle),
             ) => haystack.contains(needle.as_str()),
+            (
+                ConditionOperator::NotContains,
+                LiteralValue::String(haystack),
+                LiteralValue::String(needle),
+            ) => !haystack.contains(needle.as_str()),
             (
                 ConditionOperator::StartsWith,
                 LiteralValue::String(s),
@@ -981,9 +1059,40 @@ impl AuthorizationEngine {
                 ConditionOperator::MatchesRegex,
                 LiteralValue::String(s),
                 LiteralValue::String(pattern),
-            ) => regex::Regex::new(pattern)
-                .is_ok_and(|re| re.is_match(s)),
-            _ => false,
+            ) => {
+                let re = {
+                    let read_cache = self.regex_cache.read().await;
+                    if let Some(cached_re) = read_cache.peek(pattern) {
+                        cached_re.clone()
+                    } else {
+                        drop(read_cache);
+                        match regex::Regex::new(pattern) {
+                            Ok(compiled_re) => {
+                                let mut write_cache = self.regex_cache.write().await;
+                                write_cache.put(pattern.clone(), compiled_re.clone());
+                                compiled_re
+                            }
+                            Err(_) => return false,
+                        }
+                    }
+                };
+                re.is_match(s)
+            }
+            (
+                ConditionOperator::In
+                | ConditionOperator::NotIn
+                | ConditionOperator::Contains
+                | ConditionOperator::NotContains
+                | ConditionOperator::StartsWith
+                | ConditionOperator::EndsWith
+                | ConditionOperator::GreaterThan
+                | ConditionOperator::GreaterThanOrEqual
+                | ConditionOperator::LessThan
+                | ConditionOperator::LessThanOrEqual
+                | ConditionOperator::MatchesRegex,
+                _,
+                _,
+            ) => false,
         }
     }
 }
@@ -1054,7 +1163,7 @@ mod tests {
 
         async fn load_policies_for_resource_action(
             &self,
-            _resource_type: &str,
+            _resource_type: &crate::authz::policy::ResourceType,
             _action: &str,
         ) -> Result<Vec<Policy>> {
             Ok(Vec::new())
@@ -1072,7 +1181,7 @@ mod tests {
             effect,
             principal: crate::authz::policy::PrincipalExpr::AnyAuthenticated,
             action: crate::authz::policy::ActionExpr::Specific("document::read".to_string()),
-            resource: crate::authz::policy::ResourceExpr::Type("Document".to_string()),
+            resource: crate::authz::policy::ResourceExpr::Type(ResourceType::Document),
             conditions: None,
             description: "测试策略".to_string(),
             created_at: Utc::now(),
@@ -1090,18 +1199,18 @@ mod tests {
         AuthorizationRequest {
             principal: Principal {
                 id: "user-001".to_string(),
-                entity_type: "User".to_string(),
+                entity_type: PrincipalEntityType::User,
                 roles: vec!["editor".to_string()],
                 attrs: attrs.clone(),
             },
             action: Action {
                 id: "document::read".to_string(),
-                resource_type: "Document".to_string(),
+                resource_type: ResourceType::Document,
                 category: ActionCategory::Read,
             },
             resource: Resource {
                 id: "doc-001".to_string(),
-                resource_type: "Document".to_string(),
+                resource_type: ResourceType::Document,
                 owner_id: Some("user-001".to_string()),
                 scope_id: None,
                 attrs: HashMap::new(),
@@ -1176,7 +1285,7 @@ mod tests {
             effect: PolicyEffect::Allow,
             principal: crate::authz::policy::PrincipalExpr::AnyAuthenticated,
             action: crate::authz::policy::ActionExpr::Specific("document::read".to_string()),
-            resource: crate::authz::policy::ResourceExpr::Type("Document".to_string()),
+            resource: crate::authz::policy::ResourceExpr::Type(ResourceType::Document),
             conditions: Some(ConditionExpr::Attribute {
                 attribute: "owner_id".to_string(),
                 operator: crate::authz::policy::ConditionOperator::Equals,

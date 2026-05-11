@@ -89,15 +89,9 @@ impl PluginRegistry {
     #[must_use]
     pub fn with_defaults() -> Self {
         let mut registry = Self::new();
-        registry.register_source(Arc::new(
-            crate::plugins::defaults::LocalFileSource::new(),
-        ));
-        registry.register_gate(Arc::new(
-            crate::plugins::defaults::AlwaysPassGate::new(),
-        ));
-        registry.register_agent(Arc::new(
-            crate::plugins::defaults::ReActAgentBackend::new(),
-        ));
+        registry.register_source(Arc::new(crate::plugins::defaults::LocalFileSource::new()));
+        registry.register_gate(Arc::new(crate::plugins::defaults::AlwaysPassGate::new()));
+        registry.register_agent(Arc::new(crate::plugins::defaults::ReActAgentBackend::new()));
         registry
     }
 

@@ -6,17 +6,126 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{info, instrument};
 
+/// 聚合根类型枚举（AP-B07 修复：替代 String 表示）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AggregateType {
+    /// 文档
+    Document,
+    /// 节点
+    Node,
+    /// 边
+    Edge,
+    /// 向量嵌入
+    Embedding,
+    /// 搜索
+    Search,
+    /// 用户
+    User,
+    /// 系统
+    System,
+}
+
+impl AggregateType {
+    /// 返回聚合根类型的字符串表示
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Document => "document",
+            Self::Node => "node",
+            Self::Edge => "edge",
+            Self::Embedding => "embedding",
+            Self::Search => "search",
+            Self::User => "user",
+            Self::System => "system",
+        }
+    }
+}
+
+impl std::fmt::Display for AggregateType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// 事件类型枚举（AP-B07 修复：替代 String 表示）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum EventType {
+    /// 文档入库
+    DocumentIngested,
+    /// 文档解析
+    DocumentParsed,
+    /// 文档索引
+    DocumentIndexed,
+    /// 文档删除
+    DocumentDeleted,
+    /// 节点创建
+    NodeCreated,
+    /// 节点更新
+    NodeUpdated,
+    /// 节点删除
+    NodeDeleted,
+    /// 节点关联
+    NodeLinked,
+    /// 边创建
+    EdgeCreated,
+    /// 边删除
+    EdgeDeleted,
+    /// 搜索执行
+    SearchPerformed,
+    /// 查询执行
+    QueryExecuted,
+    /// 向量生成
+    EmbeddingGenerated,
+    /// 向量缓存
+    EmbeddingCached,
+    /// 用户操作
+    UserAction,
+    /// 系统健康检查
+    SystemHealthCheck,
+}
+
+impl EventType {
+    /// 返回事件类型的字符串表示
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::DocumentIngested => "DocumentIngested",
+            Self::DocumentParsed => "DocumentParsed",
+            Self::DocumentIndexed => "DocumentIndexed",
+            Self::DocumentDeleted => "DocumentDeleted",
+            Self::NodeCreated => "NodeCreated",
+            Self::NodeUpdated => "NodeUpdated",
+            Self::NodeDeleted => "NodeDeleted",
+            Self::NodeLinked => "NodeLinked",
+            Self::EdgeCreated => "EdgeCreated",
+            Self::EdgeDeleted => "EdgeDeleted",
+            Self::SearchPerformed => "SearchPerformed",
+            Self::QueryExecuted => "QueryExecuted",
+            Self::EmbeddingGenerated => "EmbeddingGenerated",
+            Self::EmbeddingCached => "EmbeddingCached",
+            Self::UserAction => "UserAction",
+            Self::SystemHealthCheck => "SystemHealthCheck",
+        }
+    }
+}
+
+impl std::fmt::Display for EventType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// 事件存储中持久化的事件记录
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredEvent {
     /// 事件唯一标识符
     pub id: String,
-    /// 事件类型名称
-    pub event_type: String,
+    /// 事件类型
+    pub event_type: EventType,
     /// 所属聚合根 ID
     pub aggregate_id: String,
-    /// 聚合根类型名称
-    pub aggregate_type: String,
+    /// 聚合根类型
+    pub aggregate_type: AggregateType,
     /// 事件负载数据（JSON）
     pub data: serde_json::Value,
     /// 事件元数据
@@ -105,6 +214,15 @@ impl TriggeredBy {
     }
 }
 
+impl Default for TriggeredBy {
+    fn default() -> Self {
+        Self::System {
+            component: "unknown".to_string(),
+            reason: "unspecified".to_string(),
+        }
+    }
+}
+
 /// 因果链上下文 —— 在命令/事件处理链中传播因果信息
 ///
 /// # 设计原则
@@ -188,7 +306,7 @@ impl CausationContext {
         EventMetadata {
             causation_id: Some(self.causation_id.clone()),
             correlation_id: Some(self.correlation_id.clone()),
-            triggered_by: Some(self.triggered_by.clone()),
+            triggered_by: self.triggered_by.clone(),
             user_id: self.user_id.clone(),
             trace_id: self.trace_id.clone(),
         }
@@ -204,9 +322,8 @@ pub struct EventMetadata {
     /// 关联标识符 —— 同一业务流程产生的所有事件共享此 ID
     #[serde(skip_serializing_if = "Option::is_none")]
     pub correlation_id: Option<String>,
-    /// 触发源描述 —— 结构化描述"谁触发了我"
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub triggered_by: Option<TriggeredBy>,
+    /// 触发源描述 —— 结构化描述"谁触发了我"（Axiom-4 必须字段）
+    pub triggered_by: TriggeredBy,
     /// 用户标识符
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
@@ -260,6 +377,10 @@ impl InMemoryEventStore {
     }
 
     /// 清空所有事件
+    ///
+    /// 仅用于测试环境。生产环境中事件存储必须为 append-only，
+    /// 调用此方法将违反 Axiom-2（事件唯一变异）。
+    #[cfg(test)]
     pub async fn clear(&self) {
         let mut events = self.events.write().await;
         events.clear();
@@ -297,15 +418,15 @@ impl EventStore for InMemoryEventStore {
             .rfind(|e| e.aggregate_id == aggregate_id)
             .map_or(0, |e| e.version);
 
-        if let Some(expected) = expected_version {
-            if current_version != expected {
-                return Err(helpers::validation_error(
-                    &format!(
-                        "Version conflict for aggregate {aggregate_id}: expected {expected}, actual {current_version}"
-                    ),
-                    "OptimisticLockError",
-                ));
-            }
+        if let Some(expected) = expected_version
+            && current_version != expected
+        {
+            return Err(helpers::validation_error(
+                &format!(
+                    "Version conflict for aggregate {aggregate_id}: expected {expected}, actual {current_version}"
+                ),
+                "OptimisticLockError",
+            ));
         }
 
         for event in &events {
@@ -345,7 +466,10 @@ impl EventStore for InMemoryEventStore {
 
     #[instrument(skip(self), fields(aggregate_id = %aggregate_id))]
     async fn load_events(&self, aggregate_id: &str) -> Result<Vec<StoredEvent>> {
-        let events: Vec<StoredEvent> = self.events.read().await
+        let events: Vec<StoredEvent> = self
+            .events
+            .read()
+            .await
             .iter()
             .filter(|e| e.aggregate_id == aggregate_id)
             .cloned()
@@ -366,7 +490,10 @@ impl EventStore for InMemoryEventStore {
         aggregate_id: &str,
         from_version: u64,
     ) -> Result<Vec<StoredEvent>> {
-        let events: Vec<StoredEvent> = self.events.read().await
+        let events: Vec<StoredEvent> = self
+            .events
+            .read()
+            .await
             .iter()
             .filter(|e| e.aggregate_id == aggregate_id && e.version >= from_version)
             .cloned()
@@ -382,9 +509,14 @@ impl EventStore for InMemoryEventStore {
         from: DateTime<Utc>,
         to: DateTime<Utc>,
     ) -> Result<Vec<StoredEvent>> {
-        let events: Vec<StoredEvent> = self.events.read().await
+        let events: Vec<StoredEvent> = self
+            .events
+            .read()
+            .await
             .iter()
-            .filter(|e| e.event_type == event_type && e.timestamp >= from && e.timestamp <= to)
+            .filter(|e| {
+                e.event_type.as_str() == event_type && e.timestamp >= from && e.timestamp <= to
+            })
             .cloned()
             .collect();
 
@@ -420,37 +552,24 @@ impl EventStore for SurrealEventStore {
             return Ok(());
         }
 
-        let mut version_response = self
-            .db
-            .query("SELECT VALUE version FROM event WHERE aggregate_id = $id ORDER BY version DESC LIMIT 1")
-            .bind(("id", aggregate_id.to_owned()))
-            .await
-            .map_err(error_core::ErrorObject::from)?;
-
-        let versions: Vec<u64> = version_response
-            .take(0)
-            .map_err(error_core::ErrorObject::from)?;
-        let current_version = versions.into_iter().next();
-
-        let current = current_version.unwrap_or(0);
-
-        if let Some(expected) = expected_version {
-            if current != expected {
-                return Err(helpers::validation_error(
-                    &format!(
-                        "Version conflict for aggregate {aggregate_id}: expected {expected}, actual {current}"
-                    ),
-                    "OptimisticLockError",
-                ));
-            }
-        }
-
-        let mut queries = Vec::with_capacity(events.len());
-        let mut bindings = Vec::with_capacity(events.len());
-
         let events_count = events.len();
 
-        for (next_version, (i, mut event)) in (current + 1..).zip(events.into_iter().enumerate()) {
+        let mut queries = Vec::with_capacity(events.len() + 2);
+        let mut all_bindings = serde_json::Map::new();
+
+        all_bindings.insert("aggregate_id".to_string(), serde_json::json!(aggregate_id));
+
+        queries.push(
+            "LET $current_version = (SELECT VALUE version FROM event WHERE aggregate_id = $aggregate_id ORDER BY version DESC LIMIT 1)[0] OR 0".to_string()
+        );
+
+        if let Some(expected) = expected_version {
+            queries.push(format!(
+                "IF $current_version != {expected} {{ THROW 'OptimisticLockError:' + $current_version }} }}"
+            ));
+        }
+
+        for (i, mut event) in events.into_iter().enumerate() {
             if event.aggregate_id != aggregate_id {
                 return Err(helpers::validation_error(
                     &format!(
@@ -461,44 +580,55 @@ impl EventStore for SurrealEventStore {
                 ));
             }
 
-            event.version = next_version;
-
+            event.version = i as u64;
             if event.timestamp == DateTime::<Utc>::MIN_UTC {
                 event.timestamp = Utc::now();
             }
 
             let event_json = serde_json::to_value(&event).map_err(error_core::ErrorObject::from)?;
             queries.push(format!("CREATE event CONTENT $event_{i}"));
-            bindings.push(serde_json::json!({ format!("event_{i}"): event_json }));
+            all_bindings.insert(format!("event_{i}"), event_json);
         }
 
         let mut sql = String::from("BEGIN TRANSACTION;\n");
-        let mut all_bindings = serde_json::Map::new();
-        for (i, query) in queries.iter().enumerate() {
+        for query in &queries {
             sql.push_str(query);
             sql.push_str(";\n");
-            if let serde_json::Value::Object(map) = &bindings[i] {
-                for (k, v) in map {
-                    all_bindings.insert(k.clone(), v.clone());
-                }
-            }
         }
         sql.push_str("COMMIT TRANSACTION;");
 
-        self.db
+        let result = self
+            .db
             .query(sql)
             .bind(serde_json::Value::Object(all_bindings))
             .await
-            .map_err(error_core::ErrorObject::from)?;
+            .map_err(error_core::ErrorObject::from);
 
-        info!(
-            aggregate_id = %aggregate_id,
-            events_appended = events_count,
-            new_version = current + events_count as u64,
-            "Events appended to SurrealDB"
-        );
-
-        Ok(())
+        match result {
+            Ok(_) => {
+                info!(aggregate_id = %aggregate_id, event_count = events_count, "事件追加成功");
+                Ok(())
+            }
+            Err(e) => {
+                let err_msg = e.to_string();
+                if err_msg.contains("OptimisticLockError") {
+                    let actual_version: u64 = err_msg
+                        .split(':')
+                        .nth(1)
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0);
+                    Err(helpers::validation_error(
+                        &format!(
+                            "Version conflict for aggregate {aggregate_id}: expected {}, actual {actual_version}",
+                            expected_version.unwrap_or(0)
+                        ),
+                        "OptimisticLockError",
+                    ))
+                } else {
+                    Err(e)
+                }
+            }
+        }
     }
 
     #[instrument(skip(self), fields(aggregate_id = %aggregate_id))]
@@ -553,6 +683,23 @@ impl EventStore for SurrealEventStore {
     }
 }
 
+/// 变更操作类型
+///
+/// 描述字段值变更的具体操作语义，符合 POP Axiom-2（事件唯一变异）
+/// 对显式 operator 的要求。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangeOperator {
+    /// 设置字段值（覆盖旧值）
+    Set,
+    /// 向集合追加元素
+    Append,
+    /// 从集合移除元素
+    Remove,
+    /// 替换集合中的元素
+    Replace,
+}
+
 /// 字段级变更记录
 ///
 /// 记录单个字段从 `old_value` 到 `new_value` 的变更，
@@ -565,15 +712,27 @@ pub struct FieldChange {
     /// 变更后的值（None 表示字段删除）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub new_value: Option<serde_json::Value>,
+    /// 变更操作类型
+    #[serde(default = "default_change_operator")]
+    pub operator: ChangeOperator,
+}
+
+fn default_change_operator() -> ChangeOperator {
+    ChangeOperator::Set
 }
 
 impl FieldChange {
     /// 创建字段变更记录
     #[must_use]
     pub fn new(old: Option<serde_json::Value>, new: Option<serde_json::Value>) -> Self {
+        let operator = match (&old, &new) {
+            (Some(_), None) => ChangeOperator::Remove,
+            _ => ChangeOperator::Set,
+        };
         Self {
             old_value: old,
             new_value: new,
+            operator,
         }
     }
 
@@ -583,6 +742,7 @@ impl FieldChange {
         Self {
             old_value: Some(old),
             new_value: Some(new),
+            operator: ChangeOperator::Set,
         }
     }
 
@@ -592,6 +752,7 @@ impl FieldChange {
         Self {
             old_value: None,
             new_value: Some(new),
+            operator: ChangeOperator::Set,
         }
     }
 
@@ -601,6 +762,17 @@ impl FieldChange {
         Self {
             old_value: Some(old),
             new_value: None,
+            operator: ChangeOperator::Remove,
+        }
+    }
+
+    /// 追加操作
+    #[must_use]
+    pub fn appended(new: serde_json::Value) -> Self {
+        Self {
+            old_value: None,
+            new_value: Some(new),
+            operator: ChangeOperator::Append,
         }
     }
 
@@ -664,19 +836,23 @@ mod tests {
     use uuid::Uuid;
 
     fn create_test_event(aggregate_id: &str, event_type: &str, version: u64) -> StoredEvent {
+        let et = match event_type {
+            "NodeCreated" => EventType::NodeCreated,
+            _ => EventType::DocumentIngested,
+        };
         StoredEvent {
             id: format!("event:{}", Uuid::new_v4()),
-            event_type: event_type.to_string(),
+            event_type: et,
             aggregate_id: aggregate_id.to_string(),
-            aggregate_type: "document".to_string(),
+            aggregate_type: AggregateType::Document,
             data: serde_json::json!({"title": "Test"}),
             metadata: EventMetadata {
                 causation_id: Some(Uuid::new_v4().to_string()),
                 correlation_id: Some(Uuid::new_v4().to_string()),
-                triggered_by: Some(TriggeredBy::Command {
+                triggered_by: TriggeredBy::Command {
                     command_type: format!("{event_type}Command"),
                     aggregate_id: aggregate_id.to_string(),
-                }),
+                },
                 user_id: Some("user_001".to_string()),
                 trace_id: Some("trace-123".to_string()),
             },
@@ -820,8 +996,8 @@ mod tests {
 
         let events = store.load_events_from_version("doc_001", 2).await.unwrap();
         assert_eq!(events.len(), 2);
-        assert_eq!(events[0].event_type, "TitleUpdated");
-        assert_eq!(events[1].event_type, "ContentUpdated");
+        assert_eq!(events[0].event_type, EventType::DocumentIngested);
+        assert_eq!(events[1].event_type, EventType::DocumentIngested);
     }
 
     #[tokio::test]
@@ -834,9 +1010,9 @@ mod tests {
                 "doc_001",
                 vec![StoredEvent {
                     id: format!("event:{}", Uuid::new_v4()),
-                    event_type: "DocumentCreated".to_string(),
+                    event_type: EventType::DocumentIngested,
                     aggregate_id: "doc_001".to_string(),
-                    aggregate_type: "document".to_string(),
+                    aggregate_type: AggregateType::Document,
                     data: serde_json::json!({}),
                     metadata: EventMetadata::default(),
                     version: 1,
@@ -852,9 +1028,9 @@ mod tests {
                 "doc_002",
                 vec![StoredEvent {
                     id: format!("event:{}", Uuid::new_v4()),
-                    event_type: "NodeCreated".to_string(),
+                    event_type: EventType::NodeCreated,
                     aggregate_id: "doc_002".to_string(),
-                    aggregate_type: "node".to_string(),
+                    aggregate_type: AggregateType::Node,
                     data: serde_json::json!({}),
                     metadata: EventMetadata::default(),
                     version: 1,
@@ -869,11 +1045,11 @@ mod tests {
         let to = now + chrono::Duration::seconds(1);
 
         let events = store
-            .load_events_by_type("DocumentCreated", from, to)
+            .load_events_by_type("DocumentIngested", from, to)
             .await
             .unwrap();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event_type, "DocumentCreated");
+        assert_eq!(events[0].event_type, EventType::DocumentIngested);
     }
 
     #[tokio::test]
@@ -952,10 +1128,10 @@ mod tests {
         let metadata = EventMetadata {
             causation_id: Some("cmd-123".to_string()),
             correlation_id: Some("corr-456".to_string()),
-            triggered_by: Some(TriggeredBy::Command {
+            triggered_by: TriggeredBy::Command {
                 command_type: "TestCommand".to_string(),
                 aggregate_id: "doc_001".to_string(),
-            }),
+            },
             user_id: Some("user-789".to_string()),
             trace_id: Some("trace-abc".to_string()),
         };
@@ -976,7 +1152,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_event_metadata_default_skips_none_fields() {
+    async fn test_event_metadata_default_has_triggered_by() {
         let metadata = EventMetadata::default();
         let json = serde_json::to_value(&metadata).expect("序列化失败");
 
@@ -984,6 +1160,10 @@ mod tests {
         assert!(json.get("correlation_id").is_none());
         assert!(json.get("user_id").is_none());
         assert!(json.get("trace_id").is_none());
+        assert!(
+            json.get("triggered_by").is_some(),
+            "triggered_by 是 Axiom-4 必须字段，不应为 None"
+        );
     }
 
     #[test]

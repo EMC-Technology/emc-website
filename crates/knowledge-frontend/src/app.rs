@@ -8,10 +8,10 @@
 //! - `GraphVisualizationView`: 图谱可视化
 //! - `SettingsView`: 系统设置
 
+use crate::components::{DocumentCard, ErrorMessage, FileUploader, Loading};
+use crate::hooks::{ApiClient, RealtimeConnection, RealtimeSync};
 use dioxus::prelude::*;
 use dioxus_signals::{Readable, Signal, Writable};
-use crate::hooks::{ApiClient, RealtimeConnection, RealtimeSync};
-use crate::components::{ErrorMessage, FileUploader, Loading, DocumentCard};
 use knowledge_core::model::{Block, Document, Token, TokenType};
 
 fn id_str(id: Option<&knowledge_core::model::RecordIdType>) -> String {
@@ -176,9 +176,18 @@ pub fn BlockDetailView(id: String) -> Element {
         }
     });
 
-    let doc_path = document().as_ref().map(|d| d.path.clone()).unwrap_or_default();
-    let doc_source = document().as_ref().map(|d| format!("{:?}", d.source_type)).unwrap_or_default();
-    let doc_hash = document().as_ref().map(|d| d.hash.clone()).unwrap_or_default();
+    let doc_path = document()
+        .as_ref()
+        .map(|d| d.path.clone())
+        .unwrap_or_default();
+    let doc_source = document()
+        .as_ref()
+        .map(|d| format!("{:?}", d.source_type))
+        .unwrap_or_default();
+    let doc_hash = document()
+        .as_ref()
+        .map(|d| d.hash.clone())
+        .unwrap_or_default();
 
     rsx! {
         div {

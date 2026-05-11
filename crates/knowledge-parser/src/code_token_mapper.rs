@@ -27,7 +27,7 @@
 //! | string/number literal | Word | 字面量值 |
 //! | 运算符/标点 | Symbol/Punct | +-*=/()[]{} 等 |
 
-use knowledge_core::model::{RecordIdType, Token, TokenType};
+use knowledge_core::model::{RecordIdType, Token, TokenStatus, TokenType};
 
 use crate::tree_sitter_parser::AstNode;
 
@@ -375,6 +375,7 @@ impl CodeTokenMapper {
                     #[allow(clippy::cast_possible_truncation)]
                     start_char: node.start_char,
                     global_offset: base_offset + u64::from(node.start_char),
+                    status: TokenStatus::Created,
                 }
             })
             .collect()
@@ -496,6 +497,7 @@ fn tokenize_code_line(
                 token_type,
                 start_char: *char_offset,
                 global_offset: base_global_offset + u64::from(*char_offset),
+                status: TokenStatus::Created,
             });
             *char_offset += u32::try_from(op.chars().count()).unwrap_or(u32::MAX);
             pos += op.len();
@@ -512,6 +514,7 @@ fn tokenize_code_line(
                 token_type: TokenType::Punct,
                 start_char: *char_offset,
                 global_offset: base_global_offset + u64::from(*char_offset),
+                status: TokenStatus::Created,
             });
             *char_offset += 1;
             pos += ch.len_utf8();
@@ -544,6 +547,7 @@ fn tokenize_code_line(
                 token_type,
                 start_char: *char_offset,
                 global_offset: base_global_offset + u64::from(*char_offset),
+                status: TokenStatus::Created,
             });
             *char_offset += char_count;
             pos += byte_len;
@@ -990,5 +994,479 @@ mod tests {
                 "'{kind}' 不应是复合符号"
             );
         }
+    }
+
+    #[test]
+    fn test_tokenize_code_block_basic() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("fn main() {}", 0, &None);
+        assert!(!tokens.is_empty());
+        let contents: Vec<&str> = tokens.iter().map(|t| t.content.as_str()).collect();
+        assert!(contents.contains(&"fn"));
+        assert!(contents.contains(&"main"));
+    }
+
+    #[test]
+    fn test_tokenize_code_block_with_block_id() {
+        let mapper = CodeTokenMapper::new();
+        let block_id: Option<RecordIdType> = Some(surrealdb::sql::Thing::from((
+            "block".to_string(),
+            "42".to_string(),
+        )));
+        let tokens = mapper.tokenize_code_block("let x = 1;", 0, &block_id);
+        assert!(!tokens.is_empty());
+        for token in &tokens {
+            assert_eq!(token.block_id, block_id.clone().unwrap());
+        }
+    }
+
+    #[test]
+    fn test_tokenize_code_block_multiline() {
+        let mapper = CodeTokenMapper::new();
+        let code = "fn foo() -> i32 {\n    let x = 1;\n    x\n}";
+        let tokens = mapper.tokenize_code_block(code, 0, &None);
+        assert!(tokens.len() > 5, "多行代码应产生多个 Token");
+    }
+
+    #[test]
+    fn test_tokenize_code_block_arrow_operator() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("fn foo() -> i32", 0, &None);
+        let arrow = tokens.iter().find(|t| t.content == "->");
+        assert!(arrow.is_some(), "应识别出 -> 运算符");
+        assert_eq!(arrow.unwrap().token_type, TokenType::Symbol);
+    }
+
+    #[test]
+    fn test_tokenize_code_block_fat_arrow() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("x => y", 0, &None);
+        let arrow = tokens.iter().find(|t| t.content == "=>");
+        assert!(arrow.is_some(), "应识别出 => 运算符");
+        assert_eq!(arrow.unwrap().token_type, TokenType::Symbol);
+    }
+
+    #[test]
+    fn test_tokenize_code_block_double_colon() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("std::collections::HashMap", 0, &None);
+        let double_colons: Vec<_> = tokens.iter().filter(|t| t.content == "::").collect();
+        assert_eq!(double_colons.len(), 2, "应识别出两个 :: 运算符");
+    }
+
+    #[test]
+    fn test_tokenize_code_block_punctuation() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("arr[0]", 0, &None);
+        let punct_tokens: Vec<_> = tokens
+            .iter()
+            .filter(|t| t.token_type == TokenType::Punct)
+            .collect();
+        assert!(punct_tokens.iter().any(|t| t.content == "["));
+        assert!(punct_tokens.iter().any(|t| t.content == "]"));
+    }
+
+    #[test]
+    fn test_tokenize_code_block_keyword() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("fn main()", 0, &None);
+        let fn_token = tokens.iter().find(|t| t.content == "fn");
+        assert!(fn_token.is_some());
+        assert_eq!(fn_token.unwrap().token_type, TokenType::Keyword);
+    }
+
+    #[test]
+    fn test_tokenize_code_block_identifier() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("my_variable", 0, &None);
+        assert!(!tokens.is_empty());
+        assert_eq!(tokens[0].token_type, TokenType::Identifier);
+        assert_eq!(tokens[0].content, "my_variable");
+    }
+
+    #[test]
+    fn test_tokenize_code_block_string_literal() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("\"hello\"", 0, &None);
+        assert!(!tokens.is_empty());
+        assert_eq!(tokens[0].token_type, TokenType::Word);
+    }
+
+    #[test]
+    fn test_tokenize_code_block_number() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("42", 0, &None);
+        assert!(!tokens.is_empty());
+        assert_eq!(tokens[0].token_type, TokenType::Word);
+    }
+
+    #[test]
+    fn test_tokenize_code_block_global_offset() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("x", 100, &None);
+        assert!(tokens[0].global_offset >= 100);
+    }
+
+    #[test]
+    fn test_tokenize_code_block_empty() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("", 0, &None);
+        assert!(tokens.is_empty());
+    }
+
+    #[test]
+    fn test_tokenize_code_block_comparison_ops() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("x == y", 0, &None);
+        let eq = tokens.iter().find(|t| t.content == "==");
+        assert!(eq.is_some());
+        assert_eq!(eq.unwrap().token_type, TokenType::Symbol);
+    }
+
+    #[test]
+    fn test_tokenize_code_block_not_equal() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("x != y", 0, &None);
+        let ne = tokens.iter().find(|t| t.content == "!=");
+        assert!(ne.is_some());
+        assert_eq!(ne.unwrap().token_type, TokenType::Symbol);
+    }
+
+    #[test]
+    fn test_tokenize_code_block_logical_and() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("a && b", 0, &None);
+        let and = tokens.iter().find(|t| t.content == "&&");
+        assert!(and.is_some());
+        assert_eq!(and.unwrap().token_type, TokenType::Symbol);
+    }
+
+    #[test]
+    fn test_tokenize_code_block_logical_or() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("a || b", 0, &None);
+        let or = tokens.iter().find(|t| t.content == "||");
+        assert!(or.is_some());
+        assert_eq!(or.unwrap().token_type, TokenType::Symbol);
+    }
+
+    #[test]
+    fn test_tokenize_code_block_compound_assignment() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("x += 1", 0, &None);
+        let plus_eq = tokens.iter().find(|t| t.content == "+=");
+        assert!(plus_eq.is_some());
+        assert_eq!(plus_eq.unwrap().token_type, TokenType::Symbol);
+    }
+
+    #[test]
+    fn test_tokenize_code_block_range() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("0..10", 0, &None);
+        assert!(!tokens.is_empty(), "范围表达式应产生 Token");
+    }
+
+    #[test]
+    fn test_tokenize_code_block_backtick_string() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("`template`", 0, &None);
+        assert!(!tokens.is_empty());
+    }
+
+    #[test]
+    fn test_classify_node_unnamed_non_operator() {
+        let nodes = vec![make_node("", "%", 0, 1, false)];
+        let tokens = CodeTokenMapper::map_nodes_to_tokens(&nodes, 0, TEST_BLOCK_ID);
+        assert_eq!(tokens[0].token_type, TokenType::Symbol, "% 应为 Symbol");
+    }
+
+    #[test]
+    fn test_classify_node_empty_text() {
+        let nodes = vec![make_node("", "", 0, 0, false)];
+        let tokens = CodeTokenMapper::map_nodes_to_tokens(&nodes, 0, TEST_BLOCK_ID);
+        assert!(tokens.is_empty(), "空文本节点应被过滤");
+    }
+
+    #[test]
+    fn test_classify_node_named_unknown() {
+        let nodes = vec![make_node("call_expression", "foo()", 0, 5, true)];
+        let tokens = CodeTokenMapper::map_nodes_to_tokens(&nodes, 0, TEST_BLOCK_ID);
+        assert_eq!(
+            tokens[0].token_type,
+            TokenType::Identifier,
+            "未匹配的命名节点应为 Identifier"
+        );
+    }
+
+    #[test]
+    fn test_classify_node_literal_in_kind() {
+        let nodes = vec![make_node("string_literal", "\"hello\"", 0, 7, true)];
+        let tokens = CodeTokenMapper::map_nodes_to_tokens(&nodes, 0, TEST_BLOCK_ID);
+        assert_eq!(
+            tokens[0].token_type,
+            TokenType::Word,
+            "含 literal 的 kind 应为 Word"
+        );
+    }
+
+    #[test]
+    fn test_classify_node_identifier_suffix() {
+        let nodes = vec![make_node("custom_identifier", "my_id", 0, 5, true)];
+        let tokens = CodeTokenMapper::map_nodes_to_tokens(&nodes, 0, TEST_BLOCK_ID);
+        assert_eq!(
+            tokens[0].token_type,
+            TokenType::Identifier,
+            "以 _identifier 结尾的 kind 应为 Identifier"
+        );
+    }
+
+    #[test]
+    fn test_map_nodes_compound_symbol_filtering() {
+        let nodes = vec![
+            make_node("generic_type", "Vec<i32>", 0, 8, true),
+            make_node("type_identifier", "Vec", 0, 3, true),
+            make_node("<", "<", 3, 4, false),
+            make_node("type_identifier", "i32", 4, 7, true),
+            make_node(">", ">", 7, 8, false),
+        ];
+        let tokens = CodeTokenMapper::map_nodes_to_tokens(&nodes, 0, TEST_BLOCK_ID);
+        assert!(tokens.len() <= 5, "复合符号子节点应被部分过滤");
+    }
+
+    #[test]
+    fn test_tokenize_code_block_range_expr() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("0..10", 0, &None);
+        assert!(!tokens.is_empty(), "范围表达式应产生 Token");
+    }
+
+    #[test]
+    fn test_tokenize_code_block_dot_dot_dot() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("1...2", 0, &None);
+        assert!(!tokens.is_empty(), "... 表达式应产生 Token");
+    }
+
+    #[test]
+    fn test_tokenize_code_block_le_ge() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("x <= y", 0, &None);
+        let le = tokens.iter().find(|t| t.content == "<=");
+        assert!(le.is_some());
+        assert_eq!(le.unwrap().token_type, TokenType::Symbol);
+    }
+
+    #[test]
+    fn test_tokenize_code_block_shift() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("x << 2", 0, &None);
+        let shift = tokens.iter().find(|t| t.content == "<<");
+        assert!(shift.is_some());
+        assert_eq!(shift.unwrap().token_type, TokenType::Symbol);
+    }
+
+    #[test]
+    fn test_tokenize_code_block_minus_equals() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("x -= 1", 0, &None);
+        let minus_eq = tokens.iter().find(|t| t.content == "-=");
+        assert!(minus_eq.is_some());
+    }
+
+    #[test]
+    fn test_tokenize_code_block_star_equals() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("x *= 2", 0, &None);
+        let star_eq = tokens.iter().find(|t| t.content == "*=");
+        assert!(star_eq.is_some());
+    }
+
+    #[test]
+    fn test_tokenize_code_block_slash_equals() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("x /= 2", 0, &None);
+        let slash_eq = tokens.iter().find(|t| t.content == "/=");
+        assert!(slash_eq.is_some());
+    }
+
+    #[test]
+    fn test_tokenize_code_block_percent_equals() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("x %= 2", 0, &None);
+        let pct_eq = tokens.iter().find(|t| t.content == "%=");
+        assert!(pct_eq.is_some());
+    }
+
+    #[test]
+    fn test_tokenize_code_block_amp_equals() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("x &= mask", 0, &None);
+        let amp_eq = tokens.iter().find(|t| t.content == "&=");
+        assert!(amp_eq.is_some());
+    }
+
+    #[test]
+    fn test_tokenize_code_block_pipe_equals() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("x |= flag", 0, &None);
+        let pipe_eq = tokens.iter().find(|t| t.content == "|=");
+        assert!(pipe_eq.is_some());
+    }
+
+    #[test]
+    fn test_tokenize_code_block_caret_equals() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("x ^= bit", 0, &None);
+        let caret_eq = tokens.iter().find(|t| t.content == "^=");
+        assert!(caret_eq.is_some());
+    }
+
+    #[test]
+    fn test_tokenize_code_block_power_op() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("x ** 2", 0, &None);
+        let power = tokens.iter().find(|t| t.content == "**");
+        assert!(power.is_some());
+    }
+
+    #[test]
+    fn test_tokenize_code_block_floor_div() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("x // 2", 0, &None);
+        let floor = tokens.iter().find(|t| t.content == "//");
+        assert!(floor.is_some());
+    }
+
+    #[test]
+    fn test_tokenize_code_block_left_arrow() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("x <- y", 0, &None);
+        let left_arrow = tokens.iter().find(|t| t.content == "<-");
+        assert!(left_arrow.is_some());
+    }
+
+    #[test]
+    fn test_tokenize_code_block_right_shift() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("x >> 1", 0, &None);
+        let right_shift = tokens.iter().find(|t| t.content == ">>");
+        assert!(right_shift.is_some());
+    }
+
+    #[test]
+    fn test_tokenize_code_block_ge() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("x >= 0", 0, &None);
+        let ge = tokens.iter().find(|t| t.content == ">=");
+        assert!(ge.is_some());
+    }
+
+    #[test]
+    fn test_tokenize_code_block_at_sign() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("@derive", 0, &None);
+        let at = tokens.iter().find(|t| t.content == "@");
+        assert!(at.is_some());
+    }
+
+    #[test]
+    fn test_tokenize_code_block_hash() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("#[test]", 0, &None);
+        let hash = tokens.iter().find(|t| t.content == "#");
+        assert!(hash.is_some());
+    }
+
+    #[test]
+    fn test_tokenize_code_block_dollar() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("$var", 0, &None);
+        let dollar = tokens.iter().find(|t| t.content == "$");
+        assert!(dollar.is_some());
+    }
+
+    #[test]
+    fn test_tokenize_code_block_backslash() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("\\n", 0, &None);
+        let backslash = tokens.iter().find(|t| t.content == "\\");
+        assert!(backslash.is_some());
+    }
+
+    #[test]
+    fn test_tokenize_code_block_tilde() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("~pattern", 0, &None);
+        let tilde = tokens.iter().find(|t| t.content == "~");
+        assert!(tilde.is_some());
+    }
+
+    #[test]
+    fn test_tokenize_code_block_question_mark() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("result?", 0, &None);
+        let question = tokens.iter().find(|t| t.content == "?");
+        assert!(question.is_some());
+    }
+
+    #[test]
+    fn test_tokenize_code_block_exclamation() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("!enabled", 0, &None);
+        let excl = tokens.iter().find(|t| t.content == "!");
+        assert!(excl.is_some());
+    }
+
+    #[test]
+    fn test_tokenize_code_block_backtick() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("`str`", 0, &None);
+        assert!(!tokens.is_empty());
+    }
+
+    #[test]
+    fn test_classify_code_token_underscore_ident() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("_foo", 0, &None);
+        assert!(!tokens.is_empty());
+        assert_eq!(tokens[0].token_type, TokenType::Identifier);
+    }
+
+    #[test]
+    fn test_classify_code_token_float_number() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("3.14", 0, &None);
+        assert!(!tokens.is_empty());
+        assert_eq!(tokens[0].token_type, TokenType::Word);
+    }
+
+    #[test]
+    fn test_classify_code_token_single_quote() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("'a'", 0, &None);
+        assert!(!tokens.is_empty());
+    }
+
+    #[test]
+    fn test_classify_code_token_unknown_symbol() {
+        let mapper = CodeTokenMapper::new();
+        let tokens = mapper.tokenize_code_block("%", 0, &None);
+        assert!(!tokens.is_empty());
+        assert_eq!(tokens[0].token_type, TokenType::Symbol);
+    }
+
+    #[test]
+    fn test_classify_node_comment_kinds() {
+        let nodes = vec![make_node("comment", "// test", 0, 8, true)];
+        let tokens = CodeTokenMapper::map_nodes_to_tokens(&nodes, 0, TEST_BLOCK_ID);
+        assert_eq!(tokens[0].token_type, TokenType::Word, "comment 应为 Word");
+    }
+
+    #[test]
+    fn test_is_compound_symbol_additional() {
+        assert!(CodeTokenMapper::is_compound_symbol("pointer_type"));
+        assert!(CodeTokenMapper::is_compound_symbol("sized_type"));
+        assert!(CodeTokenMapper::is_compound_symbol("qualified_type"));
+        assert!(CodeTokenMapper::is_compound_symbol("struct_pattern"));
     }
 }

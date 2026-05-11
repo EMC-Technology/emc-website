@@ -72,7 +72,10 @@ mod tests {
     #[test]
     fn test_llm_judgment_failed_code_matches_registry() {
         let err = llm_judgment_failed("connection refused");
-        assert_eq!(err.code(), error_core::error_code::registry::LLM_JUDGMENT_FAILED);
+        assert_eq!(
+            err.code(),
+            error_core::error_code::registry::LLM_JUDGMENT_FAILED
+        );
     }
 
     #[test]
@@ -84,14 +87,20 @@ mod tests {
     #[test]
     fn test_metric_calculation_failed_code_matches_registry() {
         let err = metric_calculation_failed("division by zero");
-        assert_eq!(err.code(), error_core::error_code::registry::METRIC_CALC_FAILED);
+        assert_eq!(
+            err.code(),
+            error_core::error_code::registry::METRIC_CALC_FAILED
+        );
     }
 
     #[test]
     fn test_dataset_load_error_code_matches_registry() {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file missing");
         let err = dataset_load_error(&io_err);
-        assert_eq!(err.code(), error_core::error_code::registry::DATASET_LOAD_FAILED);
+        assert_eq!(
+            err.code(),
+            error_core::error_code::registry::DATASET_LOAD_FAILED
+        );
     }
 
     #[test]

@@ -745,10 +745,10 @@ mod tests {
         assert!(!redacted.findings.is_empty());
         assert!(!redacted.sensitive_paths.is_empty());
 
-        if let Some(email_val) = redacted.value.get("email") {
-            if let Some(s) = email_val.as_str() {
-                assert_ne!(s, "zhangsan@example.com");
-            }
+        if let Some(email_val) = redacted.value.get("email")
+            && let Some(s) = email_val.as_str()
+        {
+            assert_ne!(s, "zhangsan@example.com");
         }
     }
 

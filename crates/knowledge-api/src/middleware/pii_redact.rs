@@ -36,13 +36,10 @@
 //! - **零误报**: 正常业务数据不应被错误脱敏（如包含数字的订单号）
 //! - **性能优先**: 使用预编译正则表达式，避免热路径上的回溯
 
-use axum::{
-    extract::Request,
-    middleware::Next,
-    response::Response,
-};
-use std::sync::LazyLock;
+use axum::{body::Body, extract::Request, http::header, middleware::Next, response::Response};
+use http_body_util::BodyExt;
 use regex::Regex;
+use std::sync::LazyLock;
 use tracing::{debug, warn};
 
 /// PII 脱敏替换标记
@@ -58,8 +55,7 @@ const REDACTED_PASSWORD: &str = "[REDACTED_PASSWORD]";
 /// - domain: 至少一个点分隔的域名
 static EMAIL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     // SAFETY: 正则模式为编译期硬编码字面量，语法错误在开发阶段即可发现
-    Regex::new(r"(?i)[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
-        .expect("邮箱正则编译失败")
+    Regex::new(r"(?i)[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}").expect("邮箱正则编译失败")
 });
 
 /// 中国大陆手机号正则
@@ -68,14 +64,12 @@ static EMAIL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 /// 排除：物联网号码（144/141/142/143/145 等）和虚拟运营商号段
 static PHONE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     // SAFETY: 正则模式为编译期硬编码字面量，语法错误在开发阶段即可发现
-    Regex::new(r"\b1[3-9]\d{9}\b")
-        .expect("手机号正则编译失败")
+    Regex::new(r"\b1[3-9]\d{9}\b").expect("手机号正则编译失败")
 });
 
 static PHONE_REGEX_CN: LazyLock<Regex> = LazyLock::new(|| {
     // SAFETY: 正则模式为编译期硬编码字面量，语法错误在开发阶段即可发现
-    Regex::new(r"([\p{Han}：:，,、\s])1([3-9]\d{9})")
-        .expect("中文语境手机号正则编译失败")
+    Regex::new(r"([\p{Han}：:，,、\s])1([3-9]\d{9})").expect("中文语境手机号正则编译失败")
 });
 
 /// 中国大陆身份证号正则（18 位）
@@ -84,14 +78,12 @@ static PHONE_REGEX_CN: LazyLock<Regex> = LazyLock::new(|| {
 /// 校验码支持 X/x（罗马数字10）
 static ID_CARD_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     // SAFETY: 正则模式为编译期硬编码字面量，语法错误在开发阶段即可发现
-    Regex::new(r"\b\d{17}[\dXx]\b")
-        .expect("身份证号正则编译失败")
+    Regex::new(r"\b\d{17}[\dXx]\b").expect("身份证号正则编译失败")
 });
 
 static ID_CARD_REGEX_CN: LazyLock<Regex> = LazyLock::new(|| {
     // SAFETY: 正则模式为编译期硬编码字面量，语法错误在开发阶段即可发现
-    Regex::new(r"([\p{Han}：:，,、\s])(\d{17}[\dXx])")
-        .expect("中文语境身份证号正则编译失败")
+    Regex::new(r"([\p{Han}：:，,、\s])(\d{17}[\dXx])").expect("中文语境身份证号正则编译失败")
 });
 
 /// 密码相关字段名模式
@@ -211,10 +203,9 @@ fn redact_emails(input: &str) -> (String, usize) {
 fn redact_phones(input: &str) -> (String, usize) {
     let output = PHONE_REGEX.replace_all(input, REDACTED_PHONE);
     let cn_count = PHONE_REGEX_CN.find_iter(&output).count();
-    let output = PHONE_REGEX_CN
-        .replace_all(&output, |caps: &regex::Captures<'_>| {
-            format!("{}{REDACTED_PHONE}", &caps[1])
-        });
+    let output = PHONE_REGEX_CN.replace_all(&output, |caps: &regex::Captures<'_>| {
+        format!("{}{REDACTED_PHONE}", &caps[1])
+    });
     let ascii_count = PHONE_REGEX.find_iter(input).count();
     (output.to_string(), ascii_count + cn_count)
 }
@@ -222,10 +213,9 @@ fn redact_phones(input: &str) -> (String, usize) {
 fn redact_id_cards(input: &str) -> (String, usize) {
     let output = ID_CARD_REGEX.replace_all(input, REDACTED_ID_CARD);
     let cn_count = ID_CARD_REGEX_CN.find_iter(&output).count();
-    let output = ID_CARD_REGEX_CN
-        .replace_all(&output, |caps: &regex::Captures<'_>| {
-            format!("{}{REDACTED_ID_CARD}", &caps[1])
-        });
+    let output = ID_CARD_REGEX_CN.replace_all(&output, |caps: &regex::Captures<'_>| {
+        format!("{}{REDACTED_ID_CARD}", &caps[1])
+    });
     let ascii_count = ID_CARD_REGEX.find_iter(input).count();
     (output.to_string(), ascii_count + cn_count)
 }
@@ -236,17 +226,14 @@ fn redact_id_cards(input: &str) -> (String, usize) {
 ///
 /// 1. 对请求 URI 和 Headers 进行 PII 扫描和日志记录（不修改请求本身）
 /// 2. 将 PII 检测结果注入到 tracing Span 属性中
-/// 3. 对响应体进行 PII 脱敏（仅当 Content-Type 为 text/* 时）
+/// 3. 对响应体进行 PII 脱敏（仅当 Content-Type 为 text/* 或 application/json 时）
 /// 4. 记录脱敏统计到结构化日志
 ///
 /// # Performance Note
 ///
 /// 此中间件会对每个请求执行正则匹配。对于高吞吐量场景，
 /// 可通过环境变量 `PII_REDACTION_ENABLED=false` 完全禁用。
-pub async fn pii_redact_middleware(
-    request: Request,
-    next: Next,
-) -> Response {
+pub async fn pii_redact_middleware(request: Request, next: Next) -> Response {
     let pii_enabled = std::env::var("PII_REDACTION_ENABLED")
         .map_or(true, |v| v.eq_ignore_ascii_case("true") || v == "1");
 
@@ -257,10 +244,8 @@ pub async fn pii_redact_middleware(
     let uri = request.uri().to_string();
     let method = request.method().to_string();
 
-    // 扫描 URI 中的 PII
     let (_sanitized_uri, pii_result) = redact_pii(&uri);
 
-    // 将 PII 检测信息注入 Span
     if pii_result.has_pii() {
         let span = tracing::Span::current();
         span.record("pii_detected", true);
@@ -268,9 +253,10 @@ pub async fn pii_redact_middleware(
         span.record("pii_phone_count", pii_result.phone_count);
         span.record("pii_id_card_count", pii_result.id_card_count);
 
+        let sanitized_uri = sanitize_uri_for_log(&uri);
         warn!(
             method = %method,
-            uri = %uri,
+            uri = %sanitized_uri,
             email_count = pii_result.email_count,
             phone_count = pii_result.phone_count,
             id_card_count = pii_result.id_card_count,
@@ -278,7 +264,90 @@ pub async fn pii_redact_middleware(
         );
     }
 
-    next.run(request).await
+    let response = next.run(request).await;
+
+    redact_response_body(response).await
+}
+
+const SENSITIVE_QUERY_PARAMS: &[&str] = &[
+    "token",
+    "key",
+    "secret",
+    "password",
+    "api_key",
+    "access_token",
+    "refresh_token",
+    "auth",
+    "credential",
+    "private_key",
+];
+
+fn sanitize_uri_for_log(uri: &str) -> String {
+    if let Some((path, query)) = uri.split_once('?') {
+        let sanitized: Vec<String> = query
+            .split('&')
+            .map(|param| {
+                if let Some((key, _)) = param.split_once('=') {
+                    if SENSITIVE_QUERY_PARAMS.contains(&key.to_lowercase().as_str()) {
+                        format!("{key}=[REDACTED]")
+                    } else {
+                        param.to_string()
+                    }
+                } else {
+                    param.to_string()
+                }
+            })
+            .collect();
+        format!("{path}?{}", sanitized.join("&"))
+    } else {
+        uri.to_string()
+    }
+}
+
+/// 对响应体执行 PII 脱敏
+///
+/// 仅对 Content-Type 为 text/* 或 application/json 的响应体进行脱敏，
+/// 其他类型（如二进制流）直接透传。
+async fn redact_response_body(response: Response) -> Response {
+    let content_type = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    let should_redact = content_type.contains("text/") || content_type.contains("application/json");
+
+    if !should_redact {
+        return response;
+    }
+
+    let (parts, body) = response.into_parts();
+
+    let Ok(collected) = body.collect().await else {
+        return Response::from_parts(
+            parts,
+            Body::from("PII redaction: failed to read response body"),
+        );
+    };
+
+    let bytes = collected.to_bytes();
+
+    let Ok(body_str) = std::str::from_utf8(&bytes) else {
+        return Response::from_parts(parts, Body::from(bytes));
+    };
+
+    let (redacted_str, pii_result) = redact_pii(body_str);
+
+    if pii_result.has_pii() {
+        debug!(
+            email_count = pii_result.email_count,
+            phone_count = pii_result.phone_count,
+            id_card_count = pii_result.id_card_count,
+            "响应体中检测并脱敏 PII 信息"
+        );
+    }
+
+    Response::from_parts(parts, Body::from(redacted_str))
 }
 
 /// 对任意字符串执行安全的 PII 脱敏（供其他模块调用）

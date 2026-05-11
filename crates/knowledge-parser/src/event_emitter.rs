@@ -22,7 +22,7 @@
 //! ```
 
 #[cfg(feature = "event-driven")]
-use knowledge_core::event::{global_event_bus, KnowledgeEvent, types::DocumentParsedEvent};
+use knowledge_core::event::{KnowledgeEvent, global_event_bus, types::DocumentParsedEvent};
 
 /// 发射文档解析完成事件
 ///
@@ -162,8 +162,26 @@ mod tests {
     #[tokio::test]
     async fn test_emit_noop_when_feature_disabled() {
         emit_parsed("test-doc", 1, 10, 5, None, None, None).await;
-        emit_ingested("test-doc", "/test.md", 100, SourceType::Markdown, &"a".repeat(64), None, None, None).await;
-        emit_node_created("node-001", knowledge_core::event::types::NodeType::Block, Some("test-doc"), None, None, None).await;
+        emit_ingested(
+            "test-doc",
+            "/test.md",
+            100,
+            SourceType::Markdown,
+            &"a".repeat(64),
+            None,
+            None,
+            None,
+        )
+        .await;
+        emit_node_created(
+            "node-001",
+            knowledge_core::event::types::NodeType::Block,
+            Some("test-doc"),
+            None,
+            None,
+            None,
+        )
+        .await;
     }
 
     #[cfg(feature = "event-driven")]
@@ -173,12 +191,18 @@ mod tests {
 
         let mut rx = global_event_bus().subscribe().await;
 
-        emit_parsed("emit-test-doc", 3, 50, 20, Some("cmd-123"), Some("corr-456"), Some("Command")).await;
+        emit_parsed(
+            "emit-test-doc",
+            3,
+            50,
+            20,
+            Some("cmd-123"),
+            Some("corr-456"),
+            Some("Command"),
+        )
+        .await;
 
-        let received = tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            rx.recv()
-        ).await;
+        let received = tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await;
 
         assert!(received.is_ok(), "应从全局总线接收到事件");
         match received.unwrap() {

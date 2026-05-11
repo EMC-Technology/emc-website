@@ -27,9 +27,11 @@
 
 use std::path::Path;
 
-use knowledge_core::model::{Block, BlockType, Document, SourceType, Token, RecordIdType};
 use crate::Result;
 use error_core::helpers;
+use knowledge_core::model::{
+    Block, BlockStatus, BlockType, Document, RecordIdType, SourceType, Token,
+};
 
 use crate::code_token_mapper::CodeTokenMapper;
 use crate::file_ingester::IngestedFile;
@@ -138,10 +140,7 @@ impl CodePipeline {
     /// let (doc, blocks, tokens) = pipeline.process(&file)?;
     /// println!("文档: {}, 块数: {}, Token 数: {}", doc.path, blocks.len(), tokens.len());
     /// ```
-    pub fn process(
-        &mut self,
-        file: &IngestedFile,
-    ) -> Result<(Document, Vec<Block>, Vec<Token>)> {
+    pub fn process(&mut self, file: &IngestedFile) -> Result<(Document, Vec<Block>, Vec<Token>)> {
         if file.source_type != SourceType::Code {
             return Err(helpers::unsupported_format(&format!(
                 "CodePipeline 仅支持 Code 类型文件，实际类型: {:?}",
@@ -159,23 +158,29 @@ impl CodePipeline {
             format!("code_{}", generate_short_hash(&file.path)),
         ));
 
+        let path_string = file.path.to_string_lossy().into_owned();
+        let doc_hash = blake3::hash(path_string.as_bytes()).to_hex().to_string();
+        let doc_id_record: RecordIdType =
+            surrealdb::sql::Thing::from(("document".to_string(), doc_hash.clone()));
+
         let block = Block {
             id: None,
-            doc_id: surrealdb::sql::Thing::from(("document".to_string(), "pending".to_string())),
+            doc_id: doc_id_record,
             block_type: BlockType::Code,
             start_line: 0,
             end_line: line_count.saturating_sub(1),
-            embedding: None,
-            idempotency_key: Some(crate::idempotency::IdempotencyKeyGenerator::generate_for_block(
-                &file.hash,
-                0,
-                line_count.saturating_sub(1),
-                &file.content,
-            )),
+            idempotency_key: Some(
+                crate::idempotency::IdempotencyKeyGenerator::generate_for_block(
+                    &file.hash,
+                    0,
+                    line_count.saturating_sub(1),
+                    &file.content,
+                ),
+            ),
+            status: BlockStatus::Created,
         };
 
-        let tokens =
-            CodeTokenMapper::map_nodes_to_tokens(&ast.nodes, 0, &block_id.to_string());
+        let tokens = CodeTokenMapper::map_nodes_to_tokens(&ast.nodes, 0, &block_id.to_string());
 
         let title = extract_title_from_path(&file.path);
 
@@ -205,10 +210,10 @@ impl CodePipeline {
             })
             .ok_or_else(|| {
                 helpers::unsupported_format(&format!(
-                "无法识别的代码文件扩展名: {:?}（支持的扩展名: {}）",
-                path.extension(),
-                supported_extensions()
-            ))
+                    "无法识别的代码文件扩展名: {:?}（支持的扩展名: {}）",
+                    path.extension(),
+                    supported_extensions()
+                ))
             })
     }
 
@@ -254,18 +259,12 @@ impl CodePipeline {
         #[cfg(feature = "parallel")]
         {
             use rayon::prelude::*;
-            files
-                .par_iter()
-                .map(process_single_file)
-                .collect()
+            files.par_iter().map(process_single_file).collect()
         }
 
         #[cfg(not(feature = "parallel"))]
         {
-            files
-                .iter()
-                .map(process_single_file)
-                .collect()
+            files.iter().map(process_single_file).collect()
         }
     }
 }
@@ -305,17 +304,18 @@ fn process_single_file(file: &IngestedFile) -> Result<ParseOutput> {
         block_type: BlockType::Code,
         start_line: 0,
         end_line: line_count.saturating_sub(1),
-        embedding: None,
-        idempotency_key: Some(crate::idempotency::IdempotencyKeyGenerator::generate_for_block(
-            &file.hash,
-            0,
-            line_count.saturating_sub(1),
-            &file.content,
-        )),
+        idempotency_key: Some(
+            crate::idempotency::IdempotencyKeyGenerator::generate_for_block(
+                &file.hash,
+                0,
+                line_count.saturating_sub(1),
+                &file.content,
+            ),
+        ),
+        status: BlockStatus::Created,
     };
 
-    let tokens =
-        CodeTokenMapper::map_nodes_to_tokens(&ast.nodes, 0, &block_id.to_string());
+    let tokens = CodeTokenMapper::map_nodes_to_tokens(&ast.nodes, 0, &block_id.to_string());
 
     let title = extract_title_from_path(&file.path);
 
@@ -359,11 +359,11 @@ fn supported_extensions() -> String {
 
 #[cfg(test)]
 mod tests {
-    use error_core::prelude::ErrorSource;
     use super::*;
+    use error_core::prelude::ErrorSource;
+    use knowledge_core::model::TokenType;
     use std::io::Write as IoWrite;
     use std::path::PathBuf;
-    use knowledge_core::model::TokenType;
 
     fn create_temp_code_file(name: &str, content: &str) -> PathBuf {
         let dir = std::env::temp_dir().join("knowledge_parser_code_test");
@@ -412,28 +412,17 @@ fn main() {
             );
 
             assert_eq!(blocks.len(), 1, "代码文件应产生 1 个 Block");
-            assert_eq!(
-                blocks[0].block_type,
-                BlockType::Code,
-                "Block 类型应为 Code"
-            );
+            assert_eq!(blocks[0].block_type, BlockType::Code, "Block 类型应为 Code");
 
-            assert!(
-                !tokens.is_empty(),
-                "应产生至少一个 Token"
-            );
+            assert!(!tokens.is_empty(), "应产生至少一个 Token");
 
-            let has_keyword = tokens
-                .iter()
-                .any(|t| t.token_type == TokenType::Keyword);
+            let has_keyword = tokens.iter().any(|t| t.token_type == TokenType::Keyword);
             assert!(
                 has_keyword,
                 "Rust 代码应包含 Keyword 类型的 Token（如 'fn', 'let'）"
             );
 
-            let has_identifier = tokens
-                .iter()
-                .any(|t| t.token_type == TokenType::Identifier);
+            let has_identifier = tokens.iter().any(|t| t.token_type == TokenType::Identifier);
             assert!(
                 has_identifier,
                 "Rust 代码应包含 Identifier 类型的 Token（如 'main', 'message'）"
@@ -476,10 +465,7 @@ print(result)
 
             let block = &blocks[0];
             assert_eq!(block.start_line, 0, "起始行应为 0");
-            assert!(
-                block.end_line > 0,
-                "结束行应大于 0（文件有多行内容）"
-            );
+            assert!(block.end_line > 0, "结束行应大于 0（文件有多行内容）");
             assert_eq!(block.block_type, BlockType::Code);
         } else if let Err(ref e) = result {
             if e.code().contains("PARSE") && e.source() == ErrorSource::USR {
@@ -615,10 +601,7 @@ print(result)
                     );
                 }
                 None => {
-                    assert!(
-                        result.is_err(),
-                        "{filename} 应返回错误（不支持的语言）"
-                    );
+                    assert!(result.is_err(), "{filename} 应返回错误（不支持的语言）");
                 }
             }
         }
@@ -656,5 +639,92 @@ print(result)
         assert_eq!(count_lines("line1"), 1, "单行无换行应有 1 行");
         assert_eq!(count_lines("line1\n"), 2, "单行带换行应有 2 行");
         assert_eq!(count_lines("line1\nline2\nline3"), 3, "三行应有 3 行");
+    }
+
+    #[test]
+    fn test_code_pipeline_default() {
+        let _pipeline = CodePipeline::default();
+    }
+
+    #[test]
+    fn test_process_batch_empty() {
+        let results = CodePipeline::process_batch(&[]);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_process_batch_non_code_rejected() {
+        let files = vec![crate::file_ingester::IngestedFile {
+            path: PathBuf::from("/path/to/readme.md"),
+            content: "# Hello".to_string(),
+            hash: "d".repeat(64),
+            file_size: 7,
+            source_type: SourceType::Markdown,
+        }];
+        let results = CodePipeline::process_batch(&files);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_err());
+    }
+
+    #[test]
+    fn test_process_batch_unsupported_extension() {
+        let files = vec![crate::file_ingester::IngestedFile {
+            path: PathBuf::from("/path/to/file.xyz"),
+            content: "some content".to_string(),
+            hash: "c".repeat(64),
+            file_size: 12,
+            source_type: SourceType::Code,
+        }];
+        let results = CodePipeline::process_batch(&files);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_err());
+    }
+
+    #[test]
+    fn test_process_batch_rust_file() {
+        let rust_code = "fn main() { let x = 1; }";
+        let path = create_temp_code_file("batch_test.rs", rust_code);
+        let files = vec![crate::file_ingester::IngestedFile {
+            path: path.clone(),
+            content: rust_code.to_string(),
+            hash: "a".repeat(64),
+            file_size: rust_code.len() as u64,
+            source_type: SourceType::Code,
+        }];
+        let results = CodePipeline::process_batch(&files);
+        assert_eq!(results.len(), 1);
+        if let Err(e) = &results[0] {
+            assert!(
+                e.code().contains("PARSE") && e.source() == error_core::prelude::ErrorSource::USR,
+                "意外的错误: {e}"
+            );
+        }
+        cleanup_temp_dir();
+    }
+
+    #[test]
+    fn test_process_batch_multiple_files() {
+        let rust_code = "fn foo() {}";
+        let path1 = create_temp_code_file("multi1.rs", rust_code);
+        let path2 = create_temp_code_file("multi2.xyz", "data");
+        let files = vec![
+            crate::file_ingester::IngestedFile {
+                path: path1,
+                content: rust_code.to_string(),
+                hash: "a".repeat(64),
+                file_size: rust_code.len() as u64,
+                source_type: SourceType::Code,
+            },
+            crate::file_ingester::IngestedFile {
+                path: path2,
+                content: "data".to_string(),
+                hash: "b".repeat(64),
+                file_size: 4,
+                source_type: SourceType::Code,
+            },
+        ];
+        let results = CodePipeline::process_batch(&files);
+        assert_eq!(results.len(), 2);
+        cleanup_temp_dir();
     }
 }

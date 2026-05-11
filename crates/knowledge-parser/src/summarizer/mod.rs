@@ -4,10 +4,10 @@
 
 pub mod config;
 pub mod engine;
-pub mod prompt;
-pub mod store;
 #[cfg(feature = "llm")]
 pub mod ollama_adapter;
+pub mod prompt;
+pub mod store;
 
 pub use config::SummarizerConfig;
 pub use engine::{CommunityInput, CommunitySummarizer, LanguageModel};

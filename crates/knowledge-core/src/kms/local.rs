@@ -3,15 +3,15 @@ use aes_gcm::{
     aead::{Aead, AeadCore, KeyInit, OsRng},
 };
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use rand::RngCore;
-use ring::{rand as ring_rand, signature::Ed25519KeyPair};
+use ring::{rand as ring_rand, signature::Ed25519KeyPair, signature::KeyPair};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use zeroize::ZeroizeOnDrop;
+use zeroize::{ZeroizeOnDrop, Zeroizing};
 
 use crate::Result;
 use crate::error::helpers;
@@ -77,6 +77,21 @@ struct StoredKey {
     encrypted_material: Vec<u8>,
     /// 加密使用的 IV
     iv: Vec<u8>,
+    /// 旧版本密钥（轮换时保留，用于解密历史数据）
+    previous_versions: Vec<StoredKeyVersion>,
+}
+
+/// 旧版本密钥记录
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredKeyVersion {
+    /// 版本号
+    version: u64,
+    /// 加密后的密钥材料
+    encrypted_material: Vec<u8>,
+    /// 加密使用的 IV
+    iv: Vec<u8>,
+    /// 轮换时间
+    rotated_at: DateTime<Utc>,
 }
 
 impl LocalKms {
@@ -154,6 +169,16 @@ impl LocalKms {
         std::fs::write(path, key).map_err(|e| {
             helpers::io_error(&format!("无法写入主密钥文件 {}: {e}", path.display()))
         })?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o600);
+            std::fs::set_permissions(path, perms).map_err(|e| {
+                helpers::io_error(&format!("无法设置主密钥文件权限 {}: {e}", path.display()))
+            })?;
+        }
+
         Ok(())
     }
 
@@ -171,7 +196,7 @@ impl LocalKms {
     }
 
     /// 使用主密钥解密数据
-    fn decrypt_with_master_key(&self, ciphertext: &[u8], iv: &[u8]) -> Result<Vec<u8>> {
+    fn decrypt_with_master_key(&self, ciphertext: &[u8], iv: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
         let cipher = Aes256Gcm::new_from_slice(self.master_key.as_bytes())
             .map_err(|e| helpers::crypto_error(&format!("AES 初始化失败: {e}")))?;
 
@@ -180,7 +205,7 @@ impl LocalKms {
             .decrypt(nonce, ciphertext)
             .map_err(|_| helpers::crypto_error("解密失败：密文可能已损坏"))?;
 
-        Ok(plaintext)
+        Ok(Zeroizing::new(plaintext))
     }
 
     /// 从磁盘加载所有密钥
@@ -190,13 +215,12 @@ impl LocalKms {
 
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) == Some("key") {
-                if let Ok(data) = std::fs::read(&path) {
-                    if let Ok(stored_key) = bincode::deserialize::<StoredKey>(&data) {
-                        let mut store = self.key_store.write().await;
-                        store.insert(stored_key.metadata.key_id.clone(), stored_key);
-                    }
-                }
+            if path.extension().and_then(|s| s.to_str()) == Some("key")
+                && let Ok(data) = std::fs::read(&path)
+                && let Ok(stored_key) = bincode::deserialize::<StoredKey>(&data)
+            {
+                let mut store = self.key_store.write().await;
+                store.insert(stored_key.metadata.key_id.clone(), stored_key);
             }
         }
 
@@ -231,7 +255,7 @@ impl LocalKms {
     }
 
     /// 解密获取密钥材料的明文
-    async fn decrypt_key_material(&self, key_id: &str) -> Result<Vec<u8>> {
+    async fn decrypt_key_material(&self, key_id: &str) -> Result<Zeroizing<Vec<u8>>> {
         let store = self.key_store.read().await;
         let stored_key = store
             .get(key_id)
@@ -346,6 +370,11 @@ impl KeyManagementService for LocalKms {
         }
     }
 
+    async fn decrypt_dek(&self, dek: &EncryptedKey) -> Result<Vec<u8>> {
+        let mut zeroizing = self.decrypt_with_master_key(&dek.ciphertext_blob, &dek.iv)?;
+        Ok(std::mem::take(&mut *zeroizing))
+    }
+
     async fn sign(&self, key_id: &str, data: &[u8]) -> Result<Signature> {
         let key_material = self.decrypt_key_material(key_id).await?;
 
@@ -364,8 +393,12 @@ impl KeyManagementService for LocalKms {
     async fn verify(&self, key_id: &str, data: &[u8], signature: &Signature) -> Result<bool> {
         let key_material = self.decrypt_key_material(key_id).await?;
 
+        let key_pair = Ed25519KeyPair::from_pkcs8_maybe_unchecked(&key_material)
+            .map_err(|e| helpers::crypto_error(&format!("无效的 Ed25519 密钥: {e}")))?;
+        let public_key_bytes = key_pair.public_key().as_ref();
+
         let public_key =
-            ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, &key_material);
+            ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, public_key_bytes);
 
         match public_key.verify(data, &signature.value) {
             Ok(()) => Ok(true),
@@ -379,8 +412,25 @@ impl KeyManagementService for LocalKms {
             .get_mut(key_id)
             .ok_or_else(|| helpers::not_found("密钥", key_id))?;
 
+        let old_version = stored_key.metadata.version;
+        let old_encrypted_material = stored_key.encrypted_material.clone();
+        let old_iv = stored_key.iv.clone();
+
         let new_material = Self::generate_key_material(stored_key.metadata.key_spec);
         let (encrypted_material, iv) = self.encrypt_with_master_key(&new_material)?;
+
+        stored_key.previous_versions.push(StoredKeyVersion {
+            version: old_version,
+            encrypted_material: old_encrypted_material,
+            iv: old_iv,
+            rotated_at: Utc::now(),
+        });
+
+        const MAX_PREVIOUS_VERSIONS: usize = 10;
+        if stored_key.previous_versions.len() > MAX_PREVIOUS_VERSIONS {
+            let remove_count = stored_key.previous_versions.len() - MAX_PREVIOUS_VERSIONS;
+            stored_key.previous_versions.drain(..remove_count);
+        }
 
         stored_key.encrypted_material = encrypted_material;
         stored_key.iv = iv;
@@ -468,6 +518,7 @@ impl LocalKms {
             },
             encrypted_material,
             iv,
+            previous_versions: Vec::new(),
         };
 
         {
@@ -506,6 +557,7 @@ impl LocalKms {
             },
             encrypted_material,
             iv,
+            previous_versions: Vec::new(),
         };
 
         {

@@ -1,8 +1,8 @@
 //! Database error conversions (surrealdb)
 
-use crate::error_object::ErrorObject;
-use crate::classification::{ErrorSource, Severity, ImpactScope, Recoverability};
+use crate::classification::{ErrorSource, ImpactScope, Recoverability, Severity};
 use crate::error_code::registry;
+use crate::error_object::ErrorObject;
 
 impl From<surrealdb::Error> for ErrorObject {
     fn from(e: surrealdb::Error) -> Self {

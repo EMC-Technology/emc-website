@@ -4,18 +4,19 @@
 /// 本模块仅提供向后兼容的重导出。
 pub use error_core::helpers;
 
+#[cfg(any(feature = "db", feature = "event-driven"))]
 use error_core::ErrorObject;
 
 #[cfg(feature = "db")]
-use crate::cqrs::AggregateError;
+use crate::cache::cache_manager::CacheManagerError;
 #[cfg(feature = "db")]
 use crate::cache::l2_cache::L2CacheError;
 #[cfg(feature = "db")]
-use crate::cache::cache_manager::CacheManagerError;
-#[cfg(feature = "event-driven")]
-use crate::event::event_handler::HandleError;
+use crate::cqrs::AggregateError;
 #[cfg(feature = "event-driven")]
 use crate::event::event_bus::EventError;
+#[cfg(feature = "event-driven")]
+use crate::event::event_handler::HandleError;
 
 #[cfg(feature = "db")]
 impl From<AggregateError> for ErrorObject {
@@ -24,7 +25,9 @@ impl From<AggregateError> for ErrorObject {
             AggregateError::InvalidState(msg) => helpers::aggregate_invalid_state(&msg),
             AggregateError::BusinessRuleViolation(msg) => helpers::aggregate_business_rule(&msg),
             AggregateError::NotFound(msg) => helpers::aggregate_not_found(&msg),
-            AggregateError::VersionConflict { expected, actual } => helpers::aggregate_version_conflict(expected, actual),
+            AggregateError::VersionConflict { expected, actual } => {
+                helpers::aggregate_version_conflict(expected, actual)
+            }
             AggregateError::SerializationError(msg) => helpers::aggregate_serialization_error(&msg),
         }
     }
@@ -47,7 +50,9 @@ impl From<CacheManagerError> for ErrorObject {
     fn from(err: CacheManagerError) -> Self {
         match err {
             CacheManagerError::L2Error(msg) => helpers::cache_manager_l2_error(&msg),
-            CacheManagerError::SerializationError(msg) => helpers::cache_manager_serialization_error(&msg),
+            CacheManagerError::SerializationError(msg) => {
+                helpers::cache_manager_serialization_error(&msg)
+            }
         }
     }
 }
@@ -57,8 +62,9 @@ impl From<HandleError> for ErrorObject {
     fn from(err: HandleError) -> Self {
         match err {
             HandleError::TypeMismatch => helpers::event_type_mismatch(),
-            HandleError::ProcessingFailed(msg) => helpers::event_processing_failed(&msg),
-            HandleError::Other(msg) => helpers::event_processing_failed(&msg),
+            HandleError::ProcessingFailed(msg) | HandleError::Other(msg) => {
+                helpers::event_processing_failed(&msg)
+            }
         }
     }
 }
@@ -67,7 +73,9 @@ impl From<HandleError> for ErrorObject {
 impl From<EventError> for ErrorObject {
     fn from(err: EventError) -> Self {
         match err {
-            EventError::NoSubscribers { event_id } => helpers::event_no_subscribers(&event_id),
+            EventError::NoSubscribers { event_id } => {
+                helpers::event_no_subscribers(&event_id.to_string())
+            }
             EventError::Shutdown => helpers::event_bus_shutdown(),
             EventError::PublishTimeout { elapsed_ms } => helpers::event_publish_timeout(elapsed_ms),
         }
@@ -159,8 +167,14 @@ mod tests {
     fn test_error_display_meaningful() {
         let err = helpers::not_found("block", "block:abc");
         let display = format!("{err}");
-        assert!(display.contains("ERR-"), "Display 应包含错误码，实际: {display}");
-        assert!(display.contains("资源不存在"), "Display 应包含错误消息，实际: {display}");
+        assert!(
+            display.contains("ERR-"),
+            "Display 应包含错误码，实际: {display}"
+        );
+        assert!(
+            display.contains("资源不存在"),
+            "Display 应包含错误消息，实际: {display}"
+        );
     }
 
     #[test]
@@ -191,5 +205,105 @@ mod tests {
         let err: error_core::ErrorObject = "字符串错误".into();
         assert_eq!(err.source(), ErrorSource::INT);
         assert!(err.message().contains("字符串错误"));
+    }
+
+    #[cfg(feature = "db")]
+    #[test]
+    fn test_from_aggregate_error_invalid_state() {
+        use crate::cqrs::AggregateError;
+        let err: error_core::ErrorObject =
+            AggregateError::InvalidState("bad state".to_string()).into();
+        assert!(err.message().contains("bad state"));
+    }
+
+    #[cfg(feature = "db")]
+    #[test]
+    fn test_from_aggregate_error_business_rule() {
+        use crate::cqrs::AggregateError;
+        let err: error_core::ErrorObject =
+            AggregateError::BusinessRuleViolation("rule broken".to_string()).into();
+        assert!(err.message().contains("rule broken"));
+    }
+
+    #[cfg(feature = "db")]
+    #[test]
+    fn test_from_aggregate_error_not_found() {
+        use crate::cqrs::AggregateError;
+        let err: error_core::ErrorObject = AggregateError::NotFound("missing".to_string()).into();
+        assert!(err.message().contains("missing"));
+    }
+
+    #[cfg(feature = "db")]
+    #[test]
+    fn test_from_aggregate_error_version_conflict() {
+        use crate::cqrs::AggregateError;
+        let err: error_core::ErrorObject = AggregateError::VersionConflict {
+            expected: 1,
+            actual: 2,
+        }
+        .into();
+        assert!(err.message().contains('1'));
+        assert!(err.message().contains('2'));
+    }
+
+    #[cfg(feature = "db")]
+    #[test]
+    fn test_from_aggregate_error_serialization() {
+        use crate::cqrs::AggregateError;
+        let err: error_core::ErrorObject =
+            AggregateError::SerializationError("serde fail".to_string()).into();
+        assert!(err.message().contains("serde fail"));
+    }
+
+    #[cfg(feature = "db")]
+    #[test]
+    fn test_from_l2_cache_error_connection() {
+        use crate::cache::l2_cache::L2CacheError;
+        let err: error_core::ErrorObject =
+            L2CacheError::Connection("redis down".to_string()).into();
+        assert!(err.message().contains("redis down"));
+    }
+
+    #[cfg(feature = "db")]
+    #[test]
+    fn test_from_l2_cache_error_serialization() {
+        use crate::cache::l2_cache::L2CacheError;
+        let err: error_core::ErrorObject =
+            L2CacheError::Serialization("encode fail".to_string()).into();
+        assert!(err.message().contains("encode fail"));
+    }
+
+    #[cfg(feature = "db")]
+    #[test]
+    fn test_from_l2_cache_error_deserialization() {
+        use crate::cache::l2_cache::L2CacheError;
+        let err: error_core::ErrorObject =
+            L2CacheError::Deserialization("decode fail".to_string()).into();
+        assert!(err.message().contains("decode fail"));
+    }
+
+    #[cfg(feature = "db")]
+    #[test]
+    fn test_from_l2_cache_error_operation() {
+        use crate::cache::l2_cache::L2CacheError;
+        let err: error_core::ErrorObject = L2CacheError::Operation("op fail".to_string()).into();
+        assert!(err.message().contains("op fail"));
+    }
+
+    #[cfg(feature = "db")]
+    #[test]
+    fn test_from_cache_manager_error_l2() {
+        use crate::cache::cache_manager::CacheManagerError;
+        let err: error_core::ErrorObject = CacheManagerError::L2Error("l2 down".to_string()).into();
+        assert!(err.message().contains("l2 down"));
+    }
+
+    #[cfg(feature = "db")]
+    #[test]
+    fn test_from_cache_manager_error_serialization() {
+        use crate::cache::cache_manager::CacheManagerError;
+        let err: error_core::ErrorObject =
+            CacheManagerError::SerializationError("ser fail".to_string()).into();
+        assert!(err.message().contains("ser fail"));
     }
 }

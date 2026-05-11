@@ -318,6 +318,7 @@ impl Default for CqrsMediator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cqrs::aggregate::DocumentStatus;
     use crate::cqrs::command::{
         CreateDocumentCommand, DocumentCreatedResult, DocumentUpdatedResult, UpdateDocumentCommand,
     };
@@ -325,8 +326,8 @@ mod tests {
         DocumentDetailView, DocumentListItem, DocumentView, GetDocumentQuery, ListDocumentsQuery,
         ListView,
     };
+    use crate::model::{ContentType, DocumentId, SourceType};
     use chrono::Utc;
-    use crate::cqrs::aggregate::DocumentStatus;
     use uuid::Uuid;
 
     #[derive(Clone)]
@@ -335,7 +336,10 @@ mod tests {
     #[allow(clippy::manual_async_fn)]
     impl CommandHandler<CreateDocumentCommand> for MockCreateDocumentHandler {
         #[allow(clippy::manual_async_fn)]
-        fn handle(&self, command: CreateDocumentCommand) -> impl Future<Output = Result<DocumentCreatedResult>> + Send {
+        fn handle(
+            &self,
+            command: CreateDocumentCommand,
+        ) -> impl Future<Output = Result<DocumentCreatedResult>> + Send {
             async move {
                 Ok(DocumentCreatedResult {
                     document_id: command.aggregate_id,
@@ -352,7 +356,10 @@ mod tests {
     #[allow(clippy::manual_async_fn)]
     impl CommandHandler<UpdateDocumentCommand> for MockUpdateDocumentHandler {
         #[allow(clippy::manual_async_fn)]
-        fn handle(&self, command: UpdateDocumentCommand) -> impl Future<Output = Result<DocumentUpdatedResult>> + Send {
+        fn handle(
+            &self,
+            command: UpdateDocumentCommand,
+        ) -> impl Future<Output = Result<DocumentUpdatedResult>> + Send {
             async move {
                 Ok(DocumentUpdatedResult {
                     document_id: command.aggregate_id,
@@ -370,9 +377,12 @@ mod tests {
     #[allow(clippy::manual_async_fn)]
     impl QueryHandler<GetDocumentQuery> for MockGetDocumentHandler {
         #[allow(clippy::manual_async_fn)]
-        fn handle(&self, query: GetDocumentQuery) -> impl Future<Output = Result<Option<DocumentDetailView>>> + Send {
+        fn handle(
+            &self,
+            query: GetDocumentQuery,
+        ) -> impl Future<Output = Result<Option<DocumentDetailView>>> + Send {
             async move {
-                if query.document_id == "not_found" {
+                if query.document_id.as_str() == "not_found" {
                     return Ok(None);
                 }
 
@@ -380,8 +390,8 @@ mod tests {
                     document: DocumentView {
                         id: query.document_id,
                         title: "Test Document".to_string(),
-                        content_type: "markdown".to_string(),
-                        status: DocumentStatus::Published,
+                        content_type: ContentType::Markdown,
+                        status: DocumentStatus::Active,
                         version: 5,
                         created_at: Utc::now(),
                         updated_at: Utc::now(),
@@ -401,13 +411,16 @@ mod tests {
     #[allow(clippy::manual_async_fn)]
     impl QueryHandler<ListDocumentsQuery> for MockListDocumentsHandler {
         #[allow(clippy::manual_async_fn)]
-        fn handle(&self, _query: ListDocumentsQuery) -> impl Future<Output = Result<ListView<DocumentListItem>>> + Send {
+        fn handle(
+            &self,
+            _query: ListDocumentsQuery,
+        ) -> impl Future<Output = Result<ListView<DocumentListItem>>> + Send {
             async move {
                 Ok(ListView {
                     items: vec![DocumentListItem {
-                        id: "doc_001".to_string(),
+                        id: crate::model::ids::DocumentId::new("doc_001"),
                         title: "Doc 1".to_string(),
-                        source_type: "Markdown".to_string(),
+                        source_type: SourceType::Markdown,
                         version: 1,
                         updated_at: Utc::now(),
                     }],
@@ -421,10 +434,10 @@ mod tests {
     fn create_test_create_command() -> CreateDocumentCommand {
         CreateDocumentCommand {
             command_id: Uuid::new_v4(),
-            aggregate_id: "doc_001".to_string(),
+            aggregate_id: "doc_001".into(),
             title: "Test Doc".to_string(),
             content: "# Test".to_string(),
-            content_type: "markdown".to_string(),
+            content_type: ContentType::Markdown,
             metadata: serde_json::json!({}),
             expected_version: None,
         }
@@ -440,7 +453,7 @@ mod tests {
 
         assert!(result.is_ok());
         let result = result.unwrap();
-        assert_eq!(result.document_id, "doc_001");
+        assert_eq!(result.document_id, DocumentId::new("doc_001"));
         assert_eq!(result.version, 1);
     }
 
@@ -472,7 +485,7 @@ mod tests {
         dispatcher.register(MockGetDocumentHandler);
 
         let query = GetDocumentQuery {
-            document_id: "doc_001".to_string(),
+            document_id: crate::model::ids::DocumentId::new("doc_001"),
             include_nodes: false,
             include_blocks: false,
         };
@@ -481,7 +494,10 @@ mod tests {
 
         assert!(result.is_ok());
         let doc = result.unwrap().expect("Expected Some document");
-        assert_eq!(doc.document.id, "doc_001");
+        assert_eq!(
+            doc.document.id,
+            crate::model::ids::DocumentId::new("doc_001")
+        );
         assert_eq!(doc.document.title, "Test Document");
     }
 
@@ -491,7 +507,7 @@ mod tests {
         dispatcher.register(MockGetDocumentHandler);
 
         let query = GetDocumentQuery {
-            document_id: "not_found".to_string(),
+            document_id: crate::model::ids::DocumentId::new("not_found"),
             include_nodes: false,
             include_blocks: false,
         };
@@ -538,7 +554,7 @@ mod tests {
 
         let query_result = mediator
             .query(GetDocumentQuery {
-                document_id: "doc_002".to_string(),
+                document_id: crate::model::ids::DocumentId::new("doc_002"),
                 include_nodes: true,
                 include_blocks: false,
             })

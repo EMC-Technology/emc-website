@@ -106,6 +106,54 @@ impl AgentConfigBuilder {
     }
 }
 
+/// Agent 错误类型枚举（Axiom-3: 状态必须是可枚举的封闭集合）
+///
+/// 替代 `Option<String>` 的字符串错误表示，确保错误类型
+/// 可穷举、可模式匹配、可审计。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[allow(missing_docs)]
+pub enum AgentErrorKind {
+    /// LLM 调用失败
+    LlmCallFailed,
+    /// 工具执行错误
+    ToolExecutionFailed { tool_name: String },
+    /// 达到最大迭代次数
+    MaxIterationsReached { iterations: usize },
+    /// 执行超时
+    Timeout { elapsed_secs: u64 },
+    /// 用户中断
+    UserInterrupted,
+    /// 状态转换非法
+    InvalidStateTransition { from: String, to: String },
+    /// 解析 LLM 输出失败
+    ParseError,
+    /// 其他错误
+    Other { reason: String },
+}
+
+impl std::fmt::Display for AgentErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::LlmCallFailed => write!(f, "LLM 调用失败"),
+            Self::ToolExecutionFailed { tool_name } => {
+                write!(f, "工具执行失败: {tool_name}")
+            }
+            Self::MaxIterationsReached { iterations } => {
+                write!(f, "达到最大迭代次数: {iterations}")
+            }
+            Self::Timeout { elapsed_secs } => {
+                write!(f, "执行超时: {elapsed_secs}s")
+            }
+            Self::UserInterrupted => write!(f, "用户中断"),
+            Self::InvalidStateTransition { from, to } => {
+                write!(f, "非法状态转换: {from} → {to}")
+            }
+            Self::ParseError => write!(f, "LLM 输出解析失败"),
+            Self::Other { reason } => write!(f, "{reason}"),
+        }
+    }
+}
+
 /// Agent 当前状态
 ///
 /// 包含运行时状态和领域状态的完整快照。
@@ -123,8 +171,8 @@ pub struct AgentState {
     pub history: Vec<ReActStep>,
     /// 最终结果（完成后填充）
     pub result: Option<TaskResult>,
-    /// 错误信息（失败时填充）
-    pub error: Option<String>,
+    /// 结构化错误信息（Axiom-3: 可枚举的封闭集合）
+    pub error: Option<AgentErrorKind>,
     /// 开始时间
     pub started_at: chrono::DateTime<Utc>,
     /// 完成时间（可选）
@@ -151,6 +199,8 @@ pub struct AgentStateSnapshot {
     pub started_at: chrono::DateTime<Utc>,
     /// 完成时间
     pub completed_at: Option<chrono::DateTime<Utc>>,
+    /// 触发源描述（Axiom-4: 谁触发了此状态变更）
+    pub triggered_by: String,
 }
 
 impl From<&AgentState> for AgentStateSnapshot {
@@ -163,6 +213,7 @@ impl From<&AgentState> for AgentStateSnapshot {
             last_thought: state.history.last().map(|s| s.thought.clone()),
             started_at: state.started_at,
             completed_at: state.completed_at,
+            triggered_by: String::new(),
         }
     }
 }
@@ -202,9 +253,28 @@ impl ExecutionStatus {
         matches!(
             (self, target),
             (Self::Idle, Self::Running)
-            | (Self::Running, Self::Thinking | Self::WaitingForTool | Self::Completed | Self::Failed | Self::Timeout | Self::MaxIterationsReached)
-            | (Self::Thinking, Self::WaitingForTool | Self::Completed | Self::Failed | Self::Timeout | Self::MaxIterationsReached | Self::Running)
-            | (Self::WaitingForTool, Self::Running | Self::Failed | Self::Timeout)
+                | (
+                    Self::Running,
+                    Self::Thinking
+                        | Self::WaitingForTool
+                        | Self::Completed
+                        | Self::Failed
+                        | Self::Timeout
+                        | Self::MaxIterationsReached
+                )
+                | (
+                    Self::Thinking,
+                    Self::WaitingForTool
+                        | Self::Completed
+                        | Self::Failed
+                        | Self::Timeout
+                        | Self::MaxIterationsReached
+                        | Self::Running
+                )
+                | (
+                    Self::WaitingForTool,
+                    Self::Running | Self::Failed | Self::Timeout
+                )
         )
     }
 
@@ -448,7 +518,8 @@ impl<L: LLMBackend + 'static> ReactAgent<L> {
 
             // 检查超时
             if start_time.elapsed() > self.config.timeout {
-                self.set_status(ExecutionStatus::Timeout).await;
+                self.set_status(ExecutionStatus::Timeout, "execute:timeout")
+                    .await;
                 return Err(error_core::helpers::validation_error(
                     &format!("执行超时: {:?}", self.config.timeout),
                     "agent_timeout",
@@ -457,7 +528,8 @@ impl<L: LLMBackend + 'static> ReactAgent<L> {
 
             // Step 1: Thought - LLM 思考下一步行动
             let step_start = Instant::now();
-            self.set_status(ExecutionStatus::Thinking).await;
+            self.set_status(ExecutionStatus::Thinking, "execute:think")
+                .await;
 
             let thought_result = self.think(task, iteration).await;
             let thought_duration = step_start.elapsed().as_millis() as u64;
@@ -466,13 +538,14 @@ impl<L: LLMBackend + 'static> ReactAgent<L> {
                 Ok(t) => t,
                 Err(e) => {
                     error!(error = %e, "LLM 思考过程出错");
-                    self.set_status(ExecutionStatus::Failed).await;
+                    self.set_status(ExecutionStatus::Failed, "execute:error")
+                        .await;
                     return Err(e);
                 }
             };
 
             if self.config.verbose {
-                info!(thought = %thought, "=== Thought ===");
+                debug!(thought = %thought, "=== Thought ===");
             }
 
             // 记录思考过程
@@ -500,7 +573,8 @@ impl<L: LLMBackend + 'static> ReactAgent<L> {
                     }
 
                     // Step 3: Observation - 执行工具并获取结果
-                    self.set_status(ExecutionStatus::WaitingForTool).await;
+                    self.set_status(ExecutionStatus::WaitingForTool, "execute:tool_call")
+                        .await;
                     let obs_start = Instant::now();
 
                     let observation = self.execute_action(action.clone()).await;
@@ -509,7 +583,7 @@ impl<L: LLMBackend + 'static> ReactAgent<L> {
                     match observation {
                         Ok(obs) => {
                             if self.config.verbose {
-                                info!(observation = %obs, "=== Observation ===");
+                                debug!(observation = %obs, "=== Observation ===");
                             }
 
                             // 更新当前步骤的 action 和 observation
@@ -551,7 +625,8 @@ impl<L: LLMBackend + 'static> ReactAgent<L> {
                 }
                 ActionParsed::AskClarification(question) => {
                     info!(question = %question, "需要用户澄清");
-                    self.set_status(ExecutionStatus::Failed).await;
+                    self.set_status(ExecutionStatus::Failed, "execute:error")
+                        .await;
                     return Err(error_core::helpers::validation_error(
                         &format!("需要澄清: {question}"),
                         "agent_clarification",
@@ -568,7 +643,11 @@ impl<L: LLMBackend + 'static> ReactAgent<L> {
 
         // 达到最大迭代次数
         warn!(max = self.config.max_iterations, "达到最大迭代次数");
-        self.set_status(ExecutionStatus::MaxIterationsReached).await;
+        self.set_status(
+            ExecutionStatus::MaxIterationsReached,
+            "execute:max_iterations",
+        )
+        .await;
 
         // 尝试生成部分结果
         let _partial_result = self.generate_partial_result(task).await;
@@ -593,6 +672,15 @@ impl<L: LLMBackend + 'static> ReactAgent<L> {
         state.error = None;
         state.started_at = Utc::now();
         state.completed_at = None;
+        tracing::info!(
+            task_id = %task.id,
+            triggered_by = "initialize_state",
+            "Axiom-2: Agent 状态变更已记录 (Idle → Running)"
+        );
+        let mut snapshot = AgentStateSnapshot::from(&*state);
+        snapshot.triggered_by = "initialize_state".to_string();
+        drop(state);
+        let _ = self.state_tx.send(snapshot);
         Ok(())
     }
 
@@ -601,7 +689,7 @@ impl<L: LLMBackend + 'static> ReactAgent<L> {
     /// 构建上下文消息并发送给 LLM，获取其思考和动作决策。
     async fn think(&self, task: &Task, _iteration: usize) -> crate::Result<String> {
         // 构建系统提示词
-        let system_prompt = self.build_system_prompt(task);
+        let system_prompt = self.build_system_prompt(task).await;
 
         // 构建对话历史
         let history = {
@@ -615,7 +703,7 @@ impl<L: LLMBackend + 'static> ReactAgent<L> {
             temperature: self.config.temperature,
             max_tokens: 2048,
             stop: Some(self.config.stop_sequences.clone()),
-            tools: Some(self.get_tool_schemas()),
+            tools: Some(self.get_tool_schemas().await),
         };
 
         // 调用 LLM
@@ -636,7 +724,7 @@ impl<L: LLMBackend + 'static> ReactAgent<L> {
     }
 
     /// 构建 `ReAct` 系统提示词
-    fn build_system_prompt(&self, task: &Task) -> String {
+    async fn build_system_prompt(&self, task: &Task) -> String {
         format!(
             r#"你是一个专业的知识管理 AI 助手。请按照以下 ReAct 格式进行推理：
 
@@ -668,23 +756,23 @@ Action: {{"action_type": "Finish", "output": {{...}}, "summary": "..."}}
 5. 保持思考过程的逻辑性和连贯性"#,
             goal = task.goal,
             description = task.description,
-            tools = self.format_available_tools()
+            tools = self.format_available_tools().await
         )
     }
 
     /// 格式化可用工具列表
-    #[allow(clippy::unused_self)]
-    fn format_available_tools(&self) -> String {
-        // 这里应该从 tools 获取实际的工具列表
-        // 简化实现，实际应该查询 AgentToolInvoker
-        "（工具列表由系统动态提供）".to_string()
+    async fn format_available_tools(&self) -> String {
+        let names = self.tools.list_names().await;
+        if names.is_empty() {
+            "（无可用工具）".to_string()
+        } else {
+            format!("可用工具：{}", names.join(", "))
+        }
     }
 
     /// 获取工具 Schema 列表
-    #[allow(clippy::unused_self)]
-    const fn get_tool_schemas(&self) -> Vec<ToolSchema> {
-        // 实际实现应从 AgentToolInvoker 获取
-        Vec::new()
+    async fn get_tool_schemas(&self) -> Vec<ToolSchema> {
+        self.tools.get_schemas().await
     }
 
     /// 构建发送给 LLM 的消息列表
@@ -898,14 +986,21 @@ Action: {{"action_type": "Finish", "output": {{...}}, "summary": "..."}}
     /// 完成任务并设置最终状态
     async fn finalize(&self, result: TaskResult) -> crate::Result<()> {
         let mut state = self.state.write().await;
+        let old_status = state.status;
         state.status = ExecutionStatus::Completed;
         state.result = Some(result.clone());
         state.completed_at = Some(Utc::now());
-
-        // 计算总耗时
-        if state.completed_at.is_some() {
-            // duration 已经在 result 中计算
-        }
+        tracing::info!(
+            task_id = %state.task_id,
+            old_status = ?old_status,
+            new_status = ?ExecutionStatus::Completed,
+            triggered_by = "finalize",
+            "Axiom-2: Agent 状态变更已记录"
+        );
+        let mut snapshot = AgentStateSnapshot::from(&*state);
+        snapshot.triggered_by = "finalize".to_string();
+        drop(state);
+        let _ = self.state_tx.send(snapshot);
 
         info!(
             steps = result.steps_taken,
@@ -945,7 +1040,8 @@ Action: {{"action_type": "Finish", "output": {{...}}, "summary": "..."}}
     ///
     /// 内部使用 FSM 验证确保状态转换合法性。
     /// 非法转换会被记录为警告但不会 panic（防御性编程）。
-    async fn set_status(&self, status: ExecutionStatus) {
+    /// 每次状态变更都附带 `triggered_by`（Axiom-4）。
+    async fn set_status(&self, status: ExecutionStatus, triggered_by: &str) {
         let snapshot = {
             let mut state = self.state.write().await;
             if !state.status.can_transition_to(&status) && !state.status.is_terminal() {
@@ -956,8 +1052,18 @@ Action: {{"action_type": "Finish", "output": {{...}}, "summary": "..."}}
                 );
                 return;
             }
+            let old_status = state.status;
             state.status = status;
-            AgentStateSnapshot::from(&*state)
+            tracing::info!(
+                task_id = %state.task_id,
+                old_status = ?old_status,
+                new_status = ?status,
+                triggered_by = triggered_by,
+                "Axiom-2: Agent 状态变更已记录"
+            );
+            let mut snapshot = AgentStateSnapshot::from(&*state);
+            snapshot.triggered_by = triggered_by.to_string();
+            snapshot
         };
         let _ = self.state_tx.send(snapshot);
     }
@@ -977,9 +1083,17 @@ Action: {{"action_type": "Finish", "output": {{...}}, "summary": "..."}}
             | ExecutionStatus::Thinking
             | ExecutionStatus::WaitingForTool => {
                 state.status = ExecutionStatus::Failed;
-                state.error = Some("用户中断".to_string());
+                state.error = Some(AgentErrorKind::UserInterrupted);
                 state.completed_at = Some(Utc::now());
-                info!("Agent 已被中断");
+                tracing::info!(
+                    task_id = %state.task_id,
+                    triggered_by = "interrupt",
+                    "Axiom-2: Agent 状态变更已记录 (用户中断)"
+                );
+                let mut snapshot = AgentStateSnapshot::from(&*state);
+                snapshot.triggered_by = "interrupt".to_string();
+                drop(state);
+                let _ = self.state_tx.send(snapshot);
                 Ok(())
             }
             ExecutionStatus::Idle

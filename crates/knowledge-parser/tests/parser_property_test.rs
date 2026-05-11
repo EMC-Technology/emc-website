@@ -1,5 +1,5 @@
-use proptest::prelude::*;
 use knowledge_parser::scope_stack::{ScopeStack, ScopeType};
+use proptest::prelude::*;
 
 proptest! {
     #[test]

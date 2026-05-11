@@ -105,7 +105,8 @@ impl MarkdownExporter {
     /// 当序列化或文件写入失败时返回错误
     pub fn to_json(report: &EvaluationReport, path: &Path) -> Result<()> {
         let json = serde_json::to_vec_pretty(report).map_err(|e| error::serialization_error(&e))?;
-        std::fs::write(path, json).map_err(|e| error_core::helpers::io_error(&format!("报告写入失败: {e}")))
+        std::fs::write(path, json)
+            .map_err(|e| error_core::helpers::io_error(&format!("报告写入失败: {e}")))
     }
 
     /// 导出为 JSON 字符串
@@ -123,7 +124,11 @@ impl MarkdownExporter {
         let mut csv = String::from("sample_id,metric_name,score,explanation\n");
         for result in &report.sample_results {
             for score in &result.scores {
-                let explanation = score.explanation.replace('"', "\"\"").replace('\n', " ").replace('\r', "");
+                let explanation = score
+                    .explanation
+                    .replace('"', "\"\"")
+                    .replace('\n', " ")
+                    .replace('\r', "");
                 let _ = writeln!(
                     csv,
                     "{},{},{:.6},\"{}\"",
@@ -196,5 +201,160 @@ mod tests {
         let csv = MarkdownExporter::to_csv(&report);
         assert!(csv.contains("sample_id,metric_name,score,explanation"));
         assert!(csv.contains("faithfulness"));
+    }
+
+    fn make_report_with_groups() -> EvaluationReport {
+        use crate::dataset::sample::SampleDifficulty;
+        EvaluationReport {
+            report_id: "r2".to_string(),
+            dataset_id: "ds2".to_string(),
+            dataset_version: "1.0".to_string(),
+            evaluated_at: chrono::Utc::now(),
+            total_duration_ms: 300,
+            total_samples: 2,
+            successful_samples: 2,
+            failed_samples: 0,
+            aggregated_scores: vec![AggregatedMetric {
+                metric_name: "faithfulness".to_string(),
+                mean: 0.75,
+                median: 0.75,
+                std_dev: 0.1,
+                min: 0.7,
+                max: 0.8,
+                sample_count: 2,
+            }],
+            sample_results: vec![
+                SampleEvalResult {
+                    sample_id: "s1".to_string(),
+                    scores: vec![MetricScore {
+                        metric_name: "faithfulness".to_string(),
+                        score: 0.8,
+                        explanation: "good".to_string(),
+                        llm_judgment: None,
+                    }],
+                    duration_ms: 150,
+                },
+                SampleEvalResult {
+                    sample_id: "s2".to_string(),
+                    scores: vec![MetricScore {
+                        metric_name: "faithfulness".to_string(),
+                        score: 0.7,
+                        explanation: "ok".to_string(),
+                        llm_judgment: None,
+                    }],
+                    duration_ms: 150,
+                },
+            ],
+            scores_by_difficulty: {
+                let mut map = HashMap::new();
+                map.insert(
+                    SampleDifficulty::Easy,
+                    vec![AggregatedMetric {
+                        metric_name: "faithfulness".to_string(),
+                        mean: 0.8,
+                        median: 0.8,
+                        std_dev: 0.0,
+                        min: 0.8,
+                        max: 0.8,
+                        sample_count: 1,
+                    }],
+                );
+                map.insert(
+                    SampleDifficulty::Hard,
+                    vec![AggregatedMetric {
+                        metric_name: "faithfulness".to_string(),
+                        mean: 0.7,
+                        median: 0.7,
+                        std_dev: 0.0,
+                        min: 0.7,
+                        max: 0.7,
+                        sample_count: 1,
+                    }],
+                );
+                map
+            },
+            scores_by_category: {
+                let mut map = HashMap::new();
+                map.insert(
+                    "programming".to_string(),
+                    vec![AggregatedMetric {
+                        metric_name: "faithfulness".to_string(),
+                        mean: 0.8,
+                        median: 0.8,
+                        std_dev: 0.0,
+                        min: 0.8,
+                        max: 0.8,
+                        sample_count: 1,
+                    }],
+                );
+                map.insert(
+                    "science".to_string(),
+                    vec![AggregatedMetric {
+                        metric_name: "faithfulness".to_string(),
+                        mean: 0.7,
+                        median: 0.7,
+                        std_dev: 0.0,
+                        min: 0.7,
+                        max: 0.7,
+                        sample_count: 1,
+                    }],
+                );
+                map
+            },
+        }
+    }
+
+    #[test]
+    fn test_export_with_difficulty_groups() {
+        let report = make_report_with_groups();
+        let md = MarkdownExporter::export(&report);
+        assert!(md.contains("## 按难度分组"));
+        assert!(md.contains("### Easy"));
+        assert!(md.contains("### Hard"));
+    }
+
+    #[test]
+    fn test_export_with_category_groups() {
+        let report = make_report_with_groups();
+        let md = MarkdownExporter::export(&report);
+        assert!(md.contains("## 按类别分组"));
+        assert!(md.contains("### programming"));
+        assert!(md.contains("### science"));
+    }
+
+    #[test]
+    fn test_export_to_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("report.md");
+        let report = make_report();
+
+        MarkdownExporter::export_to_file(&report, &file_path).unwrap();
+
+        let content = std::fs::read_to_string(&file_path).unwrap();
+        assert!(content.contains("# RAG 评估报告"));
+        assert!(content.contains("faithfulness"));
+    }
+
+    #[test]
+    fn test_to_json_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("report.json");
+        let report = make_report();
+
+        MarkdownExporter::to_json(&report, &file_path).unwrap();
+
+        let content = std::fs::read_to_string(&file_path).unwrap();
+        assert!(content.contains("faithfulness"));
+        assert!(content.contains("ds1"));
+    }
+
+    #[test]
+    fn test_to_json_file_write_error() {
+        let report = make_report();
+        let result = MarkdownExporter::to_json(
+            &report,
+            Path::new("/nonexistent_dir/impossible/report.json"),
+        );
+        assert!(result.is_err());
     }
 }

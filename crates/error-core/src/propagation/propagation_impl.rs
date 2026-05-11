@@ -1,28 +1,109 @@
 //! Error propagation structures
-//! 
+//!
 //! This module defines structures related to error propagation, including context frames,
 //! recovery hints, and retry configurations.
 
-use std::collections::HashMap;
 #[cfg(feature = "chrono")]
 use chrono::{DateTime, Utc};
 #[cfg(feature = "serde")]
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+/// Recovery action type (AP-B07 fix: replaces `String`-based action representation)
+///
+/// Represents the finite set of recovery strategies available in the system.
+/// Using an enum instead of `String` ensures compile-time exhaustiveness checking
+/// and prevents typos from silently producing invalid recovery hints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+pub enum RecoveryAction {
+    /// Retry the same operation (possibly with backoff)
+    Retry,
+    /// Fall back to an alternative implementation or data source
+    Fallback,
+    /// Redirect the request to another service or endpoint
+    Redirect,
+    /// Skip the failing operation and continue
+    Skip,
+    /// Escalate to a human operator or higher-level system
+    Escalate,
+    /// Activate a circuit breaker to prevent cascading failures
+    CircuitBreak,
+    /// Degrade gracefully to a reduced-functionality mode
+    Degrade,
+    /// Cache the result and serve stale data
+    Cache,
+    /// Re-authenticate and retry
+    Reauthenticate,
+    /// No recovery action available
+    None,
+}
+
+impl RecoveryAction {
+    /// Convert to a static string representation
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Retry => "retry",
+            Self::Fallback => "fallback",
+            Self::Redirect => "redirect",
+            Self::Skip => "skip",
+            Self::Escalate => "escalate",
+            Self::CircuitBreak => "circuit_break",
+            Self::Degrade => "degrade",
+            Self::Cache => "cache",
+            Self::Reauthenticate => "reauthenticate",
+            Self::None => "none",
+        }
+    }
+}
+
+impl std::fmt::Display for RecoveryAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for RecoveryAction {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "retry" => Ok(Self::Retry),
+            "fallback" => Ok(Self::Fallback),
+            "redirect" => Ok(Self::Redirect),
+            "skip" => Ok(Self::Skip),
+            "escalate" => Ok(Self::Escalate),
+            "circuit_break" => Ok(Self::CircuitBreak),
+            "degrade" => Ok(Self::Degrade),
+            "cache" => Ok(Self::Cache),
+            "reauthenticate" => Ok(Self::Reauthenticate),
+            "none" => Ok(Self::None),
+            _ => Err(()),
+        }
+    }
+}
 
 /// Context frame for error propagation
-/// 
+///
 /// Represents a frame of context information added to an error as it propagates through the system.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ContextFrame {
-    /// The source module that added this context
     source: String,
-    /// The timestamp when this context was added
     #[cfg(feature = "chrono")]
     timestamp: DateTime<Utc>,
-    /// Key-value pairs of context information
     data: HashMap<String, serde_json::Value>,
 }
+
+impl PartialEq for ContextFrame {
+    fn eq(&self, other: &Self) -> bool {
+        self.source == other.source && self.data == other.data
+    }
+}
+
+impl Eq for ContextFrame {}
 
 impl ContextFrame {
     /// Create a new `ContextFrame`
@@ -35,20 +116,20 @@ impl ContextFrame {
             data,
         }
     }
-    
+
     /// Get the source module
     #[must_use]
     pub fn source(&self) -> &str {
         &self.source
     }
-    
+
     /// Get the timestamp
     #[cfg(feature = "chrono")]
     #[must_use]
     pub const fn timestamp(&self) -> &DateTime<Utc> {
         &self.timestamp
     }
-    
+
     /// Get the context data
     #[must_use]
     pub const fn data(&self) -> &HashMap<String, serde_json::Value> {
@@ -57,13 +138,13 @@ impl ContextFrame {
 }
 
 /// Recovery hint for error handling
-/// 
+///
 /// Provides suggestions for how to recover from an error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct RecoveryHint {
     /// The type of recovery action suggested
-    action: String,
+    action: RecoveryAction,
     /// Description of the recovery action
     description: String,
     /// Parameters for the recovery action
@@ -73,26 +154,30 @@ pub struct RecoveryHint {
 impl RecoveryHint {
     /// Create a new `RecoveryHint`
     #[must_use]
-    pub fn new(action: &str, description: &str, params: HashMap<String, serde_json::Value>) -> Self {
+    pub fn new(
+        action: RecoveryAction,
+        description: &str,
+        params: HashMap<String, serde_json::Value>,
+    ) -> Self {
         Self {
-            action: action.to_string(),
+            action,
             description: description.to_string(),
             params,
         }
     }
-    
+
     /// Get the recovery action
     #[must_use]
-    pub fn action(&self) -> &str {
+    pub const fn action(&self) -> &RecoveryAction {
         &self.action
     }
-    
+
     /// Get the recovery description
     #[must_use]
     pub fn description(&self) -> &str {
         &self.description
     }
-    
+
     /// Get the recovery parameters
     #[must_use]
     pub const fn params(&self) -> &HashMap<String, serde_json::Value> {
@@ -101,7 +186,7 @@ impl RecoveryHint {
 }
 
 /// Retry configuration for error recovery
-/// 
+///
 /// Defines the retry strategy for recoverable errors.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -136,31 +221,31 @@ impl RetryConfig {
             use_jitter,
         }
     }
-    
+
     /// Get the maximum number of attempts
     #[must_use]
     pub const fn max_attempts(&self) -> u32 {
         self.max_attempts
     }
-    
+
     /// Get the initial delay in milliseconds
     #[must_use]
     pub const fn initial_delay_ms(&self) -> u64 {
         self.initial_delay_ms
     }
-    
+
     /// Get the maximum delay in milliseconds
     #[must_use]
     pub const fn max_delay_ms(&self) -> u64 {
         self.max_delay_ms
     }
-    
+
     /// Get the backoff multiplier
     #[must_use]
     pub const fn backoff_multiplier(&self) -> f64 {
         self.backoff_multiplier
     }
-    
+
     /// Get whether to use jitter
     #[must_use]
     pub const fn use_jitter(&self) -> bool {
@@ -172,36 +257,42 @@ impl RetryConfig {
 mod tests {
     use super::*;
     use serde_json::json;
-    
+
     #[test]
     fn test_context_frame() {
         let mut data = HashMap::new();
         data.insert("user_id".to_string(), json!("12345"));
         data.insert("operation".to_string(), json!("generate_code"));
-        
+
         let frame = ContextFrame::new("ai_model::lm_manager", data);
         assert_eq!(frame.source(), "ai_model::lm_manager");
         assert_eq!(frame.data().get("user_id").unwrap(), &json!("12345"));
-        assert_eq!(frame.data().get("operation").unwrap(), &json!("generate_code"));
+        assert_eq!(
+            frame.data().get("operation").unwrap(),
+            &json!("generate_code")
+        );
     }
-    
+
     #[test]
     fn test_recovery_hint() {
         let mut params = HashMap::new();
         params.insert("retry_delay_ms".to_string(), json!(1000));
         params.insert("max_attempts".to_string(), json!(3));
-        
+
         let hint = RecoveryHint::new(
-            "retry",
+            RecoveryAction::Retry,
             "Retry the AI model call with exponential backoff",
             params,
         );
-        assert_eq!(hint.action(), "retry");
-        assert_eq!(hint.description(), "Retry the AI model call with exponential backoff");
+        assert_eq!(hint.action(), &RecoveryAction::Retry);
+        assert_eq!(
+            hint.description(),
+            "Retry the AI model call with exponential backoff"
+        );
         assert_eq!(hint.params().get("retry_delay_ms").unwrap(), &json!(1000));
         assert_eq!(hint.params().get("max_attempts").unwrap(), &json!(3));
     }
-    
+
     #[test]
     #[allow(clippy::float_cmp)]
     fn test_retry_config() {

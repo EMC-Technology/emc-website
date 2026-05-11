@@ -1,8 +1,8 @@
 //! JSON Web Token error conversions
 
-use crate::error_object::ErrorObject;
-use crate::classification::{ErrorSource, Severity, ImpactScope, Recoverability};
+use crate::classification::{ErrorSource, ImpactScope, Recoverability, Severity};
 use crate::error_code::registry;
+use crate::error_object::ErrorObject;
 
 impl From<jsonwebtoken::errors::Error> for ErrorObject {
     fn from(e: jsonwebtoken::errors::Error) -> Self {

@@ -3,26 +3,25 @@
 //! 当 `event-driven` feature 启用时，本模块负责：
 //! - 初始化全局 EventBus（自定义配置）
 //! - 注册所有领域事件处理器
-/// - 启动后台消费任务
+//! - 启动后台消费任务
 //!
 //! # 使用方式
 //!
-/// 在应用启动时调用 `init_event_subscribers()`：
-///
-/// ```ignore
-/// #[cfg(feature = "event-driven")]
-/// {
-///     knowledge_api::event_subscriber::init_event_subscribers().await;
-/// }
-/// ```
+//! 在应用启动时调用 `init_event_subscribers()`：
+//!
+//! ```ignore
+//! #[cfg(feature = "event-driven")]
+//! {
+//!     knowledge_api::event_subscriber::init_event_subscribers().await;
+//! }
+//! ```
 
 use std::sync::Arc;
 
 #[cfg(feature = "event-driven")]
 use knowledge_core::event::{
-    EventBusConfig, global_event_bus, init_global_event_bus,
-    Handler, DocumentEventHandler, NodeEventHandler, SearchEventHandler,
-    EmbeddingEventHandler, AsyncEventHandler,
+    AsyncEventHandler, DocumentEventHandler, EmbeddingEventHandler, EventBusConfig, Handler,
+    NodeEventHandler, SearchEventHandler, global_event_bus, init_global_event_bus,
 };
 
 /// 初始化事件驱动架构
@@ -116,9 +115,12 @@ mod tests {
         let _handles = init_event_subscribers().await;
         let bus = global_event_bus();
 
-        let test_event = KnowledgeEvent::SystemHealthCheck(
-            types::SystemHealthEvent::new("api-test", "ok", None::<String>, "test")
-        );
+        let test_event = KnowledgeEvent::SystemHealthCheck(types::SystemHealthEvent::new(
+            "api-test",
+            "ok",
+            None::<String>,
+            "test",
+        ));
         let result = bus.publish(test_event).await;
         assert!(result.is_ok(), "初始化后发布事件应成功");
     }

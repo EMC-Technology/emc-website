@@ -188,6 +188,7 @@ const fn static_fmt(code: u16) -> &'static str {
         7 => "7xx",
         8 => "8xx",
         9 => "9xx",
+        // HTTP 状态码首位数字范围为 1-9，超出范围视为异常
         _ => "unknown",
     }
 }

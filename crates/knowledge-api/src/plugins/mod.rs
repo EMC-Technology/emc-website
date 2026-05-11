@@ -34,7 +34,7 @@
 //! | [`QualityGatePlugin`] | 质量门禁插件 | `AlwaysPassGate` | `InfraQualityGate` |
 //! | [`AgentBackend`] | Agent 后端插件 | `ReActAgentBackend` | `UpcmAgentBackend` |
 //! | [`StorageBackend`] | 存储后端插件 | `SurrealDbBackend` | `LightFieldBackend` |
-//! | [`LLMProvider`] | LLM 统一接口 | `LLMClientAdapter` | 闭源增强 LLM |
+//! | [`LLMProvider`] | LLM 统一接口 | `UllmProviderAdapter` | 闭源增强 LLM |
 //! | [`TextSummarizer`] | 文本摘要器 | `LlmTextSummarizer` | 闭源增强摘要 |
 //!
 //! # 现有 Trait 整合（第12章）
@@ -49,20 +49,20 @@
 pub mod agent_backend;
 /// 开源默认插件实现
 pub mod defaults;
-/// 统一 LLM Provider trait（整合 4 个碎片化 LLM 抽象）
-pub mod llm_provider;
 /// 知识源桥接 trait 及相关类型
 pub mod knowledge_source;
+/// 统一 LLM Provider trait（整合 4 个碎片化 LLM 抽象）
+pub mod llm_provider;
 /// 质量门禁桥接 trait 及相关类型
 pub mod quality_gate;
 /// 插件注册中心
 pub mod registry;
 /// gRPC 远程 Agent 适配器
 pub mod remote_agent;
-/// 统一文本摘要器 trait（整合 Agent Memory / Parser 两套）
-pub mod summarizer_adapter;
 /// 存储后端桥接 trait 及相关类型
 pub mod storage_backend;
+/// 统一文本摘要器 trait（整合 Agent Memory / Parser 两套）
+pub mod summarizer_adapter;
 /// Core `VectorStore` → Agent Memory `VectorStore` 适配器
 pub mod vector_store_adapter;
 
@@ -72,12 +72,13 @@ pub use agent_backend::{
 };
 pub use knowledge_source::{ChangeType, KnowledgeSource, SourceChange, SourceDocument};
 pub use llm_provider::{
-    LLMProvider, LLMClientAdapter, LlmLanguageModelAdapter,
-    ProviderMessage, ProviderOptions, ProviderResponse, ProviderRole,
+    LLMProvider, ProviderMessage, ProviderOptions, ProviderResponse, ProviderRole,
 };
-pub use quality_gate::{CodeChange, QualityGatePlugin, QualityVerdict, RuleInfo, Severity, Violation};
+pub use quality_gate::{
+    CodeChange, QualityGatePlugin, QualityVerdict, RuleInfo, Severity, Violation,
+};
 pub use registry::PluginRegistry;
 pub use remote_agent::RemoteAgentBackend;
-pub use storage_backend::{StorageBackend, DynDatabaseClient, DynDatabaseClientWrapper};
-pub use summarizer_adapter::{TextSummarizer, MemorySummarizerAdapter, LlmTextSummarizer};
+pub use storage_backend::{DynDatabaseClient, DynDatabaseClientWrapper, StorageBackend};
+pub use summarizer_adapter::{LlmTextSummarizer, MemorySummarizerAdapter, TextSummarizer};
 pub use vector_store_adapter::CoreVectorStoreAdapter;

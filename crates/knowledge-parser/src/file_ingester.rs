@@ -13,11 +13,11 @@
 //!   无需将整个文件加载到内存后再计算哈希
 //! - **异步 I/O**：基于 tokio::fs，不阻塞异步运行时
 
-use blake3::Hasher;
-use knowledge_core::model::SourceType;
 use crate::Result;
+use blake3::Hasher;
 use error_core::helpers;
 use error_core::prelude::ErrorSource;
+use knowledge_core::model::SourceType;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
@@ -127,35 +127,39 @@ impl FileIngester {
     /// 文件不存在、路径非文件、文件超限、非 UTF-8 编码、IO 错误或不支持的格式时返回错误。
     pub async fn ingest(&self, path: &Path) -> Result<IngestedFile> {
         // 1. 检查文件是否存在并获取元信息
-        let metadata = tokio::fs::metadata(path)
-            .await
-            .map_err(|e| helpers::not_found("file", &format!("文件不存在或无法访问 {}: {e}", path.display())))?;
+        let metadata = tokio::fs::metadata(path).await.map_err(|e| {
+            helpers::not_found(
+                "file",
+                &format!("文件不存在或无法访问 {}: {e}", path.display()),
+            )
+        })?;
 
         if !metadata.is_file() {
-            return Err(helpers::not_found("file", &format!("路径不是常规文件: {}", path.display())));
+            return Err(helpers::not_found(
+                "file",
+                &format!("路径不是常规文件: {}", path.display()),
+            ));
         }
 
         let file_size = metadata.len();
 
         if file_size > self.max_file_size {
-            return Err(helpers::parse_error(&format!("文件大小超限: {} 字节 (上限: {} 字节)",
+            return Err(helpers::parse_error(&format!(
+                "文件大小超限: {} 字节 (上限: {} 字节)",
                 file_size, self.max_file_size
             )));
         }
 
         // 2. 检测源类型
-        let source_type =
-            crate::source_type_detector::SourceTypeDetector::detect(path)?;
+        let source_type = crate::source_type_detector::SourceTypeDetector::detect(path)?;
 
         // 3. 流式读取 + 增量哈希
         // 使用 spawn_blocking 将同步的 BufReader 读取移至线程池，
         // 避免阻塞 tokio 异步运行时的工作线程。
         let path_owned = path.to_path_buf();
-        let (content, hash) = tokio::task::spawn_blocking(move || {
-            read_and_hash_sync(&path_owned)
-        })
-        .await
-        .map_err(|e| helpers::io_error(&format!("任务执行被取消: {e}")))??;
+        let (content, hash) = tokio::task::spawn_blocking(move || read_and_hash_sync(&path_owned))
+            .await
+            .map_err(|e| helpers::io_error(&format!("任务执行被取消: {e}")))??;
 
         Ok(IngestedFile {
             path: path.to_path_buf(),
@@ -229,9 +233,8 @@ fn read_and_hash_sync(path: &Path) -> Result<(String, String)> {
     use std::fs::File;
     use std::io::Read;
 
-    let file = File::open(path).map_err(|e| {
-        helpers::io_error(&format!("无法打开文件 {}: {e}", path.display()))
-    })?;
+    let file = File::open(path)
+        .map_err(|e| helpers::io_error(&format!("无法打开文件 {}: {e}", path.display())))?;
 
     let mut reader = BufReader::with_capacity(READ_BUFFER_SIZE, file);
     let mut hasher = Hasher::new();
@@ -239,9 +242,9 @@ fn read_and_hash_sync(path: &Path) -> Result<(String, String)> {
 
     let mut buffer = vec![0u8; READ_BUFFER_SIZE];
     loop {
-        let bytes_read = reader.read(&mut buffer).map_err(|e| {
-            helpers::io_error(&format!("读取文件 {} 失败: {e}", path.display()))
-        })?;
+        let bytes_read = reader
+            .read(&mut buffer)
+            .map_err(|e| helpers::io_error(&format!("读取文件 {} 失败: {e}", path.display())))?;
         if bytes_read == 0 {
             break;
         }
@@ -264,8 +267,8 @@ fn read_and_hash_sync(path: &Path) -> Result<(String, String)> {
 
 #[cfg(test)]
 mod tests {
-    use error_core::prelude::ErrorSource;
     use super::*;
+    use error_core::prelude::ErrorSource;
     use std::io::Write as IoWrite;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -405,5 +408,100 @@ mod tests {
     async fn test_default_max_file_size_is_1gb() {
         let ingester = FileIngester::new();
         assert_eq!(ingester.max_file_size, DEFAULT_MAX_FILE_SIZE);
+    }
+
+    #[tokio::test]
+    async fn test_default_creates_ingester() {
+        let ingester = FileIngester::default();
+        assert_eq!(ingester.max_file_size, DEFAULT_MAX_FILE_SIZE);
+    }
+
+    #[tokio::test]
+    async fn test_ingest_directory_path_returns_error() {
+        let dir = unique_test_dir("is_dir");
+        let _ = std::fs::create_dir_all(&dir);
+
+        let ingester = FileIngester::new();
+        let result = ingester.ingest(&dir).await;
+
+        assert!(result.is_err(), "目录路径应返回错误");
+        match result.unwrap_err() {
+            err if err.code().contains("VAL") => {
+                assert!(
+                    err.message().contains("不是常规文件"),
+                    "错误消息应包含'不是常规文件': {}",
+                    err.message()
+                );
+            }
+            other => panic!("期望验证错误, 实际: {other}"),
+        }
+
+        cleanup_dir(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_ingest_directory_processes_files() {
+        let dir = unique_test_dir("dir_ingest");
+        create_temp_file(&dir, "a.md", b"# Hello");
+        create_temp_file(&dir, "b.txt", b"plain text");
+
+        let ingester = FileIngester::new();
+        let result = ingester.ingest_directory(&dir).await;
+
+        assert!(result.is_ok(), "目录处理应成功: {:?}", result.err());
+        let files = result.unwrap();
+        assert_eq!(files.len(), 2, "应处理 2 个文件");
+
+        cleanup_dir(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_ingest_directory_skips_unsupported_formats() {
+        let dir = unique_test_dir("dir_skip");
+        create_temp_file(&dir, "good.md", b"markdown content");
+        create_temp_file(&dir, "bad.xyz", b"unknown format");
+
+        let ingester = FileIngester::new();
+        let result = ingester.ingest_directory(&dir).await;
+
+        assert!(result.is_ok(), "目录处理应成功: {:?}", result.err());
+        let files = result.unwrap();
+        assert_eq!(files.len(), 1, "应仅处理支持的格式");
+        assert!(files[0].path.to_string_lossy().contains("good.md"));
+
+        cleanup_dir(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_ingest_empty_directory_returns_empty() {
+        let dir = unique_test_dir("dir_empty");
+        let _ = std::fs::create_dir_all(&dir);
+
+        let ingester = FileIngester::new();
+        let result = ingester.ingest_directory(&dir).await;
+
+        assert!(result.is_ok(), "空目录应成功处理");
+        let files = result.unwrap();
+        assert!(files.is_empty(), "空目录应返回空列表");
+
+        cleanup_dir(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_ingest_directory_recursive() {
+        let dir = unique_test_dir("dir_recursive");
+        let subdir = dir.join("subdir");
+        let _ = std::fs::create_dir_all(&subdir);
+        create_temp_file(&dir, "root.md", b"root file");
+        create_temp_file(subdir.as_path(), "nested.md", b"nested file");
+
+        let ingester = FileIngester::new();
+        let result = ingester.ingest_directory(&dir).await;
+
+        assert!(result.is_ok(), "递归目录处理应成功: {:?}", result.err());
+        let files = result.unwrap();
+        assert_eq!(files.len(), 2, "应递归处理子目录中的文件");
+
+        cleanup_dir(&dir);
     }
 }
