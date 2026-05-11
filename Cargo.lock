@@ -4078,6 +4078,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "icu_locale"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d5a396343c7208121dc86e35623d3dfe19814a7613cfd14964994cdc9c9a2e26"
+dependencies = [
+ "icu_collections 2.2.0",
+ "icu_locale_core",
+ "icu_locale_data",
+ "icu_provider 2.2.0",
+ "potential_utf",
+ "tinystr 0.8.3",
+ "zerovec 0.11.6",
+]
+
+[[package]]
 name = "icu_locale_core"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4085,10 +4100,17 @@ checksum = "92219b62b3e2b4d88ac5119f8904c10f8f61bf7e95b640d25ba3075e6cac2c29"
 dependencies = [
  "displaydoc",
  "litemap 0.8.2",
+ "serde",
  "tinystr 0.8.3",
  "writeable 0.6.3",
  "zerovec 0.11.6",
 ]
+
+[[package]]
+name = "icu_locale_data"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d5fdcc9ac77c6d74ff5cf6e65ef3181d6af32003b16fce3a77fb451d2f695993"
 
 [[package]]
 name = "icu_locid"
@@ -4167,6 +4189,8 @@ checksum = "139c4cf31c8b5f33d7e199446eff9c1e02decfc2f0eec2c8d71f65befa45b421"
 dependencies = [
  "displaydoc",
  "icu_locale_core",
+ "serde",
+ "stable_deref_trait",
  "writeable 0.6.3",
  "yoke 0.8.2",
  "zerofrom",
@@ -4196,9 +4220,25 @@ dependencies = [
  "icu_collections 1.5.0",
  "icu_locid",
  "icu_provider 1.5.0",
- "icu_segmenter_data",
+ "icu_segmenter_data 1.5.1",
  "utf8_iter",
  "zerovec 0.10.4",
+]
+
+[[package]]
+name = "icu_segmenter"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c0794db0b1a86193ac9c48768d0e6c52c54448e0870ad87907d456ee0dac964"
+dependencies = [
+ "core_maths",
+ "icu_collections 2.2.0",
+ "icu_locale",
+ "icu_provider 2.2.0",
+ "icu_segmenter_data 2.2.0",
+ "potential_utf",
+ "utf8_iter",
+ "zerovec 0.11.6",
 ]
 
 [[package]]
@@ -4206,6 +4246,12 @@ name = "icu_segmenter_data"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1e52775179941363cc594e49ce99284d13d6948928d8e72c755f55e98caa1eb"
+
+[[package]]
+name = "icu_segmenter_data"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4a2c462a4d927d512f5f882a033ddd62f33a05bb9f230d98f736ac3dc85938f"
 
 [[package]]
 name = "id-arena"
@@ -4379,15 +4425,6 @@ name = "itertools"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1c173a5686ce8bfa551b3563d0c2170bf24ca44da99c7ca4bfdab5418c3fe57"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
 dependencies = [
  "either",
 ]
@@ -4695,7 +4732,7 @@ dependencies = [
  "criterion",
  "error-core",
  "futures",
- "icu_segmenter",
+ "icu_segmenter 1.5.0",
  "knowledge-core",
  "proptest",
  "rayon",
@@ -5916,6 +5953,8 @@ version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0103b1cef7ec0cf76490e969665504990193874ea05c85ff9bab8b911d0a0564"
 dependencies = [
+ "serde_core",
+ "writeable 0.6.3",
  "zerovec 0.11.6",
 ]
 
@@ -7916,6 +7955,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
+name = "strum"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9628de9b8791db39ceda2b119bbe13134770b56c138ec1d3af810d045c04f9bd"
+dependencies = [
+ "strum_macros",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab85eea0270ee17587ed4156089e10b9e6880ee688791d45a905f5b1ca36f664"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8267,16 +8327,19 @@ dependencies = [
 
 [[package]]
 name = "text-splitter"
-version = "0.7.0"
+version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3d95ab924955ebd0fdf731fcfaa119aff263f9df17f0f8f7050546401efa548"
+checksum = "f1c090dcb5a7e4da833fcd8bdaf7fd5a9596c8fe9fe5c5355960243eaa4b5716"
 dependencies = [
+ "ahash 0.8.12",
  "auto_enums",
  "either",
- "itertools 0.12.1",
- "once_cell",
- "regex",
- "unicode-segmentation",
+ "icu_provider 2.2.0",
+ "icu_segmenter 2.2.0",
+ "itertools 0.14.0",
+ "memchr",
+ "strum",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -8422,6 +8485,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8323304221c2a851516f22236c5722a72eaa19749016521d6dff0824447d96d"
 dependencies = [
  "displaydoc",
+ "serde_core",
  "zerovec 0.11.6",
 ]
 
@@ -10298,6 +10362,7 @@ dependencies = [
  "displaydoc",
  "yoke 0.8.2",
  "zerofrom",
+ "zerovec 0.11.6",
 ]
 
 [[package]]
@@ -10317,6 +10382,7 @@ version = "0.11.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "90f911cbc359ab6af17377d242225f4d75119aec87ea711a880987b18cd7b239"
 dependencies = [
+ "serde",
  "yoke 0.8.2",
  "zerofrom",
  "zerovec-derive 0.11.3",
