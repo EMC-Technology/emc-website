@@ -72,7 +72,7 @@ metrics = { workspace = true }
 
 # 向量数据库依赖
 qdrant-client = { workspace = true, optional = true }
-tonic = { version = "0.11", default-features = false, optional = true }
+tonic = { version = "0.12", default-features = false, optional = true }
 
 # KMS / 密钥管理依赖
 ring = { workspace = true }
