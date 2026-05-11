@@ -5,7 +5,7 @@
 //!
 //! # 架构设计
 //!
-//! ```
+//! ```text
 //! ┌─────────────────────────────────────┐
 //! │       Application Layer             │
 //! │   (KnowledgeVM / EmbeddingService)  │
