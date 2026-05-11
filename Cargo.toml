@@ -75,7 +75,7 @@ blake3 = { version = "1.5", default-features = false }
 jsonwebtoken = { version = "9.3", default-features = false }
 
 # 错误处理
-thiserror = { version = "1.0", default-features = false }
+thiserror = { version = "2.0", default-features = false }
 error-core = { path = "crates/error-core", version = "0.2.0", default-features = false }
 
 # error-core 依赖
