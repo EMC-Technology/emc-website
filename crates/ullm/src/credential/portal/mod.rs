@@ -268,15 +268,12 @@ mod tests {
 
     #[test]
     fn test_cached_token_expired() {
-        let now = std::time::Instant::now();
-        let two_hours_ago = now.checked_sub(std::time::Duration::from_secs(7200));
-        let fetched_at =
-            two_hours_ago.unwrap_or_else(|| now - std::time::Duration::from_secs(3661));
         let cached = CachedToken {
             token: "test".to_string(),
-            fetched_at,
-            expires_in_secs: 3600,
+            fetched_at: std::time::Instant::now(),
+            expires_in_secs: 1,
         };
+        std::thread::sleep(std::time::Duration::from_secs(2));
         assert!(!cached.is_valid());
     }
 
