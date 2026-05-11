@@ -30,6 +30,14 @@ lto = "thin"
 strip = true
 codegen-units = 1
 
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "allow"
+private_intra_doc_links = "allow"
+unescaped_backticks = "allow"
+invalid_html_tags = "allow"
+invalid_codeblock_attributes = "allow"
+invalid_rust_codeblocks = "allow"
+
 [workspace.dependencies]
 # HTTP / Web 框架
 axum = { version = "0.7", default-features = false, features = ["ws", "macros", "json", "query", "multipart", "tokio", "http1", "http2"] }

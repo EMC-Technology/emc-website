@@ -1,7 +1,7 @@
 //! Error code generation and validation
 //!
 //! This module defines the `ErrorCode` struct for generating and validating error codes
-//! according to the specified format: ERR-[SOURCE]-[MODULE]-[SEQ]_[SEVERITY][IMPACT_SCOPE].
+//! according to the specified format: ERR-\[SOURCE\]-\[MODULE\]-\[SEQ\]_\[SEVERITY\]\[IMPACT_SCOPE\].
 
 use crate::classification::Recoverability;
 use crate::classification::{ErrorSource, ImpactScope, Severity};

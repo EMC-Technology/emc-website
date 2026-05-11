@@ -90,12 +90,14 @@ pub mod model_factory;
 ///
 /// # 支持的后端
 ///
+/// ```text
 /// | 后端 | 协议 | 纯Rust | GPU | 支持模型 |
 /// |------|------|--------|-----|---------|
 /// | **Candle** | Apache-2.0 | ✅ 100% | CUDA/Metal | Gemma/Llama/Qwen/Mistral (20+) |
 /// | **Mistral.rs** | Apache-2.0 | ✅ 100% | CUDA/Metal | Mistral/Llama/Gemma |
 /// | **ONNX Runtime** | MIT | ❌ C++ Core | CUDA/DirectML/CoreML | Universal |
 /// | **llama.cpp** | MIT | ❌ C++ Core | CUDA/Metal/Vulkan | Llama/Mistral/Qwen/Gemma |
+/// ```
 pub mod model_loader;
 
 /// RAG (Retrieval-Augmented Generation) 引擎
