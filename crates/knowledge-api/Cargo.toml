@@ -84,7 +84,7 @@ candle-transformers = { version = "0.10", default-features = false, features = [
 # 启用 http feature 以避免 onig 系统依赖，使用纯 Rust 实现
 tokenizers = { version = "0.22", default-features = false, features = ["http"] }
 # HuggingFace Hub模型下载
-hf-hub = { version = "0.4", default-features = false, features = ["tokio"] }
+hf-hub = { version = "0.5", default-features = false, features = ["tokio"] }
 # SHA256校验（模型下载完整性验证）
 sha2 = { workspace = true }
 # 目录路径解析（模型缓存目录）
