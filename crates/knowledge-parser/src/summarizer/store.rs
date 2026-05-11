@@ -12,13 +12,19 @@ use knowledge_core::model::{CommunitySummary, RecordIdType};
 /// 详见文档: §5.1 | 用例: UC-052
 pub trait CommunitySummaryStore: Send + Sync {
     fn save(&self, summary: &CommunitySummary) -> impl Future<Output = crate::Result<()>> + Send;
-    fn save_batch(&self, summaries: &[CommunitySummary]) -> impl Future<Output = crate::Result<()>> + Send;
+    fn save_batch(
+        &self,
+        summaries: &[CommunitySummary],
+    ) -> impl Future<Output = crate::Result<()>> + Send;
     fn get_by_community(
         &self,
         community_id: &RecordIdType,
     ) -> impl Future<Output = crate::Result<Option<CommunitySummary>>> + Send;
     fn get_all(&self) -> impl Future<Output = crate::Result<Vec<CommunitySummary>>> + Send;
-    fn delete_by_community(&self, community_id: &RecordIdType) -> impl Future<Output = crate::Result<()>> + Send;
+    fn delete_by_community(
+        &self,
+        community_id: &RecordIdType,
+    ) -> impl Future<Output = crate::Result<()>> + Send;
 }
 
 /// 内存存储（测试用）
@@ -58,7 +64,10 @@ impl CommunitySummaryStore for InMemoryStore {
     }
 
     #[allow(clippy::manual_async_fn)]
-    fn save_batch(&self, summaries: &[CommunitySummary]) -> impl Future<Output = crate::Result<()>> + Send {
+    fn save_batch(
+        &self,
+        summaries: &[CommunitySummary],
+    ) -> impl Future<Output = crate::Result<()>> + Send {
         async move {
             let mut map = self.summaries.write().await;
             for summary in summaries {
@@ -88,7 +97,10 @@ impl CommunitySummaryStore for InMemoryStore {
     }
 
     #[allow(clippy::manual_async_fn)]
-    fn delete_by_community(&self, community_id: &RecordIdType) -> impl Future<Output = crate::Result<()>> + Send {
+    fn delete_by_community(
+        &self,
+        community_id: &RecordIdType,
+    ) -> impl Future<Output = crate::Result<()>> + Send {
         async move {
             let mut map = self.summaries.write().await;
             map.remove(community_id);
@@ -133,7 +145,10 @@ impl CommunitySummaryStore for SurrealSummaryStore {
     }
 
     #[allow(clippy::manual_async_fn)]
-    fn save_batch(&self, summaries: &[CommunitySummary]) -> impl Future<Output = crate::Result<()>> + Send {
+    fn save_batch(
+        &self,
+        summaries: &[CommunitySummary],
+    ) -> impl Future<Output = crate::Result<()>> + Send {
         async move {
             for summary in summaries {
                 self.save(summary).await?;
@@ -171,7 +186,10 @@ impl CommunitySummaryStore for SurrealSummaryStore {
     }
 
     #[allow(clippy::manual_async_fn)]
-    fn delete_by_community(&self, community_id: &RecordIdType) -> impl Future<Output = crate::Result<()>> + Send {
+    fn delete_by_community(
+        &self,
+        community_id: &RecordIdType,
+    ) -> impl Future<Output = crate::Result<()>> + Send {
         async move {
             let _: surrealdb::Response = self
                 .db
@@ -283,5 +301,41 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.unwrap().summary_text, "新摘要");
+    }
+
+    #[test]
+    fn test_in_memory_store_default() {
+        let store = InMemoryStore::default();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let all = rt.block_on(store.get_all()).unwrap();
+        assert!(all.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_store_save_batch_empty() {
+        let store = InMemoryStore::new();
+        store.save_batch(&[]).await.unwrap();
+        let all = store.get_all().await.unwrap();
+        assert!(all.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_store_delete_nonexistent() {
+        let store = InMemoryStore::new();
+        store
+            .delete_by_community(&make_rid("community:nonexistent"))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_store_get_all_multiple() {
+        let store = InMemoryStore::new();
+        let s1 = make_summary("community:c1", "摘要1");
+        let s2 = make_summary("community:c2", "摘要2");
+        let s3 = make_summary("community:c3", "摘要3");
+        store.save_batch(&[s1, s2, s3]).await.unwrap();
+        let all = store.get_all().await.unwrap();
+        assert_eq!(all.len(), 3);
     }
 }

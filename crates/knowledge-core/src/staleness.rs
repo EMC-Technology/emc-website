@@ -56,12 +56,13 @@ impl StalenessChecker {
     /// # 返回值
     ///
     /// 返回与输入顺序一致的 `(doc_id, StalenessStatus)` 列表
-    pub fn check_documents(
-        docs: &[(String, String, String)],
-    ) -> Vec<(String, StalenessStatus)> {
+    pub fn check_documents(docs: &[(String, String, String)]) -> Vec<(String, StalenessStatus)> {
         docs.iter()
             .map(|(doc_id, stored_hash, current_hash)| {
-                (doc_id.clone(), Self::check_document(stored_hash, current_hash))
+                (
+                    doc_id.clone(),
+                    Self::check_document(stored_hash, current_hash),
+                )
             })
             .collect()
     }

@@ -1,8 +1,8 @@
+use crate::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::Result;
 
 /// 密钥管理服务 trait
 ///
@@ -70,6 +70,11 @@ pub trait KeyManagementService: Send + Sync {
     /// - DEK 无效或已过期
     /// - 密文格式错误或被篡改
     async fn decrypt(&self, dek: &EncryptedKey, ciphertext: &Ciphertext) -> Result<Vec<u8>>;
+
+    /// 解密 DEK 获取明文密钥材料
+    ///
+    /// 将加密的 DEK 解密为明文字节，用于信封加密的 DEK 缓存。
+    async fn decrypt_dek(&self, dek: &EncryptedKey) -> Result<Vec<u8>>;
 
     /// 签名数据
     ///
@@ -262,11 +267,7 @@ pub struct Ciphertext {
 
 impl Ciphertext {
     /// 创建新的 Ciphertext
-    pub fn new(
-        data: Vec<u8>,
-        dek_id: String,
-        algorithm: EncryptionAlgorithm,
-    ) -> Self {
+    pub fn new(data: Vec<u8>, dek_id: String, algorithm: EncryptionAlgorithm) -> Self {
         Self {
             data,
             nonce: Vec::new(),
@@ -533,7 +534,8 @@ impl RotationConfig {
     pub fn mark_rotated(&mut self) {
         let now = Utc::now();
         self.last_rotation_date = now;
-        self.next_rotation_date = now + chrono::Duration::days(i64::from(self.rotation_period_days));
+        self.next_rotation_date =
+            now + chrono::Duration::days(i64::from(self.rotation_period_days));
     }
 }
 
@@ -770,10 +772,7 @@ mod tests {
 
     #[test]
     fn test_signature_algorithm_display() {
-        assert_eq!(
-            SignatureAlgorithm::Ed25519.to_string(),
-            "Ed25519"
-        );
+        assert_eq!(SignatureAlgorithm::Ed25519.to_string(), "Ed25519");
         assert_eq!(
             SignatureAlgorithm::RsaPkcs1v15Sha256.to_string(),
             "RSA-PKCS1v15-SHA256"

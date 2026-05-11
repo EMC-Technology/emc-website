@@ -266,17 +266,33 @@ mod tests {
     #[tokio::test]
     async fn test_wrap_llm_stream() {
         let mock_chunks: Vec<Result<StreamChunk>> = vec![
-            Ok(StreamChunk { content: "Hello ".to_string(), is_final: false, usage: None, model: None }),
-            Ok(StreamChunk { content: "world!".to_string(), is_final: false, usage: None, model: None }),
-            Ok(StreamChunk { content: String::new(), is_final: true, usage: Some(TokenUsage {
-                prompt_tokens: 10,
-                completion_tokens: 5,
-                total_tokens: 15,
-            }), model: Some("mock-llm".to_string()) }),
+            Ok(StreamChunk {
+                content: "Hello ".to_string(),
+                is_final: false,
+                usage: None,
+                model: None,
+            }),
+            Ok(StreamChunk {
+                content: "world!".to_string(),
+                is_final: false,
+                usage: None,
+                model: None,
+            }),
+            Ok(StreamChunk {
+                content: String::new(),
+                is_final: true,
+                usage: Some(TokenUsage {
+                    prompt_tokens: 10,
+                    completion_tokens: 5,
+                    total_tokens: 15,
+                }),
+                model: Some("mock-llm".to_string()),
+            }),
         ];
 
         let mock_stream = futures::stream::iter(mock_chunks);
-        let boxed: Box<dyn Stream<Item = Result<StreamChunk>> + Send + Unpin> = Box::new(mock_stream);
+        let boxed: Box<dyn Stream<Item = Result<StreamChunk>> + Send + Unpin> =
+            Box::new(mock_stream);
 
         let request_id = Uuid::new_v4();
         let wrapped = wrap_llm_stream(boxed, request_id);
@@ -287,7 +303,7 @@ mod tests {
         while let Some(result) = wrapped.next().await {
             match result {
                 Ok(chunk) => collected.push(chunk),
-                Err(e) => panic!("流式传输错误: {e}"),
+                Err(e) => panic!("流式传输不应返回错误，但收到: {e}"),
             }
         }
 
@@ -325,10 +341,8 @@ mod tests {
             RAGStreamChunk::done(id),
         ];
 
-        let sse_output: std::result::Result<Vec<String>, _> = chunks
-            .iter()
-            .map(RAGStreamChunk::to_sse_data)
-            .collect();
+        let sse_output: std::result::Result<Vec<String>, _> =
+            chunks.iter().map(RAGStreamChunk::to_sse_data).collect();
 
         assert!(sse_output.is_ok());
         let lines = sse_output.unwrap();

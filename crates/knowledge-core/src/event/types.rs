@@ -3,13 +3,16 @@
 //! 本模块定义事件驱动架构的核心类型体系：
 //! - `SystemEvent`: 所有系统事件的统一 trait
 //! - `KnowledgeEvent`: 领域事件枚举，覆盖所有业务场景
+//! - `TrackedKnowledgeEvent`: 带因果追踪的事件包装
 //! - 各具体事件结构体：Document/Node/Edge/Search/Embedding 等
 
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::model::{SourceType, RefType};
+use crate::cqrs::event_store::TriggeredBy;
+
+use crate::model::{RefType, SourceType};
 
 /// 健康状态枚举
 ///
@@ -27,21 +30,8 @@ pub enum HealthStatus {
     Unknown,
 }
 
-/// 知识节点类型枚举
-///
-/// 用于 `NodeCreatedEvent` 和 `NodeDeletedEvent` 的 `node_type` 字段，
-/// 替代原先的 `String` 类型。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum NodeType {
-    /// 文档根节点
-    Document,
-    /// 块容器节点
-    Block,
-    /// 词元叶子节点
-    Token,
-    /// 语义实体
-    SemanticEntity,
-}
+/// 知识节点类型枚举（从 `model` 模块重新导出）
+pub use crate::model::NodeType;
 
 /// 嵌入实体类型枚举
 ///
@@ -82,7 +72,9 @@ pub enum QueryType {
 /// 实现此 trait 的类型可作为事件总线的消息载体。
 /// 约束要求确保事件可跨线程安全传递、可序列化持久化，
 /// 可通过日志与 metrics 进行观测。
-pub trait SystemEvent: Send + Sync + Clone + Serialize + Deserialize<'static> + std::fmt::Debug {
+pub trait SystemEvent:
+    Send + Sync + Clone + Serialize + Deserialize<'static> + std::fmt::Debug
+{
     /// 事件唯一标识符（UUID v4）
     fn event_id(&self) -> Uuid;
 
@@ -117,7 +109,6 @@ pub enum KnowledgeEvent {
     // ---------------------------------------------------------------------
     // 文档生命周期事件
     // ---------------------------------------------------------------------
-
     /// 文档已摄入（文件读取完成，哈希计算完毕）
     DocumentIngested(DocumentIngestedEvent),
 
@@ -133,7 +124,6 @@ pub enum KnowledgeEvent {
     // ---------------------------------------------------------------------
     // 知识节点操作事件
     // ---------------------------------------------------------------------
-
     /// 知识节点已创建
     NodeCreated(NodeCreatedEvent),
 
@@ -149,7 +139,6 @@ pub enum KnowledgeEvent {
     // ---------------------------------------------------------------------
     // 关系边操作事件
     // ---------------------------------------------------------------------
-
     /// 关系边已创建
     EdgeCreated(EdgeCreatedEvent),
 
@@ -159,7 +148,6 @@ pub enum KnowledgeEvent {
     // ---------------------------------------------------------------------
     // 搜索与查询事件
     // ---------------------------------------------------------------------
-
     /// 搜索请求已执行
     SearchPerformed(SearchPerformedEvent),
 
@@ -169,7 +157,6 @@ pub enum KnowledgeEvent {
     // ---------------------------------------------------------------------
     // Embedding 操作事件
     // ---------------------------------------------------------------------
-
     /// 向量嵌入已生成
     EmbeddingGenerated(EmbeddingGeneratedEvent),
 
@@ -179,16 +166,69 @@ pub enum KnowledgeEvent {
     // ---------------------------------------------------------------------
     // 用户操作事件
     // ---------------------------------------------------------------------
-
     /// 用户操作记录
     UserAction(UserActionEvent),
 
     // ---------------------------------------------------------------------
     // 系统事件
     // ---------------------------------------------------------------------
-
     /// 系统健康检查
     SystemHealthCheck(SystemHealthEvent),
+}
+
+/// 带因果追踪的领域事件包装
+///
+/// 在 `KnowledgeEvent` 基础上添加 `triggered_by` 字段，
+/// 消除 CQRS 事件层与 KnowledgeEvent 层之间的溯源断层。
+/// 符合 POP Axiom-4（跨域绑定）要求。
+///
+/// `triggered_by` 为必须字段，确保所有事件都可追溯触发源。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrackedKnowledgeEvent {
+    /// 领域事件负载
+    pub event: KnowledgeEvent,
+    /// 触发源描述（谁触发了这个事件）— Axiom-4 必须字段
+    pub triggered_by: TriggeredBy,
+    /// 业务流程关联 ID
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub correlation_id: Option<String>,
+}
+
+impl TrackedKnowledgeEvent {
+    /// 创建带追踪信息的事件
+    #[must_use]
+    pub fn new(event: KnowledgeEvent, triggered_by: TriggeredBy) -> Self {
+        Self {
+            event,
+            triggered_by,
+            correlation_id: None,
+        }
+    }
+
+    /// 设置关联 ID
+    #[must_use]
+    pub fn with_correlation_id(mut self, id: impl Into<String>) -> Self {
+        self.correlation_id = Some(id.into());
+        self
+    }
+}
+
+impl SystemEvent for TrackedKnowledgeEvent {
+    fn event_id(&self) -> Uuid {
+        self.event.event_id()
+    }
+
+    fn event_type(&self) -> &str {
+        self.event.event_type()
+    }
+
+    fn timestamp(&self) -> DateTime<Utc> {
+        self.event.timestamp()
+    }
+
+    fn aggregate_id(&self) -> String {
+        self.event.aggregate_id()
+    }
 }
 
 impl SystemEvent for KnowledgeEvent {
@@ -534,11 +574,7 @@ pub struct NodeDeletedEvent {
 }
 
 impl NodeDeletedEvent {
-    pub fn new(
-        node_id: impl Into<String>,
-        node_type: NodeType,
-        source: impl Into<String>,
-    ) -> Self {
+    pub fn new(node_id: impl Into<String>, node_type: NodeType, source: impl Into<String>) -> Self {
         Self {
             id: Uuid::new_v4(),
             node_id: node_id.into(),
@@ -635,11 +671,7 @@ pub struct EdgeDeletedEvent {
 }
 
 impl EdgeDeletedEvent {
-    pub fn new(
-        edge_id: impl Into<String>,
-        ref_type: RefType,
-        source: impl Into<String>,
-    ) -> Self {
+    pub fn new(edge_id: impl Into<String>, ref_type: RefType, source: impl Into<String>) -> Self {
         Self {
             id: Uuid::new_v4(),
             edge_id: edge_id.into(),
@@ -800,37 +832,105 @@ impl EmbeddingCachedEvent {
 // 具体事件结构 —— 用户操作
 // ============================================================================
 
+/// 用户操作类型枚举
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UserAction {
+    /// 创建资源
+    Create,
+    /// 读取资源
+    Read,
+    /// 更新资源
+    Update,
+    /// 删除资源
+    Delete,
+    /// 搜索操作
+    Search,
+    /// 导出操作
+    Export,
+    /// 管理操作（权限变更等）
+    Manage,
+    /// 自定义操作
+    Custom(String),
+}
+
+impl std::fmt::Display for UserAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Create => write!(f, "create"),
+            Self::Read => write!(f, "read"),
+            Self::Update => write!(f, "update"),
+            Self::Delete => write!(f, "delete"),
+            Self::Search => write!(f, "search"),
+            Self::Export => write!(f, "export"),
+            Self::Manage => write!(f, "manage"),
+            Self::Custom(s) => write!(f, "{s}"),
+        }
+    }
+}
+
+/// 事件来源枚举
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EventSource {
+    /// REST API 请求
+    Api,
+    /// WebSocket 连接
+    WebSocket,
+    /// MCP 协议
+    Mcp,
+    /// 内部系统事件
+    Internal,
+    /// 定时任务
+    Scheduler,
+    /// 自定义来源
+    Custom(String),
+}
+
+impl std::fmt::Display for EventSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Api => write!(f, "api"),
+            Self::WebSocket => write!(f, "websocket"),
+            Self::Mcp => write!(f, "mcp"),
+            Self::Internal => write!(f, "internal"),
+            Self::Scheduler => write!(f, "scheduler"),
+            Self::Custom(s) => write!(f, "{s}"),
+        }
+    }
+}
+
 /// 用户操作事件
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserActionEvent {
     pub id: Uuid,
     pub user_id: String,
-    pub action: String,
+    pub action: UserAction,
     pub resource_type: Option<String>,
     pub resource_id: Option<String>,
     #[serde(with = "chrono::serde::ts_milliseconds")]
     pub timestamp: DateTime<Utc>,
     pub version: u32,
-    pub source: String,
+    pub source: EventSource,
 }
 
 impl UserActionEvent {
     pub fn new(
         user_id: impl Into<String>,
-        action: impl Into<String>,
+        action: UserAction,
         resource_type: Option<impl Into<String>>,
         resource_id: Option<impl Into<String>>,
-        source: impl Into<String>,
+        source: EventSource,
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
             user_id: user_id.into(),
-            action: action.into(),
+            action,
             resource_type: resource_type.map(|s| s.into()),
             resource_id: resource_id.map(|s| s.into()),
             timestamp: Utc::now(),
             version: 1,
-            source: source.into(),
+            source,
         }
     }
 }
@@ -891,8 +991,7 @@ mod tests {
         );
 
         let json = serde_json::to_string(&event).expect("序列化失败");
-        let de_event: DocumentIngestedEvent =
-            serde_json::from_str(&json).expect("反序列化失败");
+        let de_event: DocumentIngestedEvent = serde_json::from_str(&json).expect("反序列化失败");
 
         assert_eq!(event.document_id, de_event.document_id);
         assert_eq!(event.file_path, de_event.file_path);
@@ -920,18 +1019,29 @@ mod tests {
     #[test]
     fn test_knowledge_event_tagged_serialization() {
         let events = vec![
-            KnowledgeEvent::DocumentParsed(DocumentParsedEvent::new("doc-003", 10, 200, 50, "parser")),
-            KnowledgeEvent::NodeCreated(NodeCreatedEvent::new("node-001", NodeType::Block, Some("doc-003"), "graph-builder")),
+            KnowledgeEvent::DocumentParsed(DocumentParsedEvent::new(
+                "doc-003", 10, 200, 50, "parser",
+            )),
+            KnowledgeEvent::NodeCreated(NodeCreatedEvent::new(
+                "node-001",
+                NodeType::Block,
+                Some("doc-003"),
+                "graph-builder",
+            )),
             KnowledgeEvent::EmbeddingGenerated(EmbeddingGeneratedEvent::new(
-                "block-001", EmbeddingEntityType::Block, 1536, "text-embedding-ada-002", 120, "embedding-service",
+                "block-001",
+                EmbeddingEntityType::Block,
+                1536,
+                "text-embedding-ada-002",
+                120,
+                "embedding-service",
             )),
         ];
 
         for event in &events {
             let json = serde_json::to_string(event).expect("序列化失败");
             assert!(json.contains("\"type\":"), "序列化结果应包含 type 标签");
-            let de_event: KnowledgeEvent =
-                serde_json::from_str(&json).expect("反序列化失败");
+            let de_event: KnowledgeEvent = serde_json::from_str(&json).expect("反序列化失败");
             assert_eq!(event.event_type(), de_event.event_type());
         }
     }
@@ -939,22 +1049,67 @@ mod tests {
     #[test]
     fn test_all_event_types_have_valid_metadata() {
         let event_variants: Vec<KnowledgeEvent> = vec![
-            KnowledgeEvent::DocumentIngested(DocumentIngestedEvent::new("d", "/", 0, SourceType::Plain, "", "s")),
+            KnowledgeEvent::DocumentIngested(DocumentIngestedEvent::new(
+                "d",
+                "/",
+                0,
+                SourceType::Plain,
+                "",
+                "s",
+            )),
             KnowledgeEvent::DocumentParsed(DocumentParsedEvent::new("d", 0, 0, 0, "s")),
             KnowledgeEvent::DocumentIndexed(DocumentIndexedEvent::new("d", 0, 0, "s")),
             KnowledgeEvent::DocumentDeleted(DocumentDeletedEvent::new("d", 0, 0, 0, "s")),
-            KnowledgeEvent::NodeCreated(NodeCreatedEvent::new("n", NodeType::Token, None::<String>, "s")),
-            KnowledgeEvent::NodeUpdated(NodeUpdatedEvent::new("n", crate::cqrs::event_store::ChangeSet::new(), "s")),
+            KnowledgeEvent::NodeCreated(NodeCreatedEvent::new(
+                "n",
+                NodeType::Token,
+                None::<String>,
+                "s",
+            )),
+            KnowledgeEvent::NodeUpdated(NodeUpdatedEvent::new(
+                "n",
+                crate::cqrs::event_store::ChangeSet::new(),
+                "s",
+            )),
             KnowledgeEvent::NodeDeleted(NodeDeletedEvent::new("n", NodeType::Token, "s")),
             KnowledgeEvent::NodeLinked(NodeLinkedEvent::new("a", "b", RefType::Usage, "s")),
             KnowledgeEvent::EdgeCreated(EdgeCreatedEvent::new("e", RefType::Usage, "a", "b", "s")),
             KnowledgeEvent::EdgeDeleted(EdgeDeletedEvent::new("e", RefType::Usage, "s")),
             KnowledgeEvent::SearchPerformed(SearchPerformedEvent::new("q", 0, 0, "s")),
-            KnowledgeEvent::QueryExecuted(QueryExecutedEvent::new(QueryType::Traversal, "b", 0, 0, "s")),
-            KnowledgeEvent::EmbeddingGenerated(EmbeddingGeneratedEvent::new("e", EmbeddingEntityType::Document, 0, "m", 0, "s")),
-            KnowledgeEvent::EmbeddingCached(EmbeddingCachedEvent::new("e", EmbeddingEntityType::Document, "k", "s")),
-            KnowledgeEvent::UserAction(UserActionEvent::new("u", "a", None::<String>, None::<String>, "s")),
-            KnowledgeEvent::SystemHealthCheck(SystemHealthEvent::new("c", HealthStatus::Healthy, None::<String>, "s")),
+            KnowledgeEvent::QueryExecuted(QueryExecutedEvent::new(
+                QueryType::Traversal,
+                "b",
+                0,
+                0,
+                "s",
+            )),
+            KnowledgeEvent::EmbeddingGenerated(EmbeddingGeneratedEvent::new(
+                "e",
+                EmbeddingEntityType::Document,
+                0,
+                "m",
+                0,
+                "s",
+            )),
+            KnowledgeEvent::EmbeddingCached(EmbeddingCachedEvent::new(
+                "e",
+                EmbeddingEntityType::Document,
+                "k",
+                "s",
+            )),
+            KnowledgeEvent::UserAction(UserActionEvent::new(
+                "u",
+                "a",
+                None::<String>,
+                None::<String>,
+                "s",
+            )),
+            KnowledgeEvent::SystemHealthCheck(SystemHealthEvent::new(
+                "c",
+                HealthStatus::Healthy,
+                None::<String>,
+                "s",
+            )),
         ];
 
         for event in event_variants {
@@ -973,6 +1128,9 @@ mod tests {
         let json = serde_json::to_string(&event).expect("序列化失败");
         let de_event: NodeCreatedEvent = serde_json::from_str(&json).expect("反序列化失败");
 
-        assert_eq!(original_ts, de_event.timestamp, "时间戳毫秒精度序列化应无损");
+        assert_eq!(
+            original_ts, de_event.timestamp,
+            "时间戳毫秒精度序列化应无损"
+        );
     }
 }

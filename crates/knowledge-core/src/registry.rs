@@ -8,8 +8,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::helpers;
 use crate::Result;
+use crate::error::helpers;
 
 /// 注册表条目
 ///
@@ -95,14 +95,11 @@ impl Registry {
             });
         }
 
-        let content = std::fs::read_to_string(path).map_err(|e| {
-            helpers::config_error(&format!("无法读取注册表文件: {e}"))
-        })?;
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| helpers::config_error(&format!("无法读取注册表文件: {e}")))?;
 
-        let entries: HashMap<String, RegistryEntry> =
-            serde_json::from_str(&content).map_err(|e| {
-                helpers::parse_error(&format!("注册表 JSON 解析失败: {e}"))
-            })?;
+        let entries: HashMap<String, RegistryEntry> = serde_json::from_str(&content)
+            .map_err(|e| helpers::parse_error(&format!("注册表 JSON 解析失败: {e}")))?;
 
         Ok(Self {
             entries,
@@ -122,18 +119,15 @@ impl Registry {
     /// - 序列化失败时返回序列化错误
     pub fn save(&self) -> Result<()> {
         if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                helpers::config_error(&format!("无法创建注册表目录: {e}"))
-            })?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| helpers::config_error(&format!("无法创建注册表目录: {e}")))?;
         }
 
-        let content = serde_json::to_vec_pretty(&self.entries).map_err(|e| {
-            helpers::serde_error(&format!("注册表序列化失败: {e}"))
-        })?;
+        let content = serde_json::to_vec_pretty(&self.entries)
+            .map_err(|e| helpers::serde_error(&format!("注册表序列化失败: {e}")))?;
 
-        std::fs::write(&self.path, content).map_err(|e| {
-            helpers::config_error(&format!("无法写入注册表文件: {e}"))
-        })?;
+        std::fs::write(&self.path, content)
+            .map_err(|e| helpers::config_error(&format!("无法写入注册表文件: {e}")))?;
 
         Ok(())
     }
@@ -235,10 +229,10 @@ impl Registry {
     ///
     /// 无法获取用户主目录时返回配置错误
     fn default_registry_path() -> Result<PathBuf> {
-        let home = dirs::home_dir().ok_or_else(|| {
-            helpers::config_error("无法获取用户主目录")
-        })?;
-        Ok(home.join(Self::CONFIG_DIR_NAME).join(Self::REGISTRY_FILENAME))
+        let home = dirs::home_dir().ok_or_else(|| helpers::config_error("无法获取用户主目录"))?;
+        Ok(home
+            .join(Self::CONFIG_DIR_NAME)
+            .join(Self::REGISTRY_FILENAME))
     }
 }
 
@@ -299,7 +293,8 @@ mod tests {
         assert!(reg.get("repo-b").is_some());
         assert_eq!(reg.list().len(), 1);
 
-        reg.unregister("nonexistent").expect("注销不存在的条目不应报错");
+        reg.unregister("nonexistent")
+            .expect("注销不存在的条目不应报错");
         assert_eq!(reg.list().len(), 1);
     }
 
@@ -336,5 +331,52 @@ mod tests {
         assert_eq!(loaded.list().len(), 2);
         assert_eq!(loaded.get("repo-1").expect("应找到 repo-1").path, "/path/1");
         assert_eq!(loaded.get("repo-2").expect("应找到 repo-2").path, "/path/2");
+    }
+
+    #[test]
+    fn test_registry_load_corrupted_json() {
+        let dir = tempfile::tempdir().expect("创建临时目录失败");
+        let path = dir.path().join("registry.json");
+        std::fs::write(&path, "{invalid json}").expect("写入失败");
+        let result = Registry::load_from(&path);
+        assert!(result.is_err(), "损坏的 JSON 应返回错误");
+    }
+
+    #[test]
+    fn test_registry_register_overwrites_existing() {
+        let dir = tempfile::tempdir().expect("创建临时目录失败");
+        let path = dir.path().join("registry.json");
+        let mut reg = Registry::load_from(&path).expect("加载注册表失败");
+
+        reg.register("repo".to_string(), make_entry("/original"))
+            .expect("注册失败");
+        reg.register("repo".to_string(), make_entry("/updated"))
+            .expect("注册失败");
+
+        assert_eq!(reg.get("repo").expect("应找到 repo").path, "/updated");
+    }
+
+    #[test]
+    fn test_registry_find_by_path_no_match() {
+        let dir = tempfile::tempdir().expect("创建临时目录失败");
+        let path = dir.path().join("registry.json");
+        let mut reg = Registry::load_from(&path).expect("加载注册表失败");
+        reg.register("repo".to_string(), make_entry("/specific/path"))
+            .expect("注册失败");
+        assert!(reg.find_by_path("/other/path").is_none());
+    }
+
+    #[test]
+    fn test_registry_entry_serialization() {
+        let entry = RegistryEntry {
+            path: "/test/path".to_string(),
+            indexed_at: "2025-01-01T00:00:00Z".to_string(),
+            doc_count: 42,
+            last_hash: "a".repeat(64),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let de: RegistryEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry.path, de.path);
+        assert_eq!(entry.doc_count, de.doc_count);
     }
 }

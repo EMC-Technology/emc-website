@@ -6,9 +6,10 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use knowledge_core::model::{Block, BlockType, Document, SourceType};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use knowledge_core::model::{Block, BlockStatus, BlockType, Document, SourceType};
 use serde::Deserialize;
+use std::hint::black_box;
 use tower::ServiceExt;
 
 async fn bench_health_handler() -> impl IntoResponse {
@@ -179,8 +180,8 @@ fn bench_response_serialization(c: &mut Criterion) {
             block_type: BlockType::Paragraph,
             start_line: i * 5,
             end_line: i * 5 + 5,
-            embedding: None,
             idempotency_key: Some(format!("para_{}_{}", i * 5, i * 5 + 5)),
+            status: BlockStatus::Created,
         })
         .collect();
 

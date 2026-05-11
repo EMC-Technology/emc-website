@@ -39,7 +39,11 @@ fn test_error_code_parse_invalid_source() {
     let result = ErrorCode::parse("ERR-XXX-LM-002_ERR_S");
     assert!(result.is_err());
     let err = result.unwrap_err();
-    assert!(err.message().contains("Invalid error source") || err.message().contains("无效的错误来源") || err.message().contains("错误码格式无效"));
+    assert!(
+        err.message().contains("Invalid error source")
+            || err.message().contains("无效的错误来源")
+            || err.message().contains("错误码格式无效")
+    );
 }
 
 #[test]
@@ -47,7 +51,11 @@ fn test_error_code_parse_invalid_sequence() {
     let result = ErrorCode::parse("ERR-AIM-LM-ABC_ERR_S");
     assert!(result.is_err());
     let err = result.unwrap_err();
-    assert!(err.message().contains("Invalid error code format") || err.message().contains("错误码格式无效") || err.message().contains("无效的序号"));
+    assert!(
+        err.message().contains("Invalid error code format")
+            || err.message().contains("错误码格式无效")
+            || err.message().contains("无效的序号")
+    );
 }
 
 #[test]
@@ -55,7 +63,11 @@ fn test_error_code_parse_invalid_severity() {
     let result = ErrorCode::parse("ERR-AIM-LM-002_INVALID_S");
     assert!(result.is_err());
     let err = result.unwrap_err();
-    assert!(err.message().contains("Invalid error code format") || err.message().contains("错误码格式无效") || err.message().contains("无效的严重级别"));
+    assert!(
+        err.message().contains("Invalid error code format")
+            || err.message().contains("错误码格式无效")
+            || err.message().contains("无效的严重级别")
+    );
 }
 
 #[test]
@@ -63,21 +75,18 @@ fn test_error_code_parse_invalid_impact_scope() {
     let result = ErrorCode::parse("ERR-AIM-LM-002_ERR_X");
     assert!(result.is_err());
     let err = result.unwrap_err();
-    assert!(err.message().contains("Invalid error code format") || err.message().contains("错误码格式无效") || err.message().contains("无效的影响范围"));
+    assert!(
+        err.message().contains("Invalid error code format")
+            || err.message().contains("错误码格式无效")
+            || err.message().contains("无效的影响范围")
+    );
 }
 
 #[test]
 fn test_error_code_new_invalid_module() {
     #[cfg(feature = "regex")]
     {
-        let invalid_modules = [
-            "",
-            "A",
-            "AAAAAA",
-            "1234",
-            "A1B2",
-            "abc",
-        ];
+        let invalid_modules = ["", "A", "AAAAAA", "1234", "A1B2", "abc"];
 
         for module in &invalid_modules {
             let result = ErrorCode::new(

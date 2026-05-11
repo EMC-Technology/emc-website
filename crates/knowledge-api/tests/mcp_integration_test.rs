@@ -51,8 +51,7 @@ async fn test_mcp_server_construct_with_knowledge_vm() {
         .await
         .expect("无法连接 SurrealDB，请确保实例正在运行");
 
-    let vm = KnowledgeVM::with_embedding_dim(db_client, 1536)
-        .expect("无法创建 KnowledgeVM");
+    let vm = KnowledgeVM::with_embedding_dim(db_client, 1536).expect("无法创建 KnowledgeVM");
     let _server = McpServer::new(vm);
 }
 
@@ -70,8 +69,7 @@ async fn test_mcp_server_tool_list_includes_all_tools() {
         .await
         .expect("无法连接 SurrealDB，请确保实例正在运行");
 
-    let vm = KnowledgeVM::with_embedding_dim(db_client, 1536)
-        .expect("无法创建 KnowledgeVM");
+    let vm = KnowledgeVM::with_embedding_dim(db_client, 1536).expect("无法创建 KnowledgeVM");
     let server = McpServer::new(vm);
 
     let tool_names = server.registered_tool_names();
@@ -111,8 +109,7 @@ async fn test_mcp_server_get_info_returns_valid_server_info() {
         .await
         .expect("无法连接 SurrealDB，请确保实例正在运行");
 
-    let vm = KnowledgeVM::with_embedding_dim(db_client, 1536)
-        .expect("无法创建 KnowledgeVM");
+    let vm = KnowledgeVM::with_embedding_dim(db_client, 1536).expect("无法创建 KnowledgeVM");
     let server = McpServer::new(vm);
 
     let info = server.get_info();

@@ -19,8 +19,8 @@ use async_trait::async_trait;
 use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
 
-use super::types::{KnowledgeEvent, SystemEvent};
 use super::event_bus::EventBus;
+use super::types::{KnowledgeEvent, SystemEvent};
 
 /// 异步事件处理器 trait
 ///
@@ -112,7 +112,10 @@ impl DocumentEventHandler {
         }
     }
 
-    async fn handle_ingested(&self, event: KnowledgeEvent) -> std::result::Result<HandleResult, HandleError> {
+    async fn handle_ingested(
+        &self,
+        event: KnowledgeEvent,
+    ) -> std::result::Result<HandleResult, HandleError> {
         let start = Instant::now();
         if let KnowledgeEvent::DocumentIngested(ref doc_event) = event {
             debug!(
@@ -130,7 +133,10 @@ impl DocumentEventHandler {
         }
     }
 
-    async fn handle_parsed(&self, event: KnowledgeEvent) -> std::result::Result<HandleResult, HandleError> {
+    async fn handle_parsed(
+        &self,
+        event: KnowledgeEvent,
+    ) -> std::result::Result<HandleResult, HandleError> {
         let start = Instant::now();
         if let KnowledgeEvent::DocumentParsed(ref parsed_event) = event {
             debug!(
@@ -142,9 +148,7 @@ impl DocumentEventHandler {
             Ok(HandleResult::ok(
                 format!(
                     "文档 {} 解析完成 ({} blocks, {} tokens)",
-                    parsed_event.document_id,
-                    parsed_event.block_count,
-                    parsed_event.token_count
+                    parsed_event.document_id, parsed_event.block_count, parsed_event.token_count
                 ),
                 start.elapsed().as_micros(),
             ))
@@ -153,7 +157,10 @@ impl DocumentEventHandler {
         }
     }
 
-    async fn handle_deleted(&self, event: KnowledgeEvent) -> std::result::Result<HandleResult, HandleError> {
+    async fn handle_deleted(
+        &self,
+        event: KnowledgeEvent,
+    ) -> std::result::Result<HandleResult, HandleError> {
         let start = Instant::now();
         if let KnowledgeEvent::DocumentDeleted(ref del_event) = event {
             info!(
@@ -188,17 +195,34 @@ impl Handler<KnowledgeEvent> for DocumentEventHandler {
         )
     }
 
-    async fn handle(&self, event: KnowledgeEvent) -> std::result::Result<HandleResult, HandleError> {
+    async fn handle(
+        &self,
+        event: KnowledgeEvent,
+    ) -> std::result::Result<HandleResult, HandleError> {
         match &event {
             KnowledgeEvent::DocumentIngested(_) => self.handle_ingested(event).await,
             KnowledgeEvent::DocumentParsed(_) => self.handle_parsed(event).await,
             KnowledgeEvent::DocumentIndexed(_) => {
                 let start = Instant::now();
                 debug!("[DocumentEventHandler] 文档已索引");
-                Ok(HandleResult::ok("索引确认完成", start.elapsed().as_micros()))
+                Ok(HandleResult::ok(
+                    "索引确认完成",
+                    start.elapsed().as_micros(),
+                ))
             }
             KnowledgeEvent::DocumentDeleted(_) => self.handle_deleted(event).await,
-            _ => Err(HandleError::TypeMismatch),
+            KnowledgeEvent::NodeCreated(_)
+            | KnowledgeEvent::NodeUpdated(_)
+            | KnowledgeEvent::NodeDeleted(_)
+            | KnowledgeEvent::NodeLinked(_)
+            | KnowledgeEvent::EdgeCreated(_)
+            | KnowledgeEvent::EdgeDeleted(_)
+            | KnowledgeEvent::SearchPerformed(_)
+            | KnowledgeEvent::QueryExecuted(_)
+            | KnowledgeEvent::EmbeddingGenerated(_)
+            | KnowledgeEvent::EmbeddingCached(_)
+            | KnowledgeEvent::UserAction(_)
+            | KnowledgeEvent::SystemHealthCheck(_) => Err(HandleError::TypeMismatch),
         }
     }
 }
@@ -239,7 +263,10 @@ impl Handler<KnowledgeEvent> for NodeEventHandler {
         )
     }
 
-    async fn handle(&self, event: KnowledgeEvent) -> std::result::Result<HandleResult, HandleError> {
+    async fn handle(
+        &self,
+        event: KnowledgeEvent,
+    ) -> std::result::Result<HandleResult, HandleError> {
         let start = Instant::now();
         match &event {
             KnowledgeEvent::NodeCreated(e) => {
@@ -248,19 +275,28 @@ impl Handler<KnowledgeEvent> for NodeEventHandler {
                     node_type = %e.node_type,
                     "[NodeEventHandler] 节点已创建"
                 );
-                Ok(HandleResult::ok(format!("节点 {} 创建完成", e.node_id), start.elapsed().as_micros()))
+                Ok(HandleResult::ok(
+                    format!("节点 {} 创建完成", e.node_id),
+                    start.elapsed().as_micros(),
+                ))
             }
             KnowledgeEvent::NodeUpdated(e) => {
                 debug!(
                     node_id = %e.node_id,
-                    fields = ?e.updated_fields,
+                    changes = ?e.changes,
                     "[NodeEventHandler] 节点已更新"
                 );
-                Ok(HandleResult::ok(format!("节点 {} 更新完成", e.node_id), start.elapsed().as_micros()))
+                Ok(HandleResult::ok(
+                    format!("节点 {} 更新完成", e.node_id),
+                    start.elapsed().as_micros(),
+                ))
             }
             KnowledgeEvent::NodeDeleted(e) => {
                 info!(node_id = %e.node_id, "[NodeEventHandler] 节点已删除");
-                Ok(HandleResult::ok(format!("节点 {} 删除完成", e.node_id), start.elapsed().as_micros()))
+                Ok(HandleResult::ok(
+                    format!("节点 {} 删除完成", e.node_id),
+                    start.elapsed().as_micros(),
+                ))
             }
             KnowledgeEvent::NodeLinked(e) => {
                 debug!(
@@ -270,11 +306,25 @@ impl Handler<KnowledgeEvent> for NodeEventHandler {
                     "[NodeEventHandler] 节点链接已建立"
                 );
                 Ok(HandleResult::ok(
-                    format!("链接 {} → {} ({}) 已建立", e.from_node_id, e.to_node_id, e.relation_type),
+                    format!(
+                        "链接 {} → {} ({}) 已建立",
+                        e.from_node_id, e.to_node_id, e.relation_type
+                    ),
                     start.elapsed().as_micros(),
                 ))
             }
-            _ => Err(HandleError::TypeMismatch),
+            KnowledgeEvent::DocumentIngested(_)
+            | KnowledgeEvent::DocumentParsed(_)
+            | KnowledgeEvent::DocumentIndexed(_)
+            | KnowledgeEvent::DocumentDeleted(_)
+            | KnowledgeEvent::EdgeCreated(_)
+            | KnowledgeEvent::EdgeDeleted(_)
+            | KnowledgeEvent::SearchPerformed(_)
+            | KnowledgeEvent::QueryExecuted(_)
+            | KnowledgeEvent::EmbeddingGenerated(_)
+            | KnowledgeEvent::EmbeddingCached(_)
+            | KnowledgeEvent::UserAction(_)
+            | KnowledgeEvent::SystemHealthCheck(_) => Err(HandleError::TypeMismatch),
         }
     }
 }
@@ -312,7 +362,10 @@ impl Handler<KnowledgeEvent> for SearchEventHandler {
         )
     }
 
-    async fn handle(&self, event: KnowledgeEvent) -> std::result::Result<HandleResult, HandleError> {
+    async fn handle(
+        &self,
+        event: KnowledgeEvent,
+    ) -> std::result::Result<HandleResult, HandleError> {
         let start = Instant::now();
         match &event {
             KnowledgeEvent::SearchPerformed(e) => {
@@ -332,7 +385,10 @@ impl Handler<KnowledgeEvent> for SearchEventHandler {
                 }
 
                 Ok(HandleResult::ok(
-                    format!("搜索 '{}' 完成 ({} 结果, {}ms)", e.query, e.result_count, e.duration_ms),
+                    format!(
+                        "搜索 '{}' 完成 ({} 结果, {}ms)",
+                        e.query, e.result_count, e.duration_ms
+                    ),
                     start.elapsed().as_micros(),
                 ))
             }
@@ -351,7 +407,20 @@ impl Handler<KnowledgeEvent> for SearchEventHandler {
                     start.elapsed().as_micros(),
                 ))
             }
-            _ => Err(HandleError::TypeMismatch),
+            KnowledgeEvent::DocumentIngested(_)
+            | KnowledgeEvent::DocumentParsed(_)
+            | KnowledgeEvent::DocumentIndexed(_)
+            | KnowledgeEvent::DocumentDeleted(_)
+            | KnowledgeEvent::NodeCreated(_)
+            | KnowledgeEvent::NodeUpdated(_)
+            | KnowledgeEvent::NodeDeleted(_)
+            | KnowledgeEvent::NodeLinked(_)
+            | KnowledgeEvent::EdgeCreated(_)
+            | KnowledgeEvent::EdgeDeleted(_)
+            | KnowledgeEvent::EmbeddingGenerated(_)
+            | KnowledgeEvent::EmbeddingCached(_)
+            | KnowledgeEvent::UserAction(_)
+            | KnowledgeEvent::SystemHealthCheck(_) => Err(HandleError::TypeMismatch),
         }
     }
 }
@@ -389,7 +458,10 @@ impl Handler<KnowledgeEvent> for EmbeddingEventHandler {
         )
     }
 
-    async fn handle(&self, event: KnowledgeEvent) -> std::result::Result<HandleResult, HandleError> {
+    async fn handle(
+        &self,
+        event: KnowledgeEvent,
+    ) -> std::result::Result<HandleResult, HandleError> {
         let start = Instant::now();
         match &event {
             KnowledgeEvent::EmbeddingGenerated(e) => {
@@ -420,7 +492,20 @@ impl Handler<KnowledgeEvent> for EmbeddingEventHandler {
                     start.elapsed().as_micros(),
                 ))
             }
-            _ => Err(HandleError::TypeMismatch),
+            KnowledgeEvent::DocumentIngested(_)
+            | KnowledgeEvent::DocumentParsed(_)
+            | KnowledgeEvent::DocumentIndexed(_)
+            | KnowledgeEvent::DocumentDeleted(_)
+            | KnowledgeEvent::NodeCreated(_)
+            | KnowledgeEvent::NodeUpdated(_)
+            | KnowledgeEvent::NodeDeleted(_)
+            | KnowledgeEvent::NodeLinked(_)
+            | KnowledgeEvent::EdgeCreated(_)
+            | KnowledgeEvent::EdgeDeleted(_)
+            | KnowledgeEvent::SearchPerformed(_)
+            | KnowledgeEvent::QueryExecuted(_)
+            | KnowledgeEvent::UserAction(_)
+            | KnowledgeEvent::SystemHealthCheck(_) => Err(HandleError::TypeMismatch),
         }
     }
 }
@@ -558,8 +643,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::types::*;
+    use super::*;
     use crate::model::SourceType;
 
     #[tokio::test]
@@ -569,30 +654,51 @@ mod tests {
         assert!(handler.accepts(&KnowledgeEvent::DocumentIngested(
             DocumentIngestedEvent::new("d", "/", 0, "", "", "s")
         )));
-        assert!(handler.accepts(&KnowledgeEvent::DocumentParsed(
-            DocumentParsedEvent::new("d", 0, 0, 0, "s")
-        )));
-        assert!(handler.accepts(&KnowledgeEvent::DocumentDeleted(
-            DocumentDeletedEvent::new("d", 0, 0, 0, "s")
-        )));
-        assert!(!handler.accepts(&KnowledgeEvent::NodeCreated(
-            NodeCreatedEvent::new("n", NodeType::Token, None::<String>, "s")
-        )));
+        assert!(
+            handler.accepts(&KnowledgeEvent::DocumentParsed(DocumentParsedEvent::new(
+                "d", 0, 0, 0, "s"
+            )))
+        );
+        assert!(
+            handler.accepts(&KnowledgeEvent::DocumentDeleted(DocumentDeletedEvent::new(
+                "d", 0, 0, 0, "s"
+            )))
+        );
+        assert!(
+            !handler.accepts(&KnowledgeEvent::NodeCreated(NodeCreatedEvent::new(
+                "n",
+                NodeType::Token,
+                None::<String>,
+                "s"
+            )))
+        );
     }
 
     #[tokio::test]
     async fn test_node_handler_accepts_node_events() {
         let handler = NodeEventHandler::new();
 
-        assert!(handler.accepts(&KnowledgeEvent::NodeCreated(
-            NodeCreatedEvent::new("n", NodeType::Token, None::<String>, "s")
-        )));
-        assert!(handler.accepts(&KnowledgeEvent::NodeLinked(
-            NodeLinkedEvent::new("a", "b", crate::model::RefType::Usage, "s")
-        )));
-        assert!(!handler.accepts(&KnowledgeEvent::SearchPerformed(
-            SearchPerformedEvent::new("q", 0, 0, "s")
-        )));
+        assert!(
+            handler.accepts(&KnowledgeEvent::NodeCreated(NodeCreatedEvent::new(
+                "n",
+                NodeType::Token,
+                None::<String>,
+                "s"
+            )))
+        );
+        assert!(
+            handler.accepts(&KnowledgeEvent::NodeLinked(NodeLinkedEvent::new(
+                "a",
+                "b",
+                crate::model::RefType::Usage,
+                "s"
+            )))
+        );
+        assert!(
+            !handler.accepts(&KnowledgeEvent::SearchPerformed(SearchPerformedEvent::new(
+                "q", 0, 0, "s"
+            )))
+        );
     }
 
     #[tokio::test]
@@ -615,10 +721,18 @@ mod tests {
         let handler = EmbeddingEventHandler::new();
 
         let gen_event = KnowledgeEvent::EmbeddingGenerated(EmbeddingGeneratedEvent::new(
-            "entity-1", "Block", 1536, "model-001", 50, "svc",
+            "entity-1",
+            "Block",
+            1536,
+            "model-001",
+            50,
+            "svc",
         ));
         let cache_event = KnowledgeEvent::EmbeddingCached(EmbeddingCachedEvent::new(
-            "entity-1", "Block", "cache-key-001", "svc",
+            "entity-1",
+            "Block",
+            "cache-key-001",
+            "svc",
         ));
 
         assert!(handler.handle(gen_event).await.success);
@@ -630,7 +744,10 @@ mod tests {
         assert_eq!(DocumentEventHandler::new().name(), "document-event-handler");
         assert_eq!(NodeEventHandler::new().name(), "node-event-handler");
         assert_eq!(SearchEventHandler::new().name(), "search-event-handler");
-        assert_eq!(EmbeddingEventHandler::new().name(), "embedding-event-handler");
+        assert_eq!(
+            EmbeddingEventHandler::new().name(),
+            "embedding-event-handler"
+        );
     }
 
     #[tokio::test]

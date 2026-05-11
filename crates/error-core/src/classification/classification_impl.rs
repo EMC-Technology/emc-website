@@ -1,10 +1,10 @@
 //! Error classification system
-//! 
+//!
 //! This module defines the core enums for error classification, including error source,
 //! severity level, impact scope, and recoverability.
 
-use std::str::FromStr;
 use std::fmt;
+use std::str::FromStr;
 
 /// 无效的错误来源解析错误
 #[derive(Debug, Clone, thiserror::Error)]
@@ -28,7 +28,7 @@ pub struct InvalidRecoverability(String);
 // proptest 导入位于 #[cfg(test)] mod tests 块内
 
 /// Error source classification
-/// 
+///
 /// Represents the origin of an error, such as user input, AI model, file system, etc.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -121,7 +121,7 @@ impl fmt::Display for ErrorSource {
 }
 
 /// Severity level classification
-/// 
+///
 /// Represents the severity of an error, from critical to info.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -170,7 +170,7 @@ impl fmt::Display for Severity {
 }
 
 /// Impact scope classification
-/// 
+///
 /// Represents the scope of impact of an error, from global to module-level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -219,7 +219,7 @@ impl fmt::Display for ImpactScope {
 }
 
 /// Recoverability classification
-/// 
+///
 /// Represents the recoverability of an error, from auto-recoverable to non-recoverable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -292,7 +292,8 @@ impl Arbitrary for ErrorSource {
             Just(Self::SYS),
             Just(Self::INT),
             Just(Self::UNK),
-        ].boxed()
+        ]
+        .boxed()
     }
 }
 
@@ -307,7 +308,8 @@ impl Arbitrary for Severity {
             Just(Self::ERROR),
             Just(Self::WARNING),
             Just(Self::INFO),
-        ].boxed()
+        ]
+        .boxed()
     }
 }
 
@@ -322,7 +324,8 @@ impl Arbitrary for ImpactScope {
             Just(Self::SESSION),
             Just(Self::MODULE),
             Just(Self::OPERATION),
-        ].boxed()
+        ]
+        .boxed()
     }
 }
 
@@ -337,7 +340,8 @@ impl Arbitrary for Recoverability {
             Just(Self::SemiAuto),
             Just(Self::ManualIntervention),
             Just(Self::NonRecoverable),
-        ].boxed()
+        ]
+        .boxed()
     }
 }
 
@@ -446,10 +450,22 @@ mod tests {
 
     #[test]
     fn test_recoverability_from_str() {
-        assert_eq!(Recoverability::from_str("AUTO").unwrap(), Recoverability::AutoRecoverable);
-        assert_eq!(Recoverability::from_str("SEMI").unwrap(), Recoverability::SemiAuto);
-        assert_eq!(Recoverability::from_str("MANUAL").unwrap(), Recoverability::ManualIntervention);
-        assert_eq!(Recoverability::from_str("NON").unwrap(), Recoverability::NonRecoverable);
+        assert_eq!(
+            Recoverability::from_str("AUTO").unwrap(),
+            Recoverability::AutoRecoverable
+        );
+        assert_eq!(
+            Recoverability::from_str("SEMI").unwrap(),
+            Recoverability::SemiAuto
+        );
+        assert_eq!(
+            Recoverability::from_str("MANUAL").unwrap(),
+            Recoverability::ManualIntervention
+        );
+        assert_eq!(
+            Recoverability::from_str("NON").unwrap(),
+            Recoverability::NonRecoverable
+        );
         assert!(Recoverability::from_str("INVALID").is_err());
     }
 

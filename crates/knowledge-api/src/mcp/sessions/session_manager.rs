@@ -108,7 +108,7 @@ pub struct ToolCallRecord {
 }
 
 /// 会话状态
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum SessionState {
     /// 活跃状态 —— 会话正在进行中，有活跃的交互
     #[default]
@@ -119,6 +119,32 @@ pub enum SessionState {
     Expired,
     /// 已关闭 —— 用户或系统主动终止
     Closed,
+}
+
+impl SessionState {
+    /// 验证状态转换是否合法
+    ///
+    /// 合法转换路径：
+    /// - `Active` → `Idle` | `Closed`
+    /// - `Idle` → `Active` | `Expired` | `Closed`
+    /// - `Expired` → `Closed`
+    ///
+    /// `Closed` 为终态，无出边。
+    #[must_use]
+    pub fn can_transition_to(&self, target: &Self) -> bool {
+        matches!(
+            (self, target),
+            (Self::Active, Self::Idle | Self::Closed)
+                | (Self::Idle, Self::Active | Self::Expired | Self::Closed)
+                | (Self::Expired, Self::Closed)
+        )
+    }
+
+    /// 是否为终态
+    #[must_use]
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, Self::Closed)
+    }
 }
 
 /// 会话元数据
@@ -495,8 +521,22 @@ impl SessionManager {
                 .get_mut(&session_id)
                 .ok_or_else(|| helpers::not_found("会话", &session_id.to_string()))?;
 
+            let old_state = session.state;
+            if !old_state.can_transition_to(&SessionState::Closed) {
+                return Err(helpers::validation_error(
+                    &format!("无法从 {old_state:?} 状态关闭会话"),
+                    "close_session",
+                ));
+            }
             session.state = SessionState::Closed;
             session.updated_at = Utc::now();
+            tracing::info!(
+                session_id = %session_id,
+                old_state = ?old_state,
+                new_state = ?SessionState::Closed,
+                triggered_by = "close_session",
+                "Axiom-2: 会话状态变更已记录"
+            );
         }
 
         self.persist_session(session_id).await?;
@@ -523,8 +563,8 @@ impl SessionManager {
     #[must_use = "清理结果必须被使用"]
     pub async fn cleanup_expired(&self) -> Result<usize, ErrorObject> {
         let now = Utc::now();
-        let idle_threshold =
-            now - chrono::Duration::from_std(self.config.idle_timeout)
+        let idle_threshold = now
+            - chrono::Duration::from_std(self.config.idle_timeout)
                 .map_err(|e| helpers::config_error(&format!("idle_timeout 配置值无效: {e}")))?;
 
         let expired_ids: Vec<Uuid> = self
@@ -561,8 +601,20 @@ impl SessionManager {
     #[must_use = "会话更新结果必须被使用"]
     pub fn touch_session(&self, session_id: Uuid) -> Result<(), ErrorObject> {
         if let Some(mut session) = self.active_sessions.get_mut(&session_id) {
+            let old_state = session.state;
             session.updated_at = Utc::now();
-            session.state = SessionState::Active;
+            if old_state.can_transition_to(&SessionState::Active) {
+                session.state = SessionState::Active;
+            }
+            if old_state != session.state {
+                tracing::info!(
+                    session_id = %session_id,
+                    old_state = ?old_state,
+                    new_state = ?session.state,
+                    triggered_by = "touch_session",
+                    "Axiom-2: 会话状态变更已记录"
+                );
+            }
         }
         Ok(())
     }

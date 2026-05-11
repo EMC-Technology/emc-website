@@ -1,9 +1,10 @@
 //! Error capture module formal verification tests using Kani
+#![cfg(kani)]
 
-use error_core::error_capture::*;
 use error_core::classification::*;
-use std::collections::HashMap;
+use error_core::error_capture::*;
 use serde_json::json;
+use std::collections::HashMap;
 
 // Define a test error type
 #[derive(Debug, thiserror::Error)]
@@ -16,7 +17,7 @@ fn test_frontend_error_capture() {
     let capture = FrontendErrorCapture::new("user_dashboard");
     let error = TestError;
     let captured = capture.capture_error(&error);
-    
+
     assert_eq!(captured.code(), "ERR-USR-UI-001_ERR_O");
     assert_eq!(captured.source(), ErrorSource::USR);
     assert_eq!(captured.severity(), Severity::ERROR);
@@ -31,11 +32,11 @@ fn test_frontend_error_capture_add_context() {
     let capture = FrontendErrorCapture::new("user_dashboard");
     let error = TestError;
     let mut captured = capture.capture_error(&error);
-    
+
     let mut context = HashMap::new();
     context.insert("component".to_string(), json!("login_form"));
     capture.add_context(&mut captured, context);
-    
+
     assert_eq!(captured.context_chain().len(), 1);
     assert_eq!(captured.context_chain()[0].source(), "user_dashboard");
 }
@@ -46,7 +47,7 @@ fn test_gateway_error_capture() {
     let capture = GatewayErrorCapture::new("auth_service", "login");
     let error = TestError;
     let captured = capture.capture_error(&error);
-    
+
     assert_eq!(captured.code(), "ERR-NET-GW-001_ERR_S");
     assert_eq!(captured.source(), ErrorSource::NET);
     assert_eq!(captured.severity(), Severity::ERROR);
@@ -61,11 +62,11 @@ fn test_gateway_error_capture_add_context() {
     let capture = GatewayErrorCapture::new("auth_service", "login");
     let error = TestError;
     let mut captured = capture.capture_error(&error);
-    
+
     let mut context = HashMap::new();
     context.insert("request_id".to_string(), json!("req_123"));
     capture.add_context(&mut captured, context);
-    
+
     assert_eq!(captured.context_chain().len(), 1);
     assert_eq!(captured.context_chain()[0].source(), "auth_service");
 }
@@ -76,7 +77,7 @@ fn test_business_error_capture() {
     let capture = BusinessErrorCapture::new("order_service", "process_payment");
     let error = TestError;
     let captured = capture.capture_error(&error);
-    
+
     assert_eq!(captured.code(), "ERR-INT-BL-001_ERR_M");
     assert_eq!(captured.source(), ErrorSource::INT);
     assert_eq!(captured.severity(), Severity::ERROR);
@@ -91,11 +92,11 @@ fn test_business_error_capture_add_context() {
     let capture = BusinessErrorCapture::new("order_service", "process_payment");
     let error = TestError;
     let mut captured = capture.capture_error(&error);
-    
+
     let mut context = HashMap::new();
     context.insert("order_id".to_string(), json!("ord_456"));
     capture.add_context(&mut captured, context);
-    
+
     assert_eq!(captured.context_chain().len(), 1);
     assert_eq!(captured.context_chain()[0].source(), "order_service");
 }
@@ -106,7 +107,7 @@ fn test_infrastructure_error_capture() {
     let capture = InfrastructureErrorCapture::new("database", "connection");
     let error = TestError;
     let captured = capture.capture_error(&error);
-    
+
     assert_eq!(captured.code(), "ERR-SYS-IF-001_ERR_G");
     assert_eq!(captured.source(), ErrorSource::SYS);
     assert_eq!(captured.severity(), Severity::ERROR);
@@ -121,11 +122,11 @@ fn test_infrastructure_error_capture_add_context() {
     let capture = InfrastructureErrorCapture::new("database", "connection");
     let error = TestError;
     let mut captured = capture.capture_error(&error);
-    
+
     let mut context = HashMap::new();
     context.insert("db_instance".to_string(), json!("prod_db"));
     capture.add_context(&mut captured, context);
-    
+
     assert_eq!(captured.context_chain().len(), 1);
     assert_eq!(captured.context_chain()[0].source(), "database");
 }
@@ -136,11 +137,11 @@ fn test_error_propagation_append_context() {
     let capture = BusinessErrorCapture::new("user_service", "create_user");
     let error = TestError;
     let captured = capture.capture_error(&error);
-    
+
     let mut context = HashMap::new();
     context.insert("user_id".to_string(), json!("12345"));
     let propagated = ErrorPropagation::append_context(captured, "api_gateway", context);
-    
+
     assert_eq!(propagated.context_chain().len(), 1);
     assert_eq!(propagated.context_chain()[0].source(), "api_gateway");
 }
@@ -151,11 +152,11 @@ fn test_error_propagation_wrap_error() {
     let inner_capture = InfrastructureErrorCapture::new("database", "connection");
     let inner_error = TestError;
     let inner_captured = inner_capture.capture_error(&inner_error);
-    
+
     let outer_capture = BusinessErrorCapture::new("order_service", "process_payment");
     let outer_error = TestError;
     let outer_captured = outer_capture.capture_error(&outer_error);
-    
+
     let wrapped = ErrorPropagation::wrap_error(outer_captured, inner_captured);
     assert!(wrapped.cause().is_some());
     assert_eq!(wrapped.cause().unwrap().code(), "ERR-SYS-IF-001_ERR_G");
@@ -167,7 +168,7 @@ fn test_error_propagation_strip_internal_details() {
     let capture = BusinessErrorCapture::new("user_service", "create_user");
     let error = TestError;
     let mut captured = capture.capture_error(&error);
-    
+
     // This should not panic
     ErrorPropagation::strip_internal_details(&mut captured);
     // Verify the error still has its basic properties

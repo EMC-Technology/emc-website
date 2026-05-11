@@ -1,19 +1,19 @@
 //! `Error` object core data model
-//! 
+//!
 //! This module defines the `ErrorObject` struct, which is the core data model for error handling.
 //! It includes fields for error identification, classification, content, context, causality, and recovery.
 
+use crate::classification::{ErrorSource, ImpactScope, Recoverability, Severity};
+use crate::error_code::registry;
+use crate::propagation::{ContextFrame, RecoveryHint, RetryConfig};
+#[cfg(feature = "chrono")]
+use chrono::{DateTime, Utc};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::marker::PhantomData;
 #[cfg(feature = "uuid")]
 use uuid::Uuid;
-#[cfg(feature = "chrono")]
-use chrono::{DateTime, Utc};
-#[cfg(feature = "serde")]
-use serde::{Serialize, Deserialize};
-use crate::classification::{ErrorSource, Severity, ImpactScope, Recoverability};
-use crate::propagation::{ContextFrame, RecoveryHint, RetryConfig};
-use crate::error_code::registry;
 
 /// 类型状态标记模块
 ///
@@ -28,36 +28,75 @@ pub mod state {
 }
 
 /// Error object core data model
-/// 
+///
 /// Represents a comprehensive error with all necessary information for error handling, logging, and recovery.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ErrorObject {
     code: String,
     #[cfg(feature = "uuid")]
     error_id: Uuid,
-    
+
     source: ErrorSource,
     severity: Severity,
     impact_scope: ImpactScope,
     recoverability: Recoverability,
-    
+
     message: String,
     user_message: String,
     details: HashMap<String, serde_json::Value>,
-    
+
     #[cfg(feature = "chrono")]
     timestamp: DateTime<Utc>,
     session_id: Option<String>,
     request_id: Option<String>,
     module_path: String,
     operation: String,
-    
+
     cause: Option<Box<Self>>,
     context_chain: Vec<ContextFrame>,
-    
+
     recovery_hints: Vec<RecoveryHint>,
     retry_config: Option<RetryConfig>,
+}
+
+impl PartialEq for ErrorObject {
+    fn eq(&self, other: &Self) -> bool {
+        self.code == other.code
+            && self.source == other.source
+            && self.severity == other.severity
+            && self.impact_scope == other.impact_scope
+            && self.recoverability == other.recoverability
+            && self.message == other.message
+            && self.user_message == other.user_message
+            && self.details == other.details
+            && self.session_id == other.session_id
+            && self.request_id == other.request_id
+            && self.module_path == other.module_path
+            && self.operation == other.operation
+            && self.cause == other.cause
+            && self.context_chain == other.context_chain
+            && self.recovery_hints == other.recovery_hints
+            && self.retry_config == other.retry_config
+    }
+}
+
+impl Eq for ErrorObject {}
+
+impl std::hash::Hash for ErrorObject {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.code.hash(state);
+        self.source.hash(state);
+        self.severity.hash(state);
+        self.impact_scope.hash(state);
+        self.recoverability.hash(state);
+        self.message.hash(state);
+        self.user_message.hash(state);
+        self.module_path.hash(state);
+        self.operation.hash(state);
+        self.session_id.hash(state);
+        self.request_id.hash(state);
+    }
 }
 
 impl std::fmt::Display for ErrorObject {
@@ -72,7 +111,9 @@ impl std::fmt::Display for ErrorObject {
 
 impl std::error::Error for ErrorObject {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        self.cause.as_ref().map(|e| e.as_ref() as &dyn std::error::Error)
+        self.cause
+            .as_ref()
+            .map(|e| e.as_ref() as &dyn std::error::Error)
     }
 }
 
@@ -87,7 +128,7 @@ impl ErrorObject {
     pub fn builder() -> ErrorObjectBuilder {
         ErrorObjectBuilder::new()
     }
-    
+
     /// Convenience method to create an `ErrorObject` with minimal required fields
     ///
     /// Generates a fully compliant error code following the format:
@@ -102,21 +143,41 @@ impl ErrorObject {
         note = "请使用 error_core::helpers 中的统一构造函数，确保错误码受注册表管控"
     )]
     #[must_use]
-    pub fn from_source(
-        source: ErrorSource,
-        module: &str,
-        operation: &str,
-        message: &str,
-    ) -> Self {
+    pub fn from_source(source: ErrorSource, module: &str, operation: &str, message: &str) -> Self {
         let severity = match source {
             ErrorSource::SEC => Severity::CRITICAL,
-            _ => Severity::ERROR,
+            ErrorSource::USR
+            | ErrorSource::AIM
+            | ErrorSource::FS
+            | ErrorSource::NET
+            | ErrorSource::CFG
+            | ErrorSource::TOOL
+            | ErrorSource::SESS
+            | ErrorSource::STATE
+            | ErrorSource::EXT
+            | ErrorSource::LSP
+            | ErrorSource::MCP
+            | ErrorSource::SYS
+            | ErrorSource::INT
+            | ErrorSource::UNK => Severity::ERROR,
         };
         let impact_scope = ImpactScope::OPERATION;
         let recoverability = match source {
             ErrorSource::NET => Recoverability::AutoRecoverable,
             ErrorSource::FS => Recoverability::SemiAuto,
-            _ => Recoverability::NonRecoverable,
+            ErrorSource::USR
+            | ErrorSource::AIM
+            | ErrorSource::CFG
+            | ErrorSource::SEC
+            | ErrorSource::TOOL
+            | ErrorSource::SESS
+            | ErrorSource::STATE
+            | ErrorSource::EXT
+            | ErrorSource::LSP
+            | ErrorSource::MCP
+            | ErrorSource::SYS
+            | ErrorSource::INT
+            | ErrorSource::UNK => Recoverability::NonRecoverable,
         };
         let module_short: String = module.chars().take(5).collect();
         let code = format!(
@@ -131,7 +192,18 @@ impl ErrorObject {
             ErrorSource::NET => "网络服务暂时不可用，请稍后重试",
             ErrorSource::FS => "文件操作失败，请稍后重试",
             ErrorSource::SEC => "安全操作失败",
-            _ => "操作失败，请稍后重试",
+            ErrorSource::USR => "输入有误，请检查后重试",
+            ErrorSource::AIM => "AI 模型调用失败，请稍后重试",
+            ErrorSource::CFG => "配置错误，请联系管理员",
+            ErrorSource::TOOL => "工具执行失败，请稍后重试",
+            ErrorSource::SESS => "会话异常，请重新登录",
+            ErrorSource::STATE => "状态管理错误，请稍后重试",
+            ErrorSource::EXT => "扩展插件错误，请稍后重试",
+            ErrorSource::LSP => "语言服务错误，请稍后重试",
+            ErrorSource::MCP => "MCP 集成错误，请稍后重试",
+            ErrorSource::SYS => "系统资源不足，请稍后重试",
+            ErrorSource::INT => "内部逻辑错误，请联系管理员",
+            ErrorSource::UNK => "操作失败，请稍后重试",
         };
 
         Self {
@@ -157,7 +229,7 @@ impl ErrorObject {
             retry_config: None,
         }
     }
-    
+
     /// Wrap a `std::error::Error` as the cause of this `ErrorObject`
     ///
     /// Uses `io_error` as the default cause classification since most
@@ -170,7 +242,7 @@ impl ErrorObject {
         self.cause = Some(Box::new(cause_obj));
         self
     }
-    
+
     /// 获取 HTTP 状态码映射
     ///
     /// 基于错误码和严重级别进行映射，覆盖设计文档要求的所有状态码：
@@ -183,9 +255,7 @@ impl ErrorObject {
     /// - 503 Service Unavailable — 数据库/网络不可用
     #[must_use]
     pub fn http_status(&self) -> u16 {
-        if self.code == registry::NOT_FOUND
-            || self.code == registry::INVALID_RECORD_ID
-        {
+        if self.code == registry::NOT_FOUND || self.code == registry::INVALID_RECORD_ID {
             return 404;
         }
         if self.code == registry::UNSUPPORTED_FORMAT {
@@ -197,9 +267,7 @@ impl ErrorObject {
         if self.code == registry::VALIDATION_FAILED {
             return 400;
         }
-        if self.code == registry::AUTH_FAILED
-            || self.code == registry::TOKEN_INVALID
-        {
+        if self.code == registry::AUTH_FAILED || self.code == registry::TOKEN_INVALID {
             return 401;
         }
         if self.code == registry::DB_QUERY_FAILED
@@ -217,141 +285,161 @@ impl ErrorObject {
             Severity::ERROR => match self.source {
                 ErrorSource::USR => 400,
                 ErrorSource::SEC => 401,
-                _ => 500,
+                ErrorSource::AIM
+                | ErrorSource::FS
+                | ErrorSource::NET
+                | ErrorSource::CFG
+                | ErrorSource::TOOL
+                | ErrorSource::SESS
+                | ErrorSource::STATE
+                | ErrorSource::EXT
+                | ErrorSource::LSP
+                | ErrorSource::MCP
+                | ErrorSource::SYS
+                | ErrorSource::INT
+                | ErrorSource::UNK => 500,
             },
             Severity::WARNING => 400,
             Severity::INFO => 200,
         }
     }
-    
+
     /// Get the error code
     #[must_use]
     pub fn code(&self) -> &str {
         &self.code
     }
-    
+
     /// Get the error ID
     #[cfg(feature = "uuid")]
     #[must_use]
     pub const fn error_id(&self) -> &Uuid {
         &self.error_id
     }
-    
+
     /// Get the error source
     #[must_use]
     pub const fn source(&self) -> ErrorSource {
         self.source
     }
-    
+
     /// Get the severity level
     #[must_use]
     pub const fn severity(&self) -> Severity {
         self.severity
     }
-    
+
     /// Get the impact scope
     #[must_use]
     pub const fn impact_scope(&self) -> ImpactScope {
         self.impact_scope
     }
-    
+
     /// Get the recoverability
     #[must_use]
     pub const fn recoverability(&self) -> Recoverability {
         self.recoverability
     }
-    
+
     /// Get the error message
     #[must_use]
     pub fn message(&self) -> &str {
         &self.message
     }
-    
+
     /// Get the user-friendly message
     #[must_use]
     pub fn user_message(&self) -> &str {
         &self.user_message
     }
-    
+
     /// Get the details
     #[must_use]
     pub const fn details(&self) -> &HashMap<String, serde_json::Value> {
         &self.details
     }
-    
+
     /// Get the timestamp
     #[cfg(feature = "chrono")]
     #[must_use]
     pub const fn timestamp(&self) -> &DateTime<Utc> {
         &self.timestamp
     }
-    
+
     /// Get the session ID
     #[must_use]
     pub const fn session_id(&self) -> Option<&String> {
         self.session_id.as_ref()
     }
-    
+
     /// Get the request ID
     #[must_use]
     pub const fn request_id(&self) -> Option<&String> {
         self.request_id.as_ref()
     }
-    
+
     /// Get the module path
     #[must_use]
     pub fn module_path(&self) -> &str {
         &self.module_path
     }
-    
+
     /// Get the operation
     #[must_use]
     pub fn operation(&self) -> &str {
         &self.operation
     }
-    
+
     /// Get the cause
     #[must_use]
     pub fn cause(&self) -> Option<&Self> {
         self.cause.as_deref()
     }
-    
+
     /// Get the context chain
     #[must_use]
     pub const fn context_chain(&self) -> &Vec<ContextFrame> {
         &self.context_chain
     }
-    
+
     /// Get the recovery hints
     #[must_use]
     pub const fn recovery_hints(&self) -> &Vec<RecoveryHint> {
         &self.recovery_hints
     }
-    
+
     /// Get the retry config
     #[must_use]
     pub const fn retry_config(&self) -> Option<&RetryConfig> {
         self.retry_config.as_ref()
     }
-    
-    /// Add a context frame to the error object
-    pub fn add_context_frame(&mut self, frame: ContextFrame) {
+
+    /// 追加上下文帧，返回新的 ErrorObject（Axiom-1: 业务事实不变性）
+    #[must_use]
+    pub fn with_context_frame(mut self, frame: ContextFrame) -> Self {
         self.context_chain.push(frame);
+        self
     }
-    
-    /// Set the cause of the error
-    pub fn set_cause(&mut self, cause: Self) {
+
+    /// 设置因果链，返回新的 ErrorObject（Axiom-1: 业务事实不变性）
+    #[must_use]
+    pub fn with_cause(mut self, cause: Self) -> Self {
         self.cause = Some(Box::new(cause));
+        self
     }
 
-    /// Clear all details (for stripping internal information before external exposure)
-    pub fn clear_details(&mut self) {
+    /// 脱敏处理：移除所有详情字段，返回新的 ErrorObject（AP-B03/AP-B12: 避免原地破坏性修改）
+    #[must_use]
+    pub fn sanitize_details(mut self) -> Self {
         self.details.clear();
+        self
     }
 
-    /// Clear the context chain (for stripping internal information before external exposure)
-    pub fn clear_context_chain(&mut self) {
+    /// 脱敏处理：移除上下文链，返回新的 ErrorObject（AP-B03/AP-B12: 避免原地破坏性修改）
+    #[must_use]
+    pub fn sanitize_context_chain(mut self) -> Self {
         self.context_chain.clear();
+        self
     }
 }
 
@@ -441,7 +529,10 @@ impl<C, S, Se, I, R, M, U, Mo, O> ErrorObjectBuilder<C, S, Se, I, R, M, U, Mo, O
     #[must_use]
     pub fn code(self, code: &str) -> ErrorObjectBuilder<state::Present, S, Se, I, R, M, U, Mo, O> {
         ErrorObjectBuilder {
-            data: BuilderData { code: Some(code.to_string()), ..self.data },
+            data: BuilderData {
+                code: Some(code.to_string()),
+                ..self.data
+            },
             _marker: PhantomData,
         }
     }
@@ -454,49 +545,85 @@ impl<C, S, Se, I, R, M, U, Mo, O> ErrorObjectBuilder<C, S, Se, I, R, M, U, Mo, O
     }
 
     #[must_use]
-    pub fn source(self, source: ErrorSource) -> ErrorObjectBuilder<C, state::Present, Se, I, R, M, U, Mo, O> {
+    pub fn source(
+        self,
+        source: ErrorSource,
+    ) -> ErrorObjectBuilder<C, state::Present, Se, I, R, M, U, Mo, O> {
         ErrorObjectBuilder {
-            data: BuilderData { source: Some(source), ..self.data },
+            data: BuilderData {
+                source: Some(source),
+                ..self.data
+            },
             _marker: PhantomData,
         }
     }
 
     #[must_use]
-    pub fn severity(self, severity: Severity) -> ErrorObjectBuilder<C, S, state::Present, I, R, M, U, Mo, O> {
+    pub fn severity(
+        self,
+        severity: Severity,
+    ) -> ErrorObjectBuilder<C, S, state::Present, I, R, M, U, Mo, O> {
         ErrorObjectBuilder {
-            data: BuilderData { severity: Some(severity), ..self.data },
+            data: BuilderData {
+                severity: Some(severity),
+                ..self.data
+            },
             _marker: PhantomData,
         }
     }
 
     #[must_use]
-    pub fn impact_scope(self, impact_scope: ImpactScope) -> ErrorObjectBuilder<C, S, Se, state::Present, R, M, U, Mo, O> {
+    pub fn impact_scope(
+        self,
+        impact_scope: ImpactScope,
+    ) -> ErrorObjectBuilder<C, S, Se, state::Present, R, M, U, Mo, O> {
         ErrorObjectBuilder {
-            data: BuilderData { impact_scope: Some(impact_scope), ..self.data },
+            data: BuilderData {
+                impact_scope: Some(impact_scope),
+                ..self.data
+            },
             _marker: PhantomData,
         }
     }
 
     #[must_use]
-    pub fn recoverability(self, recoverability: Recoverability) -> ErrorObjectBuilder<C, S, Se, I, state::Present, M, U, Mo, O> {
+    pub fn recoverability(
+        self,
+        recoverability: Recoverability,
+    ) -> ErrorObjectBuilder<C, S, Se, I, state::Present, M, U, Mo, O> {
         ErrorObjectBuilder {
-            data: BuilderData { recoverability: Some(recoverability), ..self.data },
+            data: BuilderData {
+                recoverability: Some(recoverability),
+                ..self.data
+            },
             _marker: PhantomData,
         }
     }
 
     #[must_use]
-    pub fn message(self, message: &str) -> ErrorObjectBuilder<C, S, Se, I, R, state::Present, U, Mo, O> {
+    pub fn message(
+        self,
+        message: &str,
+    ) -> ErrorObjectBuilder<C, S, Se, I, R, state::Present, U, Mo, O> {
         ErrorObjectBuilder {
-            data: BuilderData { message: Some(message.to_string()), ..self.data },
+            data: BuilderData {
+                message: Some(message.to_string()),
+                ..self.data
+            },
             _marker: PhantomData,
         }
     }
 
     #[must_use]
-    pub fn user_message(self, user_message: &str) -> ErrorObjectBuilder<C, S, Se, I, R, M, state::Present, Mo, O> {
+    pub fn user_message(
+        self,
+        user_message: &str,
+    ) -> ErrorObjectBuilder<C, S, Se, I, R, M, state::Present, Mo, O> {
         ErrorObjectBuilder {
-            data: BuilderData { user_message: Some(user_message.to_string()), ..self.data },
+            data: BuilderData {
+                user_message: Some(user_message.to_string()),
+                ..self.data
+            },
             _marker: PhantomData,
         }
     }
@@ -527,17 +654,29 @@ impl<C, S, Se, I, R, M, U, Mo, O> ErrorObjectBuilder<C, S, Se, I, R, M, U, Mo, O
     }
 
     #[must_use]
-    pub fn module_path(self, module_path: &str) -> ErrorObjectBuilder<C, S, Se, I, R, M, U, state::Present, O> {
+    pub fn module_path(
+        self,
+        module_path: &str,
+    ) -> ErrorObjectBuilder<C, S, Se, I, R, M, U, state::Present, O> {
         ErrorObjectBuilder {
-            data: BuilderData { module_path: Some(module_path.to_string()), ..self.data },
+            data: BuilderData {
+                module_path: Some(module_path.to_string()),
+                ..self.data
+            },
             _marker: PhantomData,
         }
     }
 
     #[must_use]
-    pub fn operation(self, operation: &str) -> ErrorObjectBuilder<C, S, Se, I, R, M, U, Mo, state::Present> {
+    pub fn operation(
+        self,
+        operation: &str,
+    ) -> ErrorObjectBuilder<C, S, Se, I, R, M, U, Mo, state::Present> {
         ErrorObjectBuilder {
-            data: BuilderData { operation: Some(operation.to_string()), ..self.data },
+            data: BuilderData {
+                operation: Some(operation.to_string()),
+                ..self.data
+            },
             _marker: PhantomData,
         }
     }
@@ -567,46 +706,57 @@ impl<C, S, Se, I, R, M, U, Mo, O> ErrorObjectBuilder<C, S, Se, I, R, M, U, Mo, O
     }
 
     /// Build the `ErrorObject`, returning a `Result` that validates all required fields.
-    /// 
+    ///
     /// # Errors
-    /// 
+    ///
     /// Returns an error if any required field is not set.
     pub fn build_checked(self) -> crate::Result<ErrorObject> {
-        let code = self.data.code.ok_or_else(|| {
-            crate::error_code::ec_error("Error code is required")
-        })?;
+        let code = self
+            .data
+            .code
+            .ok_or_else(|| crate::error_code::ec_error("Error code is required"))?;
         #[cfg(feature = "uuid")]
-        let error_id = self.data.error_id.ok_or_else(|| {
-            crate::error_code::ec_error("Error ID is required")
-        })?;
-        let source = self.data.source.ok_or_else(|| {
-            crate::error_code::ec_error("Error source is required")
-        })?;
-        let severity = self.data.severity.ok_or_else(|| {
-            crate::error_code::ec_error("Severity is required")
-        })?;
-        let impact_scope = self.data.impact_scope.ok_or_else(|| {
-            crate::error_code::ec_error("Impact scope is required")
-        })?;
-        let recoverability = self.data.recoverability.ok_or_else(|| {
-            crate::error_code::ec_error("Recoverability is required")
-        })?;
-        let message = self.data.message.ok_or_else(|| {
-            crate::error_code::ec_error("Error message is required")
-        })?;
-        let user_message = self.data.user_message.ok_or_else(|| {
-            crate::error_code::ec_error("User message is required")
-        })?;
+        let error_id = self
+            .data
+            .error_id
+            .ok_or_else(|| crate::error_code::ec_error("Error ID is required"))?;
+        let source = self
+            .data
+            .source
+            .ok_or_else(|| crate::error_code::ec_error("Error source is required"))?;
+        let severity = self
+            .data
+            .severity
+            .ok_or_else(|| crate::error_code::ec_error("Severity is required"))?;
+        let impact_scope = self
+            .data
+            .impact_scope
+            .ok_or_else(|| crate::error_code::ec_error("Impact scope is required"))?;
+        let recoverability = self
+            .data
+            .recoverability
+            .ok_or_else(|| crate::error_code::ec_error("Recoverability is required"))?;
+        let message = self
+            .data
+            .message
+            .ok_or_else(|| crate::error_code::ec_error("Error message is required"))?;
+        let user_message = self
+            .data
+            .user_message
+            .ok_or_else(|| crate::error_code::ec_error("User message is required"))?;
         #[cfg(feature = "chrono")]
-        let timestamp = self.data.timestamp.ok_or_else(|| {
-            crate::error_code::ec_error("Timestamp is required")
-        })?;
-        let module_path = self.data.module_path.ok_or_else(|| {
-            crate::error_code::ec_error("Module path is required")
-        })?;
-        let operation = self.data.operation.ok_or_else(|| {
-            crate::error_code::ec_error("Operation is required")
-        })?;
+        let timestamp = self
+            .data
+            .timestamp
+            .ok_or_else(|| crate::error_code::ec_error("Timestamp is required"))?;
+        let module_path = self
+            .data
+            .module_path
+            .ok_or_else(|| crate::error_code::ec_error("Module path is required"))?;
+        let operation = self
+            .data
+            .operation
+            .ok_or_else(|| crate::error_code::ec_error("Operation is required"))?;
 
         Ok(ErrorObject {
             code,
@@ -634,32 +784,70 @@ impl<C, S, Se, I, R, M, U, Mo, O> ErrorObjectBuilder<C, S, Se, I, R, M, U, Mo, O
 }
 
 #[allow(missing_docs)]
-impl ErrorObjectBuilder<
-    state::Present, state::Present, state::Present, state::Present,
-    state::Present, state::Present, state::Present, state::Present,
-    state::Present,
-> {
+impl
+    ErrorObjectBuilder<
+        state::Present,
+        state::Present,
+        state::Present,
+        state::Present,
+        state::Present,
+        state::Present,
+        state::Present,
+        state::Present,
+        state::Present,
+    >
+{
     /// Build the `ErrorObject`. All type-state guaranteed fields must be set.
-    /// 
+    ///
     /// # Panics
-    /// 
+    ///
     /// Panics if any type-state guaranteed field is not set (should never happen when using the builder correctly).
     #[must_use]
     pub fn build(self) -> ErrorObject {
         ErrorObject {
             code: self.data.code.expect("type-state guarantee: code is set"),
             #[cfg(feature = "uuid")]
-            error_id: self.data.error_id.expect("type-state guarantee: error_id is set"),
-            source: self.data.source.expect("type-state guarantee: source is set"),
-            severity: self.data.severity.expect("type-state guarantee: severity is set"),
-            impact_scope: self.data.impact_scope.expect("type-state guarantee: impact_scope is set"),
-            recoverability: self.data.recoverability.expect("type-state guarantee: recoverability is set"),
-            message: self.data.message.expect("type-state guarantee: message is set"),
-            user_message: self.data.user_message.expect("type-state guarantee: user_message is set"),
+            error_id: self
+                .data
+                .error_id
+                .expect("type-state guarantee: error_id is set"),
+            source: self
+                .data
+                .source
+                .expect("type-state guarantee: source is set"),
+            severity: self
+                .data
+                .severity
+                .expect("type-state guarantee: severity is set"),
+            impact_scope: self
+                .data
+                .impact_scope
+                .expect("type-state guarantee: impact_scope is set"),
+            recoverability: self
+                .data
+                .recoverability
+                .expect("type-state guarantee: recoverability is set"),
+            message: self
+                .data
+                .message
+                .expect("type-state guarantee: message is set"),
+            user_message: self
+                .data
+                .user_message
+                .expect("type-state guarantee: user_message is set"),
             #[cfg(feature = "chrono")]
-            timestamp: self.data.timestamp.expect("type-state guarantee: timestamp is set"),
-            module_path: self.data.module_path.expect("type-state guarantee: module_path is set"),
-            operation: self.data.operation.expect("type-state guarantee: operation is set"),
+            timestamp: self
+                .data
+                .timestamp
+                .expect("type-state guarantee: timestamp is set"),
+            module_path: self
+                .data
+                .module_path
+                .expect("type-state guarantee: module_path is set"),
+            operation: self
+                .data
+                .operation
+                .expect("type-state guarantee: operation is set"),
             details: self.data.details,
             session_id: self.data.session_id,
             request_id: self.data.request_id,
@@ -674,7 +862,8 @@ impl ErrorObjectBuilder<
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+    use crate::propagation::RecoveryAction;
+
     #[test]
     fn test_error_object_build() {
         let error = ErrorObject::builder()
@@ -695,11 +884,14 @@ mod tests {
         assert_eq!(error.impact_scope(), ImpactScope::SESSION);
         assert_eq!(error.recoverability(), Recoverability::AutoRecoverable);
         assert_eq!(error.message(), "AI model call timed out");
-        assert_eq!(error.user_message(), "AI model service is temporarily unavailable");
+        assert_eq!(
+            error.user_message(),
+            "AI model service is temporarily unavailable"
+        );
         assert_eq!(error.module_path(), "ai_model::lm_manager");
         assert_eq!(error.operation(), "generate_code_completion");
     }
-    
+
     #[test]
     fn test_error_object_missing_required_fields() {
         // Test missing code
@@ -842,14 +1034,17 @@ mod tests {
             .module_path("ai_model::lm_manager")
             .operation("generate_code_completion")
             .build();
-        
+
         assert_eq!(error.code(), "ERR-AIM-LM-002_ERR_S");
         assert_eq!(error.source(), ErrorSource::AIM);
         assert_eq!(error.severity(), Severity::ERROR);
         assert_eq!(error.impact_scope(), ImpactScope::SESSION);
         assert_eq!(error.recoverability(), Recoverability::AutoRecoverable);
         assert_eq!(error.message(), "AI model call timed out");
-        assert_eq!(error.user_message(), "AI model service is temporarily unavailable");
+        assert_eq!(
+            error.user_message(),
+            "AI model service is temporarily unavailable"
+        );
         assert_eq!(error.module_path(), "ai_model::lm_manager");
         assert_eq!(error.operation(), "generate_code_completion");
         assert!(error.session_id().is_none());
@@ -862,7 +1057,7 @@ mod tests {
 
     #[test]
     fn test_error_object_add_context_frame() {
-        let mut error = ErrorObject::builder()
+        let error = ErrorObject::builder()
             .code("ERR-AIM-LM-002_ERR_S")
             .source(ErrorSource::AIM)
             .severity(Severity::ERROR)
@@ -873,10 +1068,10 @@ mod tests {
             .module_path("ai_model::lm_manager")
             .operation("generate_code_completion")
             .build();
-        
+
         let context_frame = ContextFrame::new("api_gateway", HashMap::new());
-        error.add_context_frame(context_frame);
-        
+        let error = error.with_context_frame(context_frame);
+
         assert_eq!(error.context_chain().len(), 1);
         assert_eq!(error.context_chain()[0].source(), "api_gateway");
     }
@@ -895,7 +1090,7 @@ mod tests {
             .operation("send_request")
             .build();
 
-        let mut error = ErrorObject::builder()
+        let error = ErrorObject::builder()
             .code("ERR-AIM-LM-002_ERR_S")
             .source(ErrorSource::AIM)
             .severity(Severity::ERROR)
@@ -906,8 +1101,8 @@ mod tests {
             .module_path("ai_model::lm_manager")
             .operation("generate_code_completion")
             .build();
-        
-        error.set_cause(cause);
+
+        let error = error.with_cause(cause);
         assert!(error.cause().is_some());
         assert_eq!(error.cause().unwrap().code(), "ERR-NET-API-001_ERR_S");
     }
@@ -931,12 +1126,16 @@ mod tests {
 
         assert_eq!(error.session_id().unwrap(), "session_123");
         assert_eq!(error.request_id().unwrap(), "request_456");
-        assert_eq!(error.details().get("model_name").unwrap(), &serde_json::json!("gpt-4"));
+        assert_eq!(
+            error.details().get("model_name").unwrap(),
+            &serde_json::json!("gpt-4")
+        );
     }
 
     #[test]
     fn test_error_object_builder_with_recovery_hints() {
-        let recovery_hint = RecoveryHint::new("Retry", "Retry the operation", HashMap::new());
+        let recovery_hint =
+            RecoveryHint::new(RecoveryAction::Retry, "Retry the operation", HashMap::new());
         let retry_config = RetryConfig::new(3, 1000, 10000, 2.0, true);
 
         let error = ErrorObject::builder()

@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use knowledge_core::model::SourceType;
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
 use tokio_stream::Stream;
@@ -55,7 +56,7 @@ pub struct SourceDocument {
     /// 文档标题
     pub title: String,
     /// 知识源类型标识
-    pub source_type: String,
+    pub source_type: SourceType,
     /// 文档原始内容
     pub content: Vec<u8>,
     /// 附加元数据
@@ -88,4 +89,54 @@ pub enum ChangeType {
     Modified,
     /// 删除文档
     Deleted,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_source_document_serialization() {
+        let doc = SourceDocument {
+            id: "doc1".to_string(),
+            title: "Test Doc".to_string(),
+            source_type: SourceType::Markdown,
+            content: b"hello".to_vec(),
+            metadata: serde_json::json!({"key": "value"}),
+            hash: "abc123".to_string(),
+            updated_at: Utc::now(),
+        };
+        let json = serde_json::to_string(&doc).unwrap();
+        let de: SourceDocument = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.id, "doc1");
+        assert_eq!(de.content, b"hello".to_vec());
+    }
+
+    #[test]
+    fn test_source_change_serialization() {
+        let change = SourceChange {
+            change_type: ChangeType::Modified,
+            document_id: "doc1".to_string(),
+            timestamp: Utc::now(),
+            metadata: serde_json::json!({}),
+        };
+        let json = serde_json::to_string(&change).unwrap();
+        let de: SourceChange = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.change_type, ChangeType::Modified);
+        assert_eq!(de.document_id, "doc1");
+    }
+
+    #[test]
+    fn test_change_type_serialization_roundtrip() {
+        let types = [
+            ChangeType::Created,
+            ChangeType::Modified,
+            ChangeType::Deleted,
+        ];
+        for t in &types {
+            let json = serde_json::to_string(t).unwrap();
+            let de: ChangeType = serde_json::from_str(&json).unwrap();
+            assert_eq!(*t, de);
+        }
+    }
 }

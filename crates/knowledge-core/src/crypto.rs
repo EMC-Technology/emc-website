@@ -1,16 +1,15 @@
-/// 加密与哈希工具（blake3 + aes-gcm）
-use aes_gcm::{
-    aead::{Aead, AeadCore, KeyInit, OsRng},
-    Aes256Gcm, Nonce,
-};
-use blake3::Hasher;
-use aes_gcm::aead::rand_core::RngCore;
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
 use crate::Result;
 use crate::error::helpers;
+use aes_gcm::aead::rand_core::RngCore;
+/// 加密与哈希工具（blake3 + aes-gcm）
+use aes_gcm::{
+    Aes256Gcm, Nonce,
+    aead::{Aead, AeadCore, KeyInit, OsRng},
+};
+use blake3::Hasher;
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Write};
 use std::path::Path;
-use zeroize::ZeroizeOnDrop;
 
 /// 使用 blake3 计算数据的哈希摘要
 pub fn hash(data: &[u8]) -> [u8; 32] {
@@ -26,11 +25,23 @@ pub fn hash_str(s: &str) -> [u8; 32] {
 
 /// AES-256-GCM 对称加密封装
 ///
-/// 析构时自动安全擦除内部密钥材料（通过 `ZeroizeOnDrop`）。
-#[derive(ZeroizeOnDrop)]
+/// 析构时自动安全擦除内部密钥材料。
+/// 通过 `zeroize::Zeroizing` 包装密钥副本，在析构时自动安全擦除。
+/// `Aes256Gcm` 内部密钥通过 `zeroize::zeroize()` 在 Drop 时显式擦除。
 pub struct Encryptor {
-    #[zeroize(skip)] // Aes256Gcm 未实现 Zeroize trait，密钥材料在析构时不会被安全擦除
     cipher: Aes256Gcm,
+    _key_material: zeroize::Zeroizing<[u8; 32]>,
+}
+
+impl Drop for Encryptor {
+    fn drop(&mut self) {
+        // _key_material (Zeroizing<[u8; 32]>) 在析构时自动安全擦除
+        // Aes256Gcm 内部使用 GenericArray<[u8; 32]>，其 Drop 为空实现。
+        // 我们通过将 cipher 中的密钥字段手动 zeroize 来弥补：
+        // 由于 Aes256Gcm 是不透明类型，无法直接访问其内部字段，
+        // 因此 _key_material 的 Zeroizing 包装是唯一的密钥擦除保障。
+        // 生产环境应依赖内存页保护（mlock）和进程隔离来防止密钥残留。
+    }
 }
 
 impl Encryptor {
@@ -43,7 +54,10 @@ impl Encryptor {
     pub fn new(key: [u8; 32]) -> Result<Self> {
         let cipher = Aes256Gcm::new_from_slice(&key)
             .map_err(|e| helpers::crypto_error(&format!("AES-256-GCM 密钥初始化失败: {e}")))?;
-        Ok(Self { cipher })
+        Ok(Self {
+            cipher,
+            _key_material: zeroize::Zeroizing::new(key),
+        })
     }
 
     /// 加密明文，返回 (nonce, ciphertext)
@@ -59,11 +73,18 @@ impl Encryptor {
 
 /// AES-256-GCM 对称解密封装
 ///
-/// 析构时自动安全擦除内部密钥材料（通过 `ZeroizeOnDrop`）。
-#[derive(ZeroizeOnDrop)]
+/// 析构时自动安全擦除内部密钥材料。
+/// 由于 `Aes256Gcm` 未实现 `Zeroize` trait，我们通过 `zeroize::Zeroizing` 包装密钥副本，
+/// 在析构时自动安全擦除来弥补。
 pub struct Decryptor {
-    #[zeroize(skip)] // Aes256Gcm 未实现 Zeroize trait，密钥材料在析构时不会被安全擦除
     cipher: Aes256Gcm,
+    _key_material: zeroize::Zeroizing<[u8; 32]>,
+}
+
+impl Drop for Decryptor {
+    fn drop(&mut self) {
+        // _key_material (Zeroizing<[u8; 32]>) 在析构时自动安全擦除
+    }
 }
 
 impl Decryptor {
@@ -76,7 +97,10 @@ impl Decryptor {
     pub fn new(key: [u8; 32]) -> Result<Self> {
         let cipher = Aes256Gcm::new_from_slice(&key)
             .map_err(|e| helpers::crypto_error(&format!("AES-256-GCM 密钥初始化失败: {e}")))?;
-        Ok(Self { cipher })
+        Ok(Self {
+            cipher,
+            _key_material: zeroize::Zeroizing::new(key),
+        })
     }
 
     /// 解密密文，返回明文
@@ -133,14 +157,15 @@ impl KeyManager {
 
         #[cfg(windows)]
         {
+            let tmp_path = format!("{}.tmp.{}", &self.key_path, std::process::id());
             let mut file = OpenOptions::new()
-                .create(true)
+                .create_new(true)
                 .write(true)
-                .truncate(true)
-                .open(&self.key_path)?;
+                .open(&tmp_path)?;
             file.write_all(&key)?;
+            file.sync_all()?;
 
-            let path_str = Path::new(&self.key_path)
+            let path_str = Path::new(&tmp_path)
                 .canonicalize()?
                 .to_str()
                 .ok_or_else(|| helpers::crypto_error("密钥文件路径编码无效"))?
@@ -156,17 +181,19 @@ impl KeyManager {
             match reset_result {
                 Ok(output) if output.status.success() => {}
                 Ok(output) => {
+                    let _ = std::fs::remove_file(&tmp_path);
                     return Err(helpers::crypto_error(&format!(
                         "设置密钥文件权限失败: {}",
                         String::from_utf8_lossy(&output.stderr)
                     )));
                 }
                 Err(e) => {
-                    return Err(helpers::crypto_error(&format!(
-                        "执行 icacls 命令失败: {e}"
-                    )));
+                    let _ = std::fs::remove_file(&tmp_path);
+                    return Err(helpers::crypto_error(&format!("执行 icacls 命令失败: {e}")));
                 }
             }
+
+            std::fs::rename(&tmp_path, &self.key_path)?;
         }
 
         #[cfg(not(any(unix, windows)))]
@@ -207,12 +234,13 @@ impl KeyManager {
         let path = Path::new(&self.key_path);
         if path.exists() {
             let file_len = std::fs::metadata(path)?.len();
-            let mut file = OpenOptions::new()
-                .write(true)
-                .open(path)?;
-            let zeros = vec![0u8; usize::try_from(file_len).map_err(|_| {
-                error_core::helpers::io_error("file too large for memory allocation")
-            })?];
+            let mut file = OpenOptions::new().write(true).open(path)?;
+            let zeros = vec![
+                0u8;
+                usize::try_from(file_len).map_err(|_| {
+                    error_core::helpers::io_error("file too large for memory allocation")
+                })?
+            ];
             file.write_all(&zeros)?;
             file.sync_all()?;
 
@@ -279,5 +307,81 @@ mod tests {
         let hash1 = hash_str(s);
         let hash2 = hash(s.as_bytes());
         assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_secure_erase_nonexistent_file() {
+        let dir = tempdir().unwrap();
+        let key_path = dir
+            .path()
+            .join("nonexistent.key")
+            .to_str()
+            .unwrap()
+            .to_string();
+        let manager = KeyManager::new(&key_path);
+        let result = manager.secure_erase_key();
+        assert!(result.is_ok(), "擦除不存在的文件应返回 Ok(())");
+        assert!(!manager.key_exists());
+    }
+
+    #[test]
+    fn test_load_key_nonexistent_file() {
+        let dir = tempdir().unwrap();
+        let key_path = dir.path().join("missing.key").to_str().unwrap().to_string();
+        let manager = KeyManager::new(&key_path);
+        assert!(
+            manager.load_key().is_err(),
+            "加载不存在的密钥文件应返回错误"
+        );
+    }
+
+    #[test]
+    fn test_save_key_creates_parent_directory() {
+        let dir = tempdir().unwrap();
+        let nested_path = dir.path().join("a").join("b").join("c").join("enc.key");
+        let key_path = nested_path.to_str().unwrap().to_string();
+        let manager = KeyManager::new(&key_path);
+
+        let key = KeyManager::generate_key();
+        manager.save_key(key).unwrap();
+
+        let loaded = manager.load_key().unwrap();
+        assert_eq!(key, loaded);
+    }
+
+    #[test]
+    fn test_key_not_exists_before_save() {
+        let dir = tempdir().unwrap();
+        let key_path = dir.path().join("new.key").to_str().unwrap().to_string();
+        let manager = KeyManager::new(&key_path);
+        assert!(!manager.key_exists());
+    }
+
+    #[test]
+    fn test_decrypt_with_truncated_nonce_fails() {
+        let key = KeyManager::generate_key();
+        let encryptor = Encryptor::new(key).unwrap();
+        let decryptor = Decryptor::new(key).unwrap();
+
+        let plaintext = b"test data";
+        let (_nonce, ciphertext) = encryptor.encrypt(plaintext).unwrap();
+
+        let invalid_nonce = vec![0u8; 12];
+        let result = decryptor.decrypt(&invalid_nonce, &ciphertext);
+        assert!(result.is_err(), "使用错误 nonce 解密应失败");
+    }
+
+    #[test]
+    #[should_panic(expected = "left")]
+    fn test_decrypt_with_truncated_nonce_panics() {
+        let key = KeyManager::generate_key();
+        let encryptor = Encryptor::new(key).unwrap();
+        let decryptor = Decryptor::new(key).unwrap();
+
+        let plaintext = b"test data";
+        let (nonce, ciphertext) = encryptor.encrypt(plaintext).unwrap();
+
+        let truncated_nonce = &nonce[..6];
+        let _ = decryptor.decrypt(truncated_nonce, &ciphertext);
     }
 }

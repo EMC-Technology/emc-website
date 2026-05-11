@@ -102,6 +102,7 @@ impl RAGMetric for ContextRecallMetric {
 mod tests {
     use super::*;
     use crate::judge::MockJudge;
+    use async_trait::async_trait;
 
     #[tokio::test]
     async fn test_context_recall_empty_ground_truth() {
@@ -109,5 +110,47 @@ mod tests {
         let metric = ContextRecallMetric::new(judge);
         let result = metric.evaluate("q", &[], "a", "").await.unwrap();
         assert_eq!(result.score, 0.0);
+    }
+
+    #[tokio::test]
+    async fn test_context_recall_empty_info_points() {
+        struct EmptyResponseJudge;
+
+        #[async_trait]
+        impl crate::judge::LLMJudge for EmptyResponseJudge {
+            async fn judge(
+                &self,
+                _prompt: &str,
+                _description: &str,
+            ) -> crate::error::Result<crate::judge::JudgeResult> {
+                Ok(crate::judge::JudgeResult {
+                    content: "   \n  \n  ".to_string(),
+                    model: "empty-mock".to_string(),
+                    latency_ms: 0,
+                })
+            }
+        }
+
+        let judge = Arc::new(EmptyResponseJudge);
+        let metric = ContextRecallMetric::new(judge);
+        let result = metric
+            .evaluate("query", &["ctx".to_string()], "answer", "ground truth")
+            .await
+            .unwrap();
+        assert_eq!(result.score, 1.0);
+        assert_eq!(result.explanation, "无关键信息点");
+    }
+
+    #[tokio::test]
+    async fn test_context_recall_with_mock_judge() {
+        let judge = Arc::new(MockJudge::new());
+        let metric = ContextRecallMetric::new(judge);
+        let result = metric
+            .evaluate("query", &["ctx text".to_string()], "answer", "ground truth")
+            .await
+            .unwrap();
+        assert_eq!(result.metric_name, "context_recall");
+        assert!(result.score > 0.0);
+        assert!(result.llm_judgment.is_some());
     }
 }

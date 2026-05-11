@@ -113,7 +113,11 @@ mod tests {
         let summary = CommunitySummary::new(
             community_id.clone(),
             "Rust 异步编程生态".to_string(),
-            vec!["async".to_string(), "tokio".to_string(), "futures".to_string()],
+            vec![
+                "async".to_string(),
+                "tokio".to_string(),
+                "futures".to_string(),
+            ],
             15,
             23,
             0.87,
@@ -146,8 +150,7 @@ mod tests {
             );
 
             let json = serde_json::to_string(&summary).expect("序列化失败");
-            let de_summary: CommunitySummary =
-                serde_json::from_str(&json).expect("反序列化失败");
+            let de_summary: CommunitySummary = serde_json::from_str(&json).expect("反序列化失败");
 
             assert_eq!(summary.community_id, de_summary.community_id);
             assert_eq!(summary.summary_text, de_summary.summary_text);
@@ -155,5 +158,27 @@ mod tests {
             assert_eq!(summary.entity_count, de_summary.entity_count);
             assert_eq!(summary.relation_count, de_summary.relation_count);
         }
+    }
+
+    #[cfg(feature = "db")]
+    #[test]
+    fn test_rid_helper_no_colon() {
+        let thing = rid("nocolon");
+        assert_eq!(thing.tb, "nocolon");
+    }
+
+    #[test]
+    fn test_community_summary_cohesion_score() {
+        let community_id = rid("community:test");
+        let summary = CommunitySummary::new(
+            community_id,
+            "Test".to_string(),
+            vec![],
+            0,
+            0,
+            0.0,
+            "model".to_string(),
+        );
+        assert!((summary.cohesion_score - 0.0).abs() < f64::EPSILON);
     }
 }

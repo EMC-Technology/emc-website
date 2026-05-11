@@ -53,9 +53,13 @@ impl From<ModelDownloadError> for error_core::ErrorObject {
     fn from(err: ModelDownloadError) -> Self {
         use error_core::helpers;
         match err {
-            ModelDownloadError::NetworkError(e) => helpers::net_api_error(&format!("模型下载网络错误: {e}")),
+            ModelDownloadError::NetworkError(e) => {
+                helpers::net_api_error(&format!("模型下载网络错误: {e}"))
+            }
             ModelDownloadError::Io(e) => helpers::io_error(&format!("模型下载 I/O 错误: {e}")),
-            ModelDownloadError::JsonParse(e) => helpers::serde_error(&format!("模型元数据解析失败: {e}")),
+            ModelDownloadError::JsonParse(e) => {
+                helpers::serde_error(&format!("模型元数据解析失败: {e}"))
+            }
             ModelDownloadError::ModelNotFound { repo_id, file_name } => {
                 helpers::not_found("model", &format!("{repo_id}/{file_name}"))
             }
@@ -508,5 +512,87 @@ mod tests {
         let downloader = HuggingFaceDownloader::new(PathBuf::from("/tmp/cache"));
         let path = downloader.get_cached_model_path("google/gemma-4-e4b-it");
         assert!(path.to_string_lossy().contains("google_gemma-4-e4b-it"));
+    }
+
+    #[tokio::test]
+    async fn test_progress_callback_receives_updates() {
+        use std::sync::{Arc, Mutex};
+
+        let received: Arc<Mutex<Vec<DownloadProgress>>> = Arc::new(Mutex::new(Vec::new()));
+        let received_clone = Arc::clone(&received);
+
+        let downloader = HuggingFaceDownloader::new(PathBuf::from("/tmp/cache"))
+            .with_progress_callback(move |p| {
+                received_clone
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(p);
+            });
+
+        downloader.report_progress(DownloadProgress {
+            downloaded_bytes: 1024,
+            total_bytes: Some(2048),
+            speed_bytes_per_sec: 512.0,
+            percentage: 50.0,
+        });
+
+        let guard = received
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(guard.len(), 1);
+        assert_eq!(guard[0].downloaded_bytes, 1024);
+        assert_eq!(guard[0].total_bytes, Some(2048));
+    }
+
+    #[tokio::test]
+    async fn test_progress_display_no_total() {
+        let progress = DownloadProgress {
+            downloaded_bytes: 25_000_000,
+            total_bytes: None,
+            speed_bytes_per_sec: 5_000_000.0,
+            percentage: 0.0,
+        };
+
+        let display = format!("{progress}");
+        assert!(!display.contains('%'), "无总大小时不应显示百分比");
+        assert!(display.contains("MB"));
+    }
+
+    #[test]
+    fn test_model_cached_checks_required_files() {
+        let temp_dir = tempfile::tempdir().expect("创建临时目录失败");
+        let downloader = HuggingFaceDownloader::new(temp_dir.path().to_path_buf());
+
+        assert!(
+            !downloader.is_model_cached("test/model"),
+            "空目录不应判定为已缓存"
+        );
+
+        let model_dir = temp_dir.path().join("test_model");
+        std::fs::create_dir_all(&model_dir).expect("创建模型目录失败");
+        for file in &[
+            "config.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "model.safetensors",
+        ] {
+            std::fs::write(model_dir.join(file), b"test").expect("写入测试文件失败");
+        }
+
+        assert!(
+            downloader.is_model_cached("test/model"),
+            "所有必需文件存在时应判定为已缓存"
+        );
+    }
+
+    #[test]
+    fn test_checksum_mismatch_error_display() {
+        let err = ModelDownloadError::ChecksumMismatch {
+            expected: "abc123".to_string(),
+            actual: "def456".to_string(),
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("abc123"), "错误信息应包含期望校验和");
+        assert!(msg.contains("def456"), "错误信息应包含实际校验和");
     }
 }

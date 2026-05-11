@@ -26,6 +26,7 @@ crates/knowledge-api/data/models/**/*.safetensors
 
 clippy*.txt
 cov-*.txt
+cov_report*.txt
 coverage-report*.txt
 test-*.txt
 test_*.txt
@@ -38,3 +39,11 @@ verbose_*.txt
 check_*.txt
 kp_test.txt
 fix_*.py
+history.txt
+
+lcov*.info
+cobertura.xml
+*.profraw
+*.profdata
+
+.env

@@ -124,8 +124,7 @@ impl DbTracer {
                 let elapsed = start.elapsed().as_secs_f64();
 
                 Span::current().set_attribute("db.duration_seconds", elapsed);
-                Span::current()
-                    .set_attribute("error.message", e.message().to_string());
+                Span::current().set_attribute("error.message", e.message().to_string());
                 Span::current().set_attribute("error.code", e.code().to_string());
 
                 counter!("db_query_errors_total", "operation" => operation_type).increment(1);

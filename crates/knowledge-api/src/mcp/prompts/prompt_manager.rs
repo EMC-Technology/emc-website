@@ -154,10 +154,10 @@ impl PromptStore for InMemoryPromptStore {
         let versions = store.entry(prompt.id.clone()).or_insert_with(Vec::new);
 
         if versions.iter().any(|v| v.version == prompt.version) {
-            return Err(helpers::validation_error(&format!(
-                "版本 {} 已存在",
-                prompt.version
-            ), "add_version"));
+            return Err(helpers::validation_error(
+                &format!("版本 {} 已存在", prompt.version),
+                "add_version",
+            ));
         }
 
         let id = Uuid::new_v4();

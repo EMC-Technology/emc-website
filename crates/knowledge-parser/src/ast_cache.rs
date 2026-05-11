@@ -244,4 +244,101 @@ mod tests {
         let root_text = result.root_node().utf8_text(b"fn new() {}").unwrap_or("");
         assert!(root_text.contains("new"), "应返回更新后的语法树");
     }
+
+    #[test]
+    fn test_clear_empties_cache() {
+        let Some(tree) = parse_rust_tree("fn main() {}") else {
+            eprintln!("Rust grammar 未安装，跳过测试");
+            return;
+        };
+        let mut cache = LruAstCache::new(10);
+        cache.insert("file.rs".to_string(), tree);
+        assert_eq!(cache.len(), 1);
+
+        cache.clear();
+        assert!(cache.is_empty(), "clear 后缓存应为空");
+        assert_eq!(cache.len(), 0, "clear 后 len 应为 0");
+        assert!(!cache.contains("file.rs"), "clear 后不应包含任何键");
+    }
+
+    #[test]
+    fn test_get_updates_access_order_lru_eviction() {
+        let Some(tree1) = parse_rust_tree("fn a() {}") else {
+            eprintln!("Rust grammar 未安装，跳过测试");
+            return;
+        };
+        let Some(tree2) = parse_rust_tree("fn b() {}") else {
+            eprintln!("Rust grammar 未安装，跳过测试");
+            return;
+        };
+        let Some(tree3) = parse_rust_tree("fn c() {}") else {
+            eprintln!("Rust grammar 未安装，跳过测试");
+            return;
+        };
+
+        let mut cache = LruAstCache::new(2);
+        cache.insert("a.rs".to_string(), tree1);
+        cache.insert("b.rs".to_string(), tree2);
+
+        let _ = cache.get("a.rs");
+
+        cache.insert("c.rs".to_string(), tree3);
+
+        assert!(cache.contains("a.rs"), "a.rs 应被保留（最近访问）");
+        assert!(!cache.contains("b.rs"), "b.rs 应被淘汰（最久未访问）");
+        assert!(cache.contains("c.rs"), "c.rs 应被插入");
+    }
+
+    #[test]
+    fn test_get_nonexistent_key_returns_none() {
+        let mut cache = LruAstCache::new(10);
+        let result = cache.get("nonexistent");
+        assert!(result.is_none(), "不存在的键应返回 None");
+    }
+
+    #[test]
+    fn test_contains_does_not_update_access_order() {
+        let Some(tree1) = parse_rust_tree("fn a() {}") else {
+            eprintln!("Rust grammar 未安装，跳过测试");
+            return;
+        };
+        let Some(tree2) = parse_rust_tree("fn b() {}") else {
+            eprintln!("Rust grammar 未安装，跳过测试");
+            return;
+        };
+        let Some(tree3) = parse_rust_tree("fn c() {}") else {
+            eprintln!("Rust grammar 未安装，跳过测试");
+            return;
+        };
+
+        let mut cache = LruAstCache::new(2);
+        cache.insert("a.rs".to_string(), tree1);
+        cache.insert("b.rs".to_string(), tree2);
+
+        assert!(cache.contains("a.rs"));
+
+        cache.insert("c.rs".to_string(), tree3);
+
+        assert!(
+            !cache.contains("a.rs"),
+            "a.rs 应被淘汰（contains 不更新访问顺序）"
+        );
+        assert!(cache.contains("b.rs"), "b.rs 应被保留");
+    }
+
+    #[test]
+    fn test_ast_cache_thread_safe_access() {
+        use std::sync::{Arc, Mutex};
+
+        let Some(tree) = parse_rust_tree("fn main() {}") else {
+            eprintln!("Rust grammar 未安装，跳过测试");
+            return;
+        };
+
+        let cache: AstCache = Arc::new(Mutex::new(LruAstCache::new(10)));
+        cache.lock().unwrap().insert("file.rs".to_string(), tree);
+
+        let cached = cache.lock().unwrap();
+        assert!(cached.contains("file.rs"), "通过 Arc<Mutex> 访问应正常工作");
+    }
 }

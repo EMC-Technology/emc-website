@@ -1,10 +1,9 @@
 /// 向量存储抽象 trait
 ///
 /// 定义统一的向量数据库操作接口，支持多种后端实现。
-
 use crate::vector_store::types::{DistanceMetric, HybridQuery, SearchOptions, SearchResult};
 use error_core::Result;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// 向量存储抽象 trait
@@ -17,7 +16,12 @@ pub trait VectorStore: Send + Sync {
     ///
     /// # Errors
     /// 集合已存在或后端连接失败时返回错误
-    async fn init_collection(&self, name: &str, dimension: usize, distance: DistanceMetric) -> Result<()>;
+    async fn init_collection(
+        &self,
+        name: &str,
+        dimension: usize,
+        distance: DistanceMetric,
+    ) -> Result<()>;
 
     /// 插入或更新向量点
     ///
@@ -29,13 +33,22 @@ pub trait VectorStore: Send + Sync {
     ///
     /// # Errors
     /// 集合不存在或后端连接失败时返回错误
-    async fn similarity_search(&self, collection: &str, query_vector: &[f32], options: SearchOptions) -> Result<Vec<SearchResult>>;
+    async fn similarity_search(
+        &self,
+        collection: &str,
+        query_vector: &[f32],
+        options: SearchOptions,
+    ) -> Result<Vec<SearchResult>>;
 
     /// 混合搜索（向量 + BM25 文本）
     ///
     /// # Errors
     /// 集合不存在或后端连接失败时返回错误
-    async fn hybrid_search(&self, collection: &str, query: &HybridQuery) -> Result<Vec<SearchResult>>;
+    async fn hybrid_search(
+        &self,
+        collection: &str,
+        query: &HybridQuery,
+    ) -> Result<Vec<SearchResult>>;
 
     /// 按 ID 批量获取向量点
     ///
@@ -77,12 +90,18 @@ impl VectorPoint {
     /// 创建新的向量点
     #[must_use]
     pub const fn new(id: Uuid, vector: Vec<f32>, payload: serde_json::Value) -> Self {
-        Self { id, vector, payload }
+        Self {
+            id,
+            vector,
+            payload,
+        }
     }
 
     /// 获取向量维度
     #[must_use]
-    pub fn dimension(&self) -> usize { self.vector.len() }
+    pub fn dimension(&self) -> usize {
+        self.vector.len()
+    }
 }
 
 /// 集合信息
@@ -133,5 +152,40 @@ mod tests {
     fn test_collection_status_display() {
         assert_eq!(CollectionStatus::Green.to_string(), "healthy");
         assert_eq!(CollectionStatus::Red.to_string(), "unavailable");
+        assert_eq!(CollectionStatus::Yellow.to_string(), "degraded");
+    }
+
+    #[test]
+    fn test_vector_point_dimension() {
+        let point = VectorPoint::new(Uuid::new_v4(), vec![0.1; 128], serde_json::json!({}));
+        assert_eq!(point.dimension(), 128);
+    }
+
+    #[test]
+    fn test_vector_point_zero_dimension() {
+        let point = VectorPoint::new(Uuid::new_v4(), vec![], serde_json::json!({}));
+        assert_eq!(point.dimension(), 0);
+    }
+
+    #[test]
+    fn test_collection_info_serialization() {
+        let info = CollectionInfo {
+            name: "test_collection".to_string(),
+            vectors_count: 100,
+            dimension: 768,
+            status: CollectionStatus::Green,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let de: CollectionInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(info.name, de.name);
+        assert_eq!(info.vectors_count, de.vectors_count);
+    }
+
+    #[test]
+    fn test_collection_status_serialization() {
+        let status = CollectionStatus::Yellow;
+        let json = serde_json::to_string(&status).unwrap();
+        let de: CollectionStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(status, de);
     }
 }

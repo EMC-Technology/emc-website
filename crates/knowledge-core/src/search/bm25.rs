@@ -281,8 +281,7 @@ impl InvertedIndex {
     pub fn build_from_tokens(tokens: &[(String, String)]) -> Self {
         let mut raw: HashMap<String, HashMap<String, usize>> = HashMap::new();
         for (doc_id, term) in tokens {
-            *raw
-                .entry(term.clone())
+            *raw.entry(term.clone())
                 .or_default()
                 .entry(doc_id.clone())
                 .or_insert(0) += 1;
@@ -441,5 +440,69 @@ mod tests {
 
         let empty_results = index.search("java");
         assert!(empty_results.is_empty());
+    }
+
+    #[test]
+    fn test_bm25_index_new_is_empty() {
+        let index = Bm25Index::new();
+        assert_eq!(index.total_docs(), 0);
+        assert!((index.avg_doc_length() - 0.0).abs() < f64::EPSILON);
+        assert_eq!(index.doc_freq("any"), 0);
+        assert_eq!(index.doc_length("any"), 0);
+    }
+
+    #[test]
+    fn test_bm25_index_default() {
+        let index = Bm25Index::default();
+        assert_eq!(index.total_docs(), 0);
+    }
+
+    #[test]
+    fn test_bm25_score_unknown_doc() {
+        let tokens = vec![("doc1".to_string(), "rust".to_string())];
+        let index = Bm25Index::build_from_tokens(&tokens);
+        let score = index.score(&["rust".to_string()], "nonexistent");
+        assert!((score - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_bm25_score_unknown_term() {
+        let tokens = vec![("doc1".to_string(), "rust".to_string())];
+        let index = Bm25Index::build_from_tokens(&tokens);
+        let score = index.score(&["python".to_string()], "doc1");
+        assert!((score - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_bm25_build_from_empty_tokens() {
+        let index = Bm25Index::build_from_tokens(&[]);
+        assert_eq!(index.total_docs(), 0);
+        assert!((index.avg_doc_length() - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_inverted_index_new_is_empty() {
+        let index = InvertedIndex::new();
+        assert!(index.search("any").is_empty());
+    }
+
+    #[test]
+    fn test_inverted_index_default() {
+        let index = InvertedIndex::default();
+        assert!(index.search("any").is_empty());
+    }
+
+    #[test]
+    fn test_bm25_doc_lengths() {
+        let tokens = vec![
+            ("doc1".to_string(), "a".to_string()),
+            ("doc1".to_string(), "b".to_string()),
+            ("doc2".to_string(), "c".to_string()),
+        ];
+        let index = Bm25Index::build_from_tokens(&tokens);
+        let lengths = index.doc_lengths();
+        assert_eq!(lengths.len(), 2);
+        assert_eq!(lengths.get("doc1"), Some(&2));
+        assert_eq!(lengths.get("doc2"), Some(&1));
     }
 }

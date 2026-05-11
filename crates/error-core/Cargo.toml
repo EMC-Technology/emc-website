@@ -125,3 +125,6 @@ required-features = ["fuzz"]
 [[test]]
 name = "classification_fuzz_test"
 required-features = ["fuzz"]
+
+[lints]
+workspace = true

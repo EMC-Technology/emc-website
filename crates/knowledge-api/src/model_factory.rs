@@ -132,32 +132,38 @@ impl ModelRegistry {
     #[must_use]
     pub fn builtin_models() -> Vec<(String, ModelInfo)> {
         vec![
-            ("hash-embedding".to_string(), ModelInfo {
-                name: "hash-embedding".to_string(),
-                version: "1.0.0".to_string(),
-                architecture: "Hash".to_string(),
-                parameter_count_billion: 0.0,
-                embedding_dim: 64,
-                vocab_size: 0,
-                max_context_length: 0,
-                model_size_bytes: 0,
-                backend: ModelBackend::Candle,
-                device: DeviceType::Cpu,
-                quantization: Quantization::default(),
-            }),
-            ("gemma-2b-embedding".to_string(), ModelInfo {
-                name: "gemma-2b-embedding".to_string(),
-                version: "1.0.0".to_string(),
-                architecture: "Gemma".to_string(),
-                parameter_count_billion: 2.0,
-                embedding_dim: 2048,
-                vocab_size: 256_000,
-                max_context_length: 8192,
-                model_size_bytes: 0,
-                backend: ModelBackend::Candle,
-                device: DeviceType::Cpu,
-                quantization: Quantization::default(),
-            }),
+            (
+                "hash-embedding".to_string(),
+                ModelInfo {
+                    name: "hash-embedding".to_string(),
+                    version: "1.0.0".to_string(),
+                    architecture: "Hash".to_string(),
+                    parameter_count_billion: 0.0,
+                    embedding_dim: 64,
+                    vocab_size: 0,
+                    max_context_length: 0,
+                    model_size_bytes: 0,
+                    backend: ModelBackend::Candle,
+                    device: DeviceType::Cpu,
+                    quantization: Quantization::default(),
+                },
+            ),
+            (
+                "gemma-2b-embedding".to_string(),
+                ModelInfo {
+                    name: "gemma-2b-embedding".to_string(),
+                    version: "1.0.0".to_string(),
+                    architecture: "Gemma".to_string(),
+                    parameter_count_billion: 2.0,
+                    embedding_dim: 2048,
+                    vocab_size: 256_000,
+                    max_context_length: 8192,
+                    model_size_bytes: 0,
+                    backend: ModelBackend::Candle,
+                    device: DeviceType::Cpu,
+                    quantization: Quantization::default(),
+                },
+            ),
         ]
     }
 
@@ -199,6 +205,9 @@ mod tests {
         let models = ModelRegistry::list_models();
         assert!(!models.is_empty(), "内置模型列表不应为空");
         let names: Vec<&str> = models.iter().map(|(name, _)| name.as_str()).collect();
-        assert!(names.contains(&"hash-embedding"), "应包含 hash-embedding 内置模型");
+        assert!(
+            names.contains(&"hash-embedding"),
+            "应包含 hash-embedding 内置模型"
+        );
     }
 }

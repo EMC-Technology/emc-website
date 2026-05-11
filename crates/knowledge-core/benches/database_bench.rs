@@ -1,7 +1,9 @@
-use criterion::{
-    black_box, criterion_group, criterion_main, Criterion,
+use criterion::{Criterion, criterion_group, criterion_main};
+use knowledge_core::model::{
+    Block, BlockType, Direction, Document, RecordIdType, RefType, Reference, SourceType, Token,
+    TokenType,
 };
-use knowledge_core::model::{Document, Block, Token, Reference, SourceType, BlockType, TokenType, RefType, Direction, RecordIdType};
+use std::hint::black_box;
 
 fn make_test_doc(id_num: usize) -> Document {
     Document {
@@ -65,10 +67,7 @@ fn bench_batch_vs_single_insert_token(c: &mut Criterion) {
 
 fn bench_serialization_overhead(c: &mut Criterion) {
     let doc = make_test_doc(42);
-    let block = make_test_block(
-        "document:ser".parse().expect("解析失败"),
-        10,
-    );
+    let block = make_test_block("document:ser".parse().expect("解析失败"), 10);
     let token = make_test_token("block:ser".parse().expect("解析失败"), 1);
     let reference = make_test_reference(
         "token:from_ser".parse().expect("解析失败"),
@@ -92,9 +91,7 @@ fn bench_serialization_overhead(c: &mut Criterion) {
     let doc_json = serde_json::to_value(&doc).unwrap();
     group.bench_function("deserialize_document", |b| {
         b.iter(|| {
-            black_box(
-                serde_json::from_value::<Document>(black_box(doc_json.clone())).unwrap(),
-            );
+            black_box(serde_json::from_value::<Document>(black_box(doc_json.clone())).unwrap());
         });
     });
     group.finish();

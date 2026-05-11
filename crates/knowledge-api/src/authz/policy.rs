@@ -24,7 +24,7 @@ use uuid::Uuid;
 ///     effect: PolicyEffect::Allow,
 ///     principal: PrincipalExpr::AnyAuthenticated,
 ///     action: ActionExpr::Specific("document::read".to_string()),
-///     resource: ResourceExpr::Type("Document".to_string()),
+///     resource: ResourceExpr::Type(ResourceType::Document),
 ///     conditions: Some(ConditionExpr::Attribute {
 ///         attribute: "owner_id".to_string(),
 ///         operator: ConditionOperator::Equals,
@@ -72,6 +72,8 @@ pub enum PolicyEffect {
     Deny,
 }
 
+use super::middleware::PrincipalEntityType;
+
 /// 主体（Principal）表达式
 ///
 /// 定义"谁"可以触发此策略。Cedar 中 principal 是一个 [`EntityUid`]。
@@ -80,8 +82,8 @@ pub enum PolicyEffect {
 pub enum PrincipalExpr {
     /// 特定用户/服务
     Specific {
-        /// 主体实体类型，如 `"User"`、`"ServiceAccount"`
-        entity_type: String,
+        /// 主体实体类型
+        entity_type: PrincipalEntityType,
         /// 主体实体唯一标识
         entity_id: String,
     },
@@ -116,13 +118,13 @@ pub enum ActionExpr {
 pub enum ResourceExpr {
     /// 特定资源实例
     Specific {
-        /// 资源实体类型，如 `"Document"`、`"Node"`
-        entity_type: String,
+        /// 资源实体类型
+        entity_type: ResourceType,
         /// 资源实体唯一标识
         entity_id: String,
     },
     /// 资源类型级别
-    Type(String),
+    Type(ResourceType),
     /// 资源类型前缀匹配
     TypePrefix(String),
     /// 任意资源
@@ -288,12 +290,63 @@ pub struct AuthorizationRequest {
 pub struct Principal {
     /// 主体唯一 ID（对应 [`EntityUid`]）
     pub id: String,
-    /// 主体类型（User / [`ServiceAccount`] / [`ApiKey`]）
-    pub entity_type: String,
+    /// 主体类型
+    pub entity_type: PrincipalEntityType,
     /// 主体拥有的角色列表（已展开继承关系）
     pub roles: Vec<String>,
     /// 主体属性（用于 ABAC 条件求值）
     pub attrs: HashMap<String, LiteralValue>,
+}
+
+/// 资源类型枚举
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum ResourceType {
+    /// 文档资源
+    Document,
+    /// 知识节点资源
+    Node,
+    /// 用户资源
+    User,
+    /// 系统资源
+    System,
+}
+
+impl std::fmt::Display for ResourceType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Document => write!(f, "Document"),
+            Self::Node => write!(f, "Node"),
+            Self::User => write!(f, "User"),
+            Self::System => write!(f, "System"),
+        }
+    }
+}
+
+impl ResourceType {
+    /// 返回资源类型的字符串表示
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Document => "Document",
+            Self::Node => "Node",
+            Self::User => "User",
+            Self::System => "System",
+        }
+    }
+}
+
+impl std::str::FromStr for ResourceType {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "document" | "documents" => Ok(Self::Document),
+            "node" | "nodes" => Ok(Self::Node),
+            "user" | "users" => Ok(Self::User),
+            _ => Ok(Self::System),
+        }
+    }
 }
 
 /// 动作信息
@@ -302,7 +355,7 @@ pub struct Action {
     /// 动作标识符，如 `"document::read"`、`"user::manage"`
     pub id: String,
     /// 动作所属的资源类型
-    pub resource_type: String,
+    pub resource_type: ResourceType,
     /// 动作类别：读 / 写 / 管理
     pub category: ActionCategory,
 }
@@ -327,8 +380,8 @@ pub enum ActionCategory {
 pub struct Resource {
     /// 资源唯一 ID
     pub id: String,
-    /// 资源类型（Document / Node / User / System 等）
-    pub resource_type: String,
+    /// 资源类型
+    pub resource_type: ResourceType,
     /// 资源拥有者 ID
     pub owner_id: Option<String>,
     /// 资源所属组织/团队 ID
@@ -441,4 +494,71 @@ pub enum DiagnosticLevel {
     Warning,
     /// 错误级别，用于记录策略评估中的异常
     Error,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ResourceType;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_resource_type_from_str_document() {
+        assert_eq!(
+            ResourceType::from_str("document").unwrap(),
+            ResourceType::Document
+        );
+        assert_eq!(
+            ResourceType::from_str("documents").unwrap(),
+            ResourceType::Document
+        );
+        assert_eq!(
+            ResourceType::from_str("Document").unwrap(),
+            ResourceType::Document
+        );
+    }
+
+    #[test]
+    fn test_resource_type_from_str_node() {
+        assert_eq!(ResourceType::from_str("node").unwrap(), ResourceType::Node);
+        assert_eq!(ResourceType::from_str("nodes").unwrap(), ResourceType::Node);
+    }
+
+    #[test]
+    fn test_resource_type_from_str_user() {
+        assert_eq!(ResourceType::from_str("user").unwrap(), ResourceType::User);
+        assert_eq!(ResourceType::from_str("users").unwrap(), ResourceType::User);
+    }
+
+    #[test]
+    fn test_resource_type_from_str_system() {
+        assert_eq!(
+            ResourceType::from_str("system").unwrap(),
+            ResourceType::System
+        );
+    }
+
+    #[test]
+    fn test_resource_type_from_str_unknown_falls_back_to_system() {
+        assert_eq!(
+            ResourceType::from_str("unknown").unwrap(),
+            ResourceType::System
+        );
+        assert_eq!(ResourceType::from_str("").unwrap(), ResourceType::System);
+        assert_eq!(
+            ResourceType::from_str("anything").unwrap(),
+            ResourceType::System
+        );
+    }
+
+    #[test]
+    fn test_resource_type_as_str_roundtrip() {
+        for rt in [
+            ResourceType::Document,
+            ResourceType::Node,
+            ResourceType::User,
+            ResourceType::System,
+        ] {
+            assert_eq!(ResourceType::from_str(rt.as_str()).unwrap(), rt);
+        }
+    }
 }

@@ -16,8 +16,7 @@ pub struct ChunkConfig {
 /// 实际分割时通过 `splitter.chunks(text, config.chunk_size)` 传入。
 #[must_use]
 pub fn create_chunker(_config: &ChunkConfig) -> TextSplitter<Characters> {
-    TextSplitter::new(Characters)
-        .with_trim_chunks(true)
+    TextSplitter::new(Characters).with_trim_chunks(true)
 }
 
 #[cfg(test)]
@@ -108,7 +107,10 @@ mod tests {
             overlap: 0,
         };
         let splitter = create_chunker(&config);
-        assert!(splitter.chunks("", config.chunk_size).next().is_none(), "空文本不应产生分块");
+        assert!(
+            splitter.chunks("", config.chunk_size).next().is_none(),
+            "空文本不应产生分块"
+        );
     }
 
     #[test]
@@ -157,5 +159,44 @@ mod tests {
             splitter.chunks(text, config.chunk_size).next().is_some(),
             "中文文本应至少产生一个分块"
         );
+    }
+
+    #[test]
+    fn test_create_chunker_with_various_chunk_sizes() {
+        let text = "A ".repeat(200);
+
+        let config_small = ChunkConfig {
+            chunk_size: 10,
+            overlap: 0,
+        };
+        let splitter_small = create_chunker(&config_small);
+        let chunks_small: Vec<&str> = splitter_small
+            .chunks(&text, config_small.chunk_size)
+            .collect();
+
+        let config_large = ChunkConfig {
+            chunk_size: 1000,
+            overlap: 0,
+        };
+        let splitter_large = create_chunker(&config_large);
+        let chunks_large: Vec<&str> = splitter_large
+            .chunks(&text, config_large.chunk_size)
+            .collect();
+
+        assert!(
+            chunks_small.len() > chunks_large.len(),
+            "更小的分块大小应产生更多分块"
+        );
+    }
+
+    #[test]
+    fn test_chunk_config_zero_overlap_valid() {
+        let config = ChunkConfig {
+            chunk_size: 100,
+            overlap: 0,
+        };
+        assert_eq!(config.chunk_size, 100);
+        assert_eq!(config.overlap, 0);
+        let _splitter = create_chunker(&config);
     }
 }

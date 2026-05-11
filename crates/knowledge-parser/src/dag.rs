@@ -1,8 +1,8 @@
 //! DAG 编排引擎 —— 有向无环图驱动的流水线调度
 
-use std::collections::HashMap;
-use error_core::helpers;
 use crate::pipeline::ParseStage;
+use error_core::helpers;
+use std::collections::HashMap;
 
 /// DAG 编排器，管理解析阶段之间的依赖关系
 pub struct DagEngine {
@@ -21,7 +21,11 @@ impl DagEngine {
     }
 
     /// 注册一个解析阶段及其前置依赖
-    pub fn register_stage(&mut self, stage: Box<dyn ParseStage + 'static>, dependencies: Vec<String>) {
+    pub fn register_stage(
+        &mut self,
+        stage: Box<dyn ParseStage + 'static>,
+        dependencies: Vec<String>,
+    ) {
         let name = stage.name().to_string();
         self.adjacency.insert(name.clone(), dependencies);
         self.stages.insert(name, stage);
@@ -32,7 +36,10 @@ impl DagEngine {
     /// # Errors
     ///
     /// 检测到循环依赖（DAG 无效）或阶段执行失败时返回错误
-    pub async fn run(&self, initial_input: Vec<knowledge_core::model::Document>) -> crate::Result<Vec<knowledge_core::model::Document>> {
+    pub async fn run(
+        &self,
+        initial_input: Vec<knowledge_core::model::Document>,
+    ) -> crate::Result<Vec<knowledge_core::model::Document>> {
         let order = self.topological_sort()?;
         let mut data = initial_input;
         for stage_name in &order {
@@ -71,21 +78,24 @@ impl DagEngine {
         while let Some(node) = queue.pop() {
             result.push(node.clone());
             for (succ, deps) in &self.adjacency {
-                if deps.contains(&node) {
-                    if let Some(deg) = in_degree.get_mut(succ) {
-                        *deg -= 1;
-                        if *deg == 0 {
-                            queue.push(succ.clone());
-                            queue.sort();
-                        }
+                if deps.contains(&node)
+                    && let Some(deg) = in_degree.get_mut(succ)
+                {
+                    *deg -= 1;
+                    if *deg == 0 {
+                        queue.push(succ.clone());
+                        queue.sort();
                     }
                 }
             }
         }
 
         if result.len() != self.stages.len() {
-            let registered: std::collections::HashSet<&str> =
-                self.stages.keys().map(std::string::String::as_str).collect();
+            let registered: std::collections::HashSet<&str> = self
+                .stages
+                .keys()
+                .map(std::string::String::as_str)
+                .collect();
             let missing_deps: Vec<String> = self
                 .adjacency
                 .values()
@@ -217,10 +227,7 @@ mod tests {
     fn test_register_stage_single_stage_returns_count_one() {
         let mut engine = DagEngine::new();
         let id = next_stage_id();
-        engine.register_stage(
-            Box::new(NoopStage::new(&format!("stage_{id}"))),
-            vec![],
-        );
+        engine.register_stage(Box::new(NoopStage::new(&format!("stage_{id}"))), vec![]);
         assert_eq!(engine.stages_count(), 1);
     }
 
@@ -231,10 +238,7 @@ mod tests {
         let id2 = next_stage_id();
         let id3 = next_stage_id();
 
-        engine.register_stage(
-            Box::new(NoopStage::new(&format!("alpha_{id1}"))),
-            vec![],
-        );
+        engine.register_stage(Box::new(NoopStage::new(&format!("alpha_{id1}"))), vec![]);
         engine.register_stage(
             Box::new(NoopStage::new(&format!("beta_{id2}"))),
             vec![format!("alpha_{id1}")],
@@ -280,10 +284,7 @@ mod tests {
     async fn test_run_single_stage_passes_documents_through() {
         let mut engine = DagEngine::new();
         let id = next_stage_id();
-        engine.register_stage(
-            Box::new(NoopStage::new(&format!("noop_{id}"))),
-            vec![],
-        );
+        engine.register_stage(Box::new(NoopStage::new(&format!("noop_{id}"))), vec![]);
 
         let doc = Document::new("/test.md", "Test", SourceType::Markdown, "a".repeat(64)).unwrap();
         let result = engine.run(vec![doc]).await.unwrap();
@@ -297,10 +298,7 @@ mod tests {
         let stage_a = format!("tag_a_{id}");
         let stage_b = format!("tag_b_{id}");
 
-        engine.register_stage(
-            Box::new(AppendTagStage::new(&stage_a, "A")),
-            vec![],
-        );
+        engine.register_stage(Box::new(AppendTagStage::new(&stage_a, "A")), vec![]);
         engine.register_stage(
             Box::new(AppendTagStage::new(&stage_b, "B")),
             vec![stage_a.clone()],
@@ -310,10 +308,7 @@ mod tests {
         let result = engine.run(vec![doc]).await.unwrap();
 
         assert_eq!(result.len(), 1);
-        assert_eq!(
-            result[0].title, "Doc+A+B",
-            "阶段应按拓扑序执行：先 A 后 B"
-        );
+        assert_eq!(result[0].title, "Doc+A+B", "阶段应按拓扑序执行：先 A 后 B");
     }
 
     #[tokio::test]
@@ -323,14 +318,8 @@ mod tests {
         let name_x = format!("cycle_x_{id}");
         let name_y = format!("cycle_y_{id}");
 
-        engine.register_stage(
-            Box::new(NoopStage::new(&name_x)),
-            vec![name_y.clone()],
-        );
-        engine.register_stage(
-            Box::new(NoopStage::new(&name_y)),
-            vec![name_x.clone()],
-        );
+        engine.register_stage(Box::new(NoopStage::new(&name_x)), vec![name_y.clone()]);
+        engine.register_stage(Box::new(NoopStage::new(&name_y)), vec![name_x.clone()]);
 
         let doc = Document::new("/test.md", "Test", SourceType::Markdown, "a".repeat(64)).unwrap();
         let result = engine.run(vec![doc]).await;
@@ -370,7 +359,10 @@ mod tests {
         engine.register_stage(Box::new(NoopStage::new(&root)), vec![]);
         engine.register_stage(Box::new(NoopStage::new(&left)), vec![root.clone()]);
         engine.register_stage(Box::new(NoopStage::new(&right)), vec![root.clone()]);
-        engine.register_stage(Box::new(NoopStage::new(&leaf)), vec![left.clone(), right.clone()]);
+        engine.register_stage(
+            Box::new(NoopStage::new(&leaf)),
+            vec![left.clone(), right.clone()],
+        );
 
         let order = engine.topological_sort().unwrap();
         assert_eq!(order.len(), 4);
@@ -407,14 +399,8 @@ mod tests {
         let name_a = format!("indep_a_{id}");
         let name_b = format!("indep_b_{id}");
 
-        engine.register_stage(
-            Box::new(AppendTagStage::new(&name_a, "X")),
-            vec![],
-        );
-        engine.register_stage(
-            Box::new(AppendTagStage::new(&name_b, "Y")),
-            vec![],
-        );
+        engine.register_stage(Box::new(AppendTagStage::new(&name_a, "X")), vec![]);
+        engine.register_stage(Box::new(AppendTagStage::new(&name_b, "Y")), vec![]);
 
         let doc = Document::new("/test.md", "Base", SourceType::Markdown, "a".repeat(64)).unwrap();
         let result = engine.run(vec![doc]).await.unwrap();
@@ -431,10 +417,7 @@ mod tests {
     async fn test_run_preserves_document_count_through_stages() {
         let mut engine = DagEngine::new();
         let id = next_stage_id();
-        engine.register_stage(
-            Box::new(NoopStage::new(&format!("pass_{id}"))),
-            vec![],
-        );
+        engine.register_stage(Box::new(NoopStage::new(&format!("pass_{id}"))), vec![]);
 
         let docs: Vec<Document> = (0..5)
             .map(|i| {
@@ -450,5 +433,54 @@ mod tests {
 
         let result = engine.run(docs).await.unwrap();
         assert_eq!(result.len(), 5, "文档数量应保持不变");
+    }
+
+    #[test]
+    fn test_topological_sort_missing_dependency_returns_error() {
+        let mut engine = DagEngine::new();
+        let id = next_stage_id();
+        let name = format!("orphan_{id}");
+
+        engine.register_stage(
+            Box::new(NoopStage::new(&name)),
+            vec![format!("nonexistent_stage_{id}")],
+        );
+
+        let result = engine.topological_sort();
+        assert!(result.is_err(), "缺失依赖应导致拓扑排序失败");
+        let err = result.unwrap_err();
+        assert!(
+            err.message().contains("缺失的依赖阶段"),
+            "错误消息应包含'缺失的依赖阶段': {}",
+            err.message()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_run_missing_dependency_returns_error() {
+        let mut engine = DagEngine::new();
+        let id = next_stage_id();
+        let name = format!("depends_on_missing_{id}");
+
+        engine.register_stage(
+            Box::new(NoopStage::new(&name)),
+            vec![format!("missing_stage_{id}")],
+        );
+
+        let doc = Document::new("/test.md", "Test", SourceType::Markdown, "a".repeat(64)).unwrap();
+        let result = engine.run(vec![doc]).await;
+        assert!(result.is_err(), "缺失依赖应导致 run 返回错误");
+    }
+
+    #[test]
+    fn test_topological_sort_single_stage_no_deps() {
+        let mut engine = DagEngine::new();
+        let id = next_stage_id();
+        let name = format!("solo_{id}");
+        engine.register_stage(Box::new(NoopStage::new(&name)), vec![]);
+
+        let order = engine.topological_sort().unwrap();
+        assert_eq!(order.len(), 1);
+        assert_eq!(order[0], name);
     }
 }

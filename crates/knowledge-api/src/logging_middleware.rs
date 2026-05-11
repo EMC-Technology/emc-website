@@ -6,21 +6,27 @@
 //! - 自动脱敏 URI 和 Header 中的敏感参数
 //! - 记录审计事件（AUDIT-030 查询执行）
 
+use crate::handler::AppState;
 use axum::{
     extract::State,
+    http::{HeaderMap, Uri},
     middleware::Next,
     response::Response,
-    http::{HeaderMap, Uri},
 };
-use tracing::{info, warn, error as log_error};
+use tracing::{error as log_error, info, warn};
 use uuid::Uuid;
-use crate::handler::AppState;
 
 /// 需要脱敏的敏感查询参数名称
 const SENSITIVE_PARAMS: &[&str] = &[
-    "token", "password", "key", "secret",
-    "authorization", "apikey", "api_key",
-    "access_token", "refresh_token",
+    "token",
+    "password",
+    "key",
+    "secret",
+    "authorization",
+    "apikey",
+    "api_key",
+    "access_token",
+    "refresh_token",
 ];
 
 /// 日志中间件配置
@@ -51,8 +57,13 @@ pub async fn logging_middleware(
 
     // 记录响应信息
     let status = response.status().as_u16();
-    let elapsed = response.extensions().get::<std::time::Duration>()
-        .map_or_else(|| "N/A".to_string(), |duration| format!("{:.2}ms", duration.as_secs_f64() * 1000.0));
+    let elapsed = response
+        .extensions()
+        .get::<std::time::Duration>()
+        .map_or_else(
+            || "N/A".to_string(),
+            |duration| format!("{:.2}ms", duration.as_secs_f64() * 1000.0),
+        );
 
     if (400..500).contains(&status) {
         warn!(
@@ -85,41 +96,39 @@ pub async fn logging_middleware(
 fn sanitize_uri(uri: &Uri) -> String {
     let mut parts = uri.clone().into_parts();
 
-    if let Some(query) = &parts.path_and_query {
-        if let Some(original_query) = query.query() {
-            let sanitized: Vec<String> = original_query
-                .split('&')
-                .map(|param| {
-                    if let Some((key, _)) = param.split_once('=') {
-                        if SENSITIVE_PARAMS.contains(&key.to_lowercase().as_str()) {
-                            format!("{key}=[REDACTED]")
-                        } else {
-                            param.to_string()
-                        }
+    if let Some(query) = &parts.path_and_query
+        && let Some(original_query) = query.query()
+    {
+        let sanitized: Vec<String> = original_query
+            .split('&')
+            .map(|param| {
+                if let Some((key, _)) = param.split_once('=') {
+                    if SENSITIVE_PARAMS.contains(&key.to_lowercase().as_str()) {
+                        format!("{key}=[REDACTED]")
                     } else {
                         param.to_string()
                     }
-                })
-                .collect();
+                } else {
+                    param.to_string()
+                }
+            })
+            .collect();
 
-            let new_query = sanitized.join("&");
+        let new_query = sanitized.join("&");
 
-            if let Some(path_and_query) = &mut parts.path_and_query {
-                use axum::http::uri::PathAndQuery;
-                let path_only = path_and_query.path().to_string();
-                *path_and_query = PathAndQuery::from_maybe_shared(
-                    format!("{path_only}?{new_query}")
-                ).unwrap_or_else(|_| {
+        if let Some(path_and_query) = &mut parts.path_and_query {
+            use axum::http::uri::PathAndQuery;
+            let path_only = path_and_query.path().to_string();
+            *path_and_query = PathAndQuery::from_maybe_shared(format!("{path_only}?{new_query}"))
+                .unwrap_or_else(|_| {
                     PathAndQuery::from_maybe_shared(path_only)
                         .unwrap_or_else(|_| path_and_query.clone())
                 });
-            }
         }
     }
 
     // 重建 URI 字符串
-    Uri::from_parts(parts)
-        .map_or_else(|_| "[URI_PARSE_ERROR]".to_string(), |u| u.to_string())
+    Uri::from_parts(parts).map_or_else(|_| "[URI_PARSE_ERROR]".to_string(), |u| u.to_string())
 }
 
 /// Header 脱敏函数
@@ -138,10 +147,7 @@ fn sanitize_headers(headers: &HeaderMap) -> String {
             if sensitive_headers.contains(&name_str.to_lowercase().as_str()) {
                 format!("{name_str}: [REDACTED]")
             } else {
-                format!(
-                    "{name_str}: {}",
-                    value.to_str().unwrap_or("[INVALID_UTF8]")
-                )
+                format!("{name_str}: {}", value.to_str().unwrap_or("[INVALID_UTF8]"))
             }
         })
         .collect();
@@ -225,8 +231,13 @@ mod tests {
     fn test_sensitive_params_list_completeness() {
         // 验证所有常见的敏感参数名都在列表中
         let should_contain = vec![
-            "token", "password", "key", "secret",
-            "authorization", "apikey", "api_key",
+            "token",
+            "password",
+            "key",
+            "secret",
+            "authorization",
+            "apikey",
+            "api_key",
         ];
 
         for param in should_contain {

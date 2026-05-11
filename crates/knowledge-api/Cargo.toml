@@ -38,7 +38,7 @@ http-body-util = { version = "0.1", default-features = false }
 uuid = { workspace = true }
 futures = { workspace = true }  # 用于 RAG 流式输出 (SSE)
 tokio-stream = { version = "0.1", default-features = false }
-reqwest = { version = "0.13", default-features = false, features = ["json"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream"] }
 argon2 = { version = "0.5", default-features = false, features = ["std"] }
 password-hash = { version = "0.5", default-features = false }
 rand = { workspace = true }
@@ -46,8 +46,9 @@ hex = { workspace = true }
 
 urlencoding = { version = "2.1", default-features = false }
 
-knowledge-core = { path = "../knowledge-core", version = "0.1.0" }
-knowledge-parser = { path = "../knowledge-parser", version = "0.1.0" }
+knowledge-core = { path = "../knowledge-core", version = "0.2.0" }
+knowledge-parser = { path = "../knowledge-parser", version = "0.2.0" }
+ullm = { path = "../ullm", version = "0.2.0", optional = true }
 blake3 = { workspace = true }
 rmcp = { workspace = true }
 schemars = { workspace = true }
@@ -88,10 +89,13 @@ hf-hub = { version = "0.4", default-features = false, features = ["tokio"] }
 sha2 = { workspace = true }
 # 目录路径解析（模型缓存目录）
 dirs = { workspace = true }
+# 安全内存擦除（JWT 密钥零化）
+zeroize = { workspace = true }
 
 [features]
 default = ["db"]
 db = ["knowledge-core/db"]
+ullm-adapter = ["ullm"]
 cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
 metal = ["candle-core/metal", "candle-nn/metal", "candle-transformers/metal"]
 flash-attn = ["candle-transformers/flash-attn"]
@@ -111,3 +115,6 @@ harness = false
 [[bench]]
 name = "embedding_bench"
 harness = false
+
+[lints]
+workspace = true

@@ -152,7 +152,10 @@ impl SemanticEntity {
     /// 当别名为空字符串时返回 `Err`
     pub fn add_alias(&mut self, alias: String) -> Result<(), error_core::ErrorObject> {
         if alias.is_empty() {
-            return Err(crate::error::helpers::validation_error("别名不能为空", "add_alias"));
+            return Err(crate::error::helpers::validation_error(
+                "别名不能为空",
+                "add_alias",
+            ));
         }
         if !self.aliases.contains(&alias) {
             self.aliases.push(alias);
@@ -423,14 +426,20 @@ mod tests {
     fn test_add_alias_prevents_duplicates() {
         let mut entity = SemanticEntity::new("Rust".to_string(), EntityType::Technology);
 
-        entity.add_alias("Rust-lang".to_string()).expect("添加别名应成功");
+        entity
+            .add_alias("Rust-lang".to_string())
+            .expect("添加别名应成功");
         assert_eq!(entity.aliases.len(), 1);
         assert!(entity.aliases.contains(&"Rust-lang".to_string()));
 
-        entity.add_alias("Rust-lang".to_string()).expect("重复别名应成功");
+        entity
+            .add_alias("Rust-lang".to_string())
+            .expect("重复别名应成功");
         assert_eq!(entity.aliases.len(), 1);
 
-        entity.add_alias("Rust Programming Language".to_string()).expect("添加别名应成功");
+        entity
+            .add_alias("Rust Programming Language".to_string())
+            .expect("添加别名应成功");
         assert_eq!(entity.aliases.len(), 2);
     }
 
@@ -444,8 +453,12 @@ mod tests {
     #[test]
     fn test_all_names_includes_primary_and_aliases() {
         let mut entity = SemanticEntity::new("Rust".to_string(), EntityType::Technology);
-        entity.add_alias("Rust-lang".to_string()).expect("添加别名应成功");
-        entity.add_alias("Rust Programming Language".to_string()).expect("添加别名应成功");
+        entity
+            .add_alias("Rust-lang".to_string())
+            .expect("添加别名应成功");
+        entity
+            .add_alias("Rust Programming Language".to_string())
+            .expect("添加别名应成功");
 
         let names = entity.all_names();
         assert_eq!(names.len(), 3);
@@ -493,5 +506,220 @@ mod tests {
         let json = serde_json::to_string(&entity_type).expect("序列化失败");
         let de: EntityType = serde_json::from_str(&json).expect("反序列化失败");
         assert_eq!(entity_type, de);
+    }
+
+    #[test]
+    fn test_relation_type_is_valid_related_to() {
+        assert!(
+            RelationType::RelatedTo
+                .is_valid_type_combination(&EntityType::Person, &EntityType::Technology)
+        );
+        assert!(
+            RelationType::SimilarTo
+                .is_valid_type_combination(&EntityType::Concept, &EntityType::Location)
+        );
+        assert!(
+            RelationType::IsA
+                .is_valid_type_combination(&EntityType::Person, &EntityType::Organization)
+        );
+    }
+
+    #[test]
+    fn test_relation_type_is_valid_located_in() {
+        assert!(
+            RelationType::LocatedIn
+                .is_valid_type_combination(&EntityType::Person, &EntityType::Location)
+        );
+        assert!(
+            RelationType::LocatedIn
+                .is_valid_type_combination(&EntityType::Organization, &EntityType::Location)
+        );
+        assert!(
+            !RelationType::LocatedIn
+                .is_valid_type_combination(&EntityType::Person, &EntityType::Technology)
+        );
+    }
+
+    #[test]
+    fn test_relation_type_is_valid_uses() {
+        assert!(
+            RelationType::Uses
+                .is_valid_type_combination(&EntityType::Person, &EntityType::Technology)
+        );
+        assert!(
+            RelationType::Uses
+                .is_valid_type_combination(&EntityType::Organization, &EntityType::Technology)
+        );
+        assert!(
+            !RelationType::Uses
+                .is_valid_type_combination(&EntityType::Person, &EntityType::Location)
+        );
+        assert!(
+            !RelationType::Uses
+                .is_valid_type_combination(&EntityType::Location, &EntityType::Technology)
+        );
+    }
+
+    #[test]
+    fn test_relation_type_is_valid_created_by() {
+        assert!(
+            RelationType::CreatedBy
+                .is_valid_type_combination(&EntityType::Technology, &EntityType::Person)
+        );
+        assert!(
+            RelationType::CreatedBy
+                .is_valid_type_combination(&EntityType::Document, &EntityType::Organization)
+        );
+        assert!(
+            !RelationType::CreatedBy
+                .is_valid_type_combination(&EntityType::Person, &EntityType::Technology)
+        );
+    }
+
+    #[test]
+    fn test_relation_type_is_valid_implements() {
+        assert!(
+            RelationType::Implements
+                .is_valid_type_combination(&EntityType::Technology, &EntityType::Concept)
+        );
+        assert!(
+            !RelationType::Implements
+                .is_valid_type_combination(&EntityType::Person, &EntityType::Technology)
+        );
+    }
+
+    #[test]
+    fn test_relation_type_is_valid_depends_on() {
+        assert!(
+            RelationType::DependsOn
+                .is_valid_type_combination(&EntityType::Technology, &EntityType::Technology)
+        );
+        assert!(
+            RelationType::DependsOn
+                .is_valid_type_combination(&EntityType::Document, &EntityType::Document)
+        );
+        assert!(
+            !RelationType::DependsOn
+                .is_valid_type_combination(&EntityType::Person, &EntityType::Technology)
+        );
+    }
+
+    #[test]
+    fn test_relation_type_is_valid_conflicts_with() {
+        assert!(
+            RelationType::ConflictsWith
+                .is_valid_type_combination(&EntityType::Technology, &EntityType::Technology)
+        );
+        assert!(
+            RelationType::ConflictsWith
+                .is_valid_type_combination(&EntityType::Concept, &EntityType::Concept)
+        );
+        assert!(
+            RelationType::ConflictsWith
+                .is_valid_type_combination(&EntityType::Technology, &EntityType::Concept)
+        );
+        assert!(
+            !RelationType::ConflictsWith
+                .is_valid_type_combination(&EntityType::Person, &EntityType::Technology)
+        );
+    }
+
+    #[test]
+    fn test_relation_type_is_valid_part_of() {
+        assert!(
+            RelationType::PartOf
+                .is_valid_type_combination(&EntityType::Person, &EntityType::Organization)
+        );
+        assert!(
+            !RelationType::PartOf
+                .is_valid_type_combination(&EntityType::Person, &EntityType::Technology)
+        );
+        assert!(
+            !RelationType::PartOf
+                .is_valid_type_combination(&EntityType::Technology, &EntityType::Person)
+        );
+    }
+
+    #[test]
+    fn test_relation_type_constraint_description() {
+        let descriptions = RelationType::constraint_description();
+        assert_eq!(descriptions.len(), 10);
+        assert!(descriptions[0].contains("is_a"));
+        assert!(descriptions[4].contains("related_to"));
+    }
+
+    #[test]
+    fn test_relation_type_display() {
+        assert_eq!(format!("{}", RelationType::IsA), "is_a");
+        assert_eq!(format!("{}", RelationType::PartOf), "part_of");
+        assert_eq!(format!("{}", RelationType::LocatedIn), "located_in");
+        assert_eq!(format!("{}", RelationType::Uses), "uses");
+        assert_eq!(format!("{}", RelationType::RelatedTo), "related_to");
+        assert_eq!(format!("{}", RelationType::CreatedBy), "created_by");
+        assert_eq!(format!("{}", RelationType::Implements), "implements");
+        assert_eq!(format!("{}", RelationType::DependsOn), "depends_on");
+        assert_eq!(format!("{}", RelationType::ConflictsWith), "conflicts_with");
+        assert_eq!(format!("{}", RelationType::SimilarTo), "similar_to");
+    }
+
+    #[test]
+    fn test_semantic_relation_new() {
+        let source = rid("semantic_entity:rust");
+        let target = rid("semantic_entity:tokio");
+        let relation = SemanticRelation::new(
+            source.clone(),
+            target.clone(),
+            RelationType::DependsOn,
+            "Rust depends on Tokio".to_string(),
+        );
+        assert!(relation.id.is_none());
+        assert_eq!(relation.source_entity, source);
+        assert_eq!(relation.target_entity, target);
+        assert_eq!(relation.relation_type, RelationType::DependsOn);
+        assert_eq!(relation.evidence, "Rust depends on Tokio");
+        assert!((relation.confidence - 1.0).abs() < f64::EPSILON);
+        assert!(relation.source_document.is_none());
+    }
+
+    #[test]
+    fn test_semantic_entity_serialization() {
+        let entity = SemanticEntity::new("Test".to_string(), EntityType::Concept);
+        let json = serde_json::to_string(&entity).expect("序列化失败");
+        let de: SemanticEntity = serde_json::from_str(&json).expect("反序列化失败");
+        assert_eq!(entity.name, de.name);
+        assert_eq!(entity.entity_type, de.entity_type);
+    }
+
+    #[test]
+    fn test_relation_type_serde_roundtrip() {
+        let rt = RelationType::Implements;
+        let json = serde_json::to_string(&rt).unwrap();
+        let de: RelationType = serde_json::from_str(&json).unwrap();
+        assert_eq!(rt, de);
+    }
+
+    #[cfg(not(feature = "db"))]
+    #[test]
+    fn test_semantic_entity_deserialization_default_confidence() {
+        let json = r#"{"name":"Test","entity_type":"technology","embedding":null}"#;
+        let entity: SemanticEntity = serde_json::from_str(json).expect("反序列化失败");
+        assert!((entity.confidence - 1.0).abs() < f64::EPSILON);
+        assert!(entity.aliases.is_empty());
+        assert!(entity.source_tokens.is_empty());
+    }
+
+    #[cfg(not(feature = "db"))]
+    #[test]
+    fn test_semantic_relation_deserialization_default_confidence() {
+        let json = r#"{"source_entity":"entity:a","target_entity":"entity:b","relation_type":"uses","evidence":"test"}"#;
+        let relation: SemanticRelation = serde_json::from_str(json).expect("反序列化失败");
+        assert!((relation.confidence - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[cfg(feature = "db")]
+    #[test]
+    fn test_rid_helper_no_colon_semantic() {
+        let thing = rid("nocolonvalue");
+        assert_eq!(thing.tb, "nocolonvalue");
     }
 }

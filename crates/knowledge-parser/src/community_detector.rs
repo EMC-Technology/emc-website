@@ -288,12 +288,8 @@ impl CommunityDetector {
             return refined_remapped;
         }
 
-        let super_community = Self::leiden(
-            &super_adj,
-            &super_degree,
-            super_total_weight,
-            resolution,
-        );
+        let super_community =
+            Self::leiden(&super_adj, &super_degree, super_total_weight, resolution);
 
         let mut result = vec![0; n];
         for i in 0..n {
@@ -361,7 +357,8 @@ impl CommunityDetector {
                     );
 
                     let is_better_delta = delta > best_delta + DETERMINISTIC_EPSILON;
-                    let is_tie_with_smaller_comm = (delta - best_delta).abs() < DETERMINISTIC_EPSILON
+                    let is_tie_with_smaller_comm = (delta - best_delta).abs()
+                        < DETERMINISTIC_EPSILON
                         && target_comm < best_comm;
 
                     if is_better_delta || is_tie_with_smaller_comm {
@@ -504,7 +501,11 @@ impl CommunityDetector {
             }
         }
 
-        if total < DETERMINISTIC_EPSILON { 0.0 } else { internal / total }
+        if total < DETERMINISTIC_EPSILON {
+            0.0
+        } else {
+            internal / total
+        }
     }
 }
 

@@ -67,9 +67,7 @@ impl CandleRerankerModel {
         let weights_path = repo
             .get("model.safetensors")
             .await
-            .or_else(|_| async {
-                repo.get("pytorch_model.bin").await
-            })
+            .or_else(|_| async { repo.get("pytorch_model.bin").await })
             .map_err(|e| ErrorObject::not_found(format!("model weights not found: {e}"), None))?;
 
         let bert_config: BertConfig = serde_json::from_str(
@@ -91,14 +89,12 @@ impl CandleRerankerModel {
         //    - VarBuilder 在 load() 函数作用域内创建，通过 ? 传播错误
         //    - 构建的 BertModel 持有权重数据的所有权
         //    - 当 CandleRerankerModel 被 drop 时，mmap 句柄被正确关闭
-        // 6. 若未来支持多实例共享缓存目录，需引入文件锁（flock）保证独占访问
+        // 6. 当前设计假设单实例部署，同一缓存目录不会被多个进程并发写入。
+        //    若未来支持多实例共享缓存目录，需引入文件锁（flock/LockFileEx）保证独占访问。
+        //    可通过添加 fs4 crate 依赖实现跨平台文件锁。
         let vb = unsafe {
-            VarBuilder::from_mmaped_safetensors(
-                &[weights_path],
-                DType::F32,
-                &device,
-            )
-            .map_err(|e| ErrorObject::internal(format!("load weights: {e}"), None))?
+            VarBuilder::from_mmaped_safetensors(&[weights_path], DType::F32, &device)
+                .map_err(|e| ErrorObject::internal(format!("load weights: {e}"), None))?
         };
 
         let model = BertModel::load(vb, &bert_config)

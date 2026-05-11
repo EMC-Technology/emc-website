@@ -1,4 +1,5 @@
 //! Classification module formal verification tests using Kani
+#![cfg(kani)]
 
 use error_core::classification::*;
 
@@ -207,15 +208,15 @@ fn test_display_traits() {
     // Test ErrorSource Display
     assert_eq!(format!("{}", ErrorSource::USR), "USR");
     assert_eq!(format!("{}", ErrorSource::AIM), "AIM");
-    
+
     // Test Severity Display
     assert_eq!(format!("{}", Severity::CRITICAL), "CRI");
     assert_eq!(format!("{}", Severity::ERROR), "ERR");
-    
+
     // Test ImpactScope Display
     assert_eq!(format!("{}", ImpactScope::GLOBAL), "G");
     assert_eq!(format!("{}", ImpactScope::SESSION), "S");
-    
+
     // Test Recoverability Display
     assert_eq!(format!("{}", Recoverability::AutoRecoverable), "AUTO");
     assert_eq!(format!("{}", Recoverability::SemiAuto), "SEMI");

@@ -8,21 +8,9 @@ pub mod tool_registry;
 pub mod auto_discover;
 
 pub use tool_registry::{
-    ToolDefinition,
-    ToolCapabilities,
-    RateLimitConfig,
-    AuthRequirements,
-    ToolMetadata,
-    ToolCategory,
-    ToolRegistry,
-    ToolFilter,
-    ToolStats,
-    ToolHandler,
-    CallContext,
-    ToolCallResult,
-    ContentBlock,
-    EmbeddedResource,
-    CallMetadata,
+    AuthRequirements, CallContext, CallMetadata, ContentBlock, EmbeddedResource, RateLimitConfig,
+    ToolCallResult, ToolCapabilities, ToolCategory, ToolDefinition, ToolFilter, ToolHandler,
+    ToolMetadata, ToolRegistry, ToolStats,
 };
 
 #[cfg(feature = "event-driven")]

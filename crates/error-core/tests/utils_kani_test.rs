@@ -1,4 +1,5 @@
 //! Utils module formal verification tests using Kani
+#![cfg(kani)]
 
 use error_core::utils::*;
 
@@ -24,7 +25,7 @@ struct TestError;
 fn test_error_utils_from_std_error() {
     let error = TestError;
     let error_object = ErrorUtils::from_std_error(&error, "test::module", "test_operation");
-    
+
     assert_eq!(error_object.code(), "ERR-INT-GEN-001_ERR_M");
     assert_eq!(error_object.module_path(), "test::module");
     assert_eq!(error_object.operation(), "test_operation");

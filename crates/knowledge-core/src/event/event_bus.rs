@@ -18,7 +18,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -207,8 +207,7 @@ impl<E: SystemEvent> EventBus<E> {
                     let receiver_count = self.tx.receiver_count();
                     if receiver_count == 0 {
                         if attempt < self.config.retry_max_attempts {
-                            let delay_ms =
-                                self.config.retry_delay_ms * 2u64.pow(attempt);
+                            let delay_ms = self.config.retry_delay_ms * 2u64.pow(attempt);
                             warn!(
                                 event_id = %event_id,
                                 attempt = attempt + 1,
@@ -220,8 +219,7 @@ impl<E: SystemEvent> EventBus<E> {
                         last_err = Some(EventError::NoSubscribers { event_id });
                     } else {
                         if attempt < self.config.retry_max_attempts {
-                            let delay_ms =
-                                self.config.retry_delay_ms * 2u64.pow(attempt);
+                            let delay_ms = self.config.retry_delay_ms * 2u64.pow(attempt);
                             warn!(
                                 event_id = %event_id,
                                 attempt = attempt + 1,
@@ -355,9 +353,7 @@ static GLOBAL_BUS: once_cell::sync::OnceCell<Arc<EventBus<super::types::Knowledg
 /// 仅在 OnceCell 内部状态损坏时 panic（理论上不可能发生）。
 pub fn global_event_bus() -> Arc<EventBus<super::types::KnowledgeEvent>> {
     GLOBAL_BUS
-        .get_or_init(|| {
-            Arc::new(EventBus::new(EventBusConfig::default()))
-        })
+        .get_or_init(|| Arc::new(EventBus::new(EventBusConfig::default())))
         .clone()
 }
 
@@ -398,9 +394,9 @@ macro_rules! emit_event {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::types::*;
-    use crate::model::{SourceType, RefType};
+    use super::*;
+    use crate::model::{RefType, SourceType};
 
     #[tokio::test]
     async fn test_event_bus_publish_and_receive() {
@@ -431,7 +427,10 @@ mod tests {
         let _rx3 = bus.subscribe().await;
 
         let event = KnowledgeEvent::NodeCreated(NodeCreatedEvent::new(
-            "node-multi", NodeType::Block, Some("doc-001"), "test",
+            "node-multi",
+            NodeType::Block,
+            Some("doc-001"),
+            "test",
         ));
 
         let count = bus.publish(event).await.unwrap();
@@ -447,7 +446,10 @@ mod tests {
         let bus: EventBus<KnowledgeEvent> = EventBus::new(EventBusConfig::default());
 
         let event = KnowledgeEvent::SystemHealthCheck(SystemHealthEvent::new(
-            "test-component", "ok", None::<String>, "test",
+            "test-component",
+            "ok",
+            None::<String>,
+            "test",
         ));
 
         let result = bus.publish(event).await;
@@ -493,7 +495,10 @@ mod tests {
         let mut rx = cloned.subscribe().await;
 
         let event = KnowledgeEvent::SearchPerformed(SearchPerformedEvent::new(
-            "rust event bus", 10, 5, "test",
+            "rust event bus",
+            10,
+            5,
+            "test",
         ));
 
         bus.publish(event).await.unwrap();
@@ -506,10 +511,7 @@ mod tests {
         let bus1 = global_event_bus();
         let bus2 = global_event_bus();
 
-        assert!(
-            Arc::ptr_eq(&bus1, &bus2),
-            "全局单例应返回相同的 Arc 引用"
-        );
+        assert!(Arc::ptr_eq(&bus1, &bus2), "全局单例应返回相同的 Arc 引用");
     }
 
     #[tokio::test]
@@ -518,22 +520,67 @@ mod tests {
         let _rx = bus.subscribe().await;
 
         let events: Vec<KnowledgeEvent> = vec![
-            KnowledgeEvent::DocumentIngested(DocumentIngestedEvent::new("d", "/", 0, SourceType::Plain, "", "s")),
+            KnowledgeEvent::DocumentIngested(DocumentIngestedEvent::new(
+                "d",
+                "/",
+                0,
+                SourceType::Plain,
+                "",
+                "s",
+            )),
             KnowledgeEvent::DocumentParsed(DocumentParsedEvent::new("d", 0, 0, 0, "s")),
             KnowledgeEvent::DocumentIndexed(DocumentIndexedEvent::new("d", 0, 0, "s")),
             KnowledgeEvent::DocumentDeleted(DocumentDeletedEvent::new("d", 0, 0, 0, "s")),
-            KnowledgeEvent::NodeCreated(NodeCreatedEvent::new("n", NodeType::Token, None::<String>, "s")),
-            KnowledgeEvent::NodeUpdated(NodeUpdatedEvent::new("n", crate::cqrs::event_store::ChangeSet::new(), "s")),
+            KnowledgeEvent::NodeCreated(NodeCreatedEvent::new(
+                "n",
+                NodeType::Token,
+                None::<String>,
+                "s",
+            )),
+            KnowledgeEvent::NodeUpdated(NodeUpdatedEvent::new(
+                "n",
+                crate::cqrs::event_store::ChangeSet::new(),
+                "s",
+            )),
             KnowledgeEvent::NodeDeleted(NodeDeletedEvent::new("n", NodeType::Token, "s")),
             KnowledgeEvent::NodeLinked(NodeLinkedEvent::new("a", "b", RefType::Usage, "s")),
             KnowledgeEvent::EdgeCreated(EdgeCreatedEvent::new("e", RefType::Usage, "a", "b", "s")),
             KnowledgeEvent::EdgeDeleted(EdgeDeletedEvent::new("e", RefType::Usage, "s")),
             KnowledgeEvent::SearchPerformed(SearchPerformedEvent::new("q", 0, 0, "s")),
-            KnowledgeEvent::QueryExecuted(QueryExecutedEvent::new(QueryType::Traversal, "b", 0, 0, "s")),
-            KnowledgeEvent::EmbeddingGenerated(EmbeddingGeneratedEvent::new("e", EmbeddingEntityType::Document, 0, "m", 0, "s")),
-            KnowledgeEvent::EmbeddingCached(EmbeddingCachedEvent::new("e", EmbeddingEntityType::Document, "k", "s")),
-            KnowledgeEvent::UserAction(UserActionEvent::new("u", "a", None::<String>, None::<String>, "s")),
-            KnowledgeEvent::SystemHealthCheck(SystemHealthEvent::new("c", HealthStatus::Healthy, None::<String>, "s")),
+            KnowledgeEvent::QueryExecuted(QueryExecutedEvent::new(
+                QueryType::Traversal,
+                "b",
+                0,
+                0,
+                "s",
+            )),
+            KnowledgeEvent::EmbeddingGenerated(EmbeddingGeneratedEvent::new(
+                "e",
+                EmbeddingEntityType::Document,
+                0,
+                "m",
+                0,
+                "s",
+            )),
+            KnowledgeEvent::EmbeddingCached(EmbeddingCachedEvent::new(
+                "e",
+                EmbeddingEntityType::Document,
+                "k",
+                "s",
+            )),
+            KnowledgeEvent::UserAction(UserActionEvent::new(
+                "u",
+                "a",
+                None::<String>,
+                None::<String>,
+                "s",
+            )),
+            KnowledgeEvent::SystemHealthCheck(SystemHealthEvent::new(
+                "c",
+                HealthStatus::Healthy,
+                None::<String>,
+                "s",
+            )),
         ];
 
         for event in events {
@@ -548,7 +595,12 @@ mod tests {
         let mut rx = bus.subscribe().await;
 
         let original = KnowledgeEvent::EmbeddingGenerated(EmbeddingGeneratedEvent::new(
-            "block-rt", "Block", 1536, "text-embedding-ada-002", 95, "embedding-svc",
+            "block-rt",
+            "Block",
+            1536,
+            "text-embedding-ada-002",
+            95,
+            "embedding-svc",
         ));
 
         bus.publish(original.clone()).await.unwrap();

@@ -1,6 +1,8 @@
-use serde::{Deserialize, Serialize};
-use chrono::{DateTime, Utc};
 use super::aggregate::DocumentStatus;
+use crate::model::ids::{BlockId, DocumentId, NodeId};
+use crate::model::{BlockType, ContentType, NodeType, RefType, SourceType};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 /// Query trait - 表示读操作的请求
 ///
@@ -36,12 +38,12 @@ pub trait Query: Send + Sync + Serialize + std::fmt::Debug {
 /// 用于查询响应中的文档摘要信息，不包含完整内容。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentView {
-    /// 文档唯一标识符
-    pub id: String,
+    /// 文档唯一标识符（Axiom-3: 类型化 ID）
+    pub id: DocumentId,
     /// 文档标题
     pub title: String,
     /// 内容 MIME 类型
-    pub content_type: String,
+    pub content_type: ContentType,
     /// 文档状态
     pub status: DocumentStatus,
     /// 当前版本号
@@ -60,12 +62,12 @@ pub struct DocumentView {
 /// 节点只读视图模型
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeView {
-    /// 节点唯一标识符
-    pub id: String,
-    /// 所属文档 ID
-    pub document_id: String,
-    /// 节点类型（如 `Heading`、`Paragraph`、`Code`）
-    pub node_type: String,
+    /// 节点唯一标识符（Axiom-3: 类型化 ID）
+    pub id: NodeId,
+    /// 所属文档 ID（Axiom-3: 类型化 ID）
+    pub document_id: DocumentId,
+    /// 节点类型
+    pub node_type: NodeType,
     /// 节点文本内容
     pub content: String,
     /// 节点在源文件中的位置
@@ -85,8 +87,8 @@ pub struct NodePositionView {
 /// 搜索结果条目
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResultItem {
-    /// 匹配文档/节点 ID
-    pub id: String,
+    /// 匹配文档 ID（Axiom-3: 类型化 ID）
+    pub id: DocumentId,
     /// 匹配文档标题
     pub title: String,
     /// 相似度得分（0.0 ~ 1.0）
@@ -94,7 +96,7 @@ pub struct SearchResultItem {
     /// 高亮摘要片段
     pub highlight: Option<String>,
     /// 内容类型
-    pub content_type: String,
+    pub content_type: ContentType,
 }
 
 /// 图谱统计视图
@@ -113,12 +115,12 @@ pub struct GraphStatsView {
 /// 文档列表条目
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentListItem {
-    /// 文档 ID
-    pub id: String,
+    /// 文档 ID（Axiom-3: 类型化 ID）
+    pub id: DocumentId,
     /// 文档标题
     pub title: String,
-    /// 来源类型（`Markdown`、`Code`、`Plain`）
-    pub source_type: String,
+    /// 来源类型
+    pub source_type: SourceType,
     /// 当前版本号
     pub version: u64,
     /// 最后更新时间
@@ -130,8 +132,8 @@ pub struct DocumentListItem {
 /// 根据文档 ID 获取文档详情，可按需包含节点和块信息。
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GetDocumentQuery {
-    /// 目标文档 ID
-    pub document_id: String,
+    /// 目标文档 ID（Axiom-3: 类型化 ID）
+    pub document_id: DocumentId,
     /// 是否包含关联节点
     pub include_nodes: bool,
     /// 是否包含块摘要
@@ -158,10 +160,10 @@ pub struct DocumentDetailView {
 /// 块摘要视图
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockSummaryView {
-    /// 块 ID
-    pub id: String,
+    /// 块 ID（Axiom-3: 类型化 ID）
+    pub id: BlockId,
     /// 块类型
-    pub block_type: String,
+    pub block_type: BlockType,
     /// 起始行号
     pub start_line: u32,
     /// 结束行号
@@ -216,8 +218,8 @@ pub struct SearchFilters {
 /// 根据节点 ID 获取节点详情，可按需包含出入边引用。
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GetNodeQuery {
-    /// 目标节点 ID
-    pub node_id: String,
+    /// 目标节点 ID（Axiom-3: 类型化 ID）
+    pub node_id: NodeId,
     /// 是否包含出边和入边引用
     pub include_references: bool,
 }
@@ -242,10 +244,10 @@ pub struct NodeDetailView {
 /// 引用摘要视图
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReferenceSummaryView {
-    /// 引用类型（如 `Usage`、`Definition`）
-    pub ref_type: String,
-    /// 目标节点 ID
-    pub target_id: String,
+    /// 引用类型
+    pub ref_type: RefType,
+    /// 目标节点 ID（Axiom-3: 类型化 ID）
+    pub target_id: NodeId,
     /// 目标节点内容预览
     pub target_content_preview: String,
 }
@@ -308,7 +310,7 @@ pub enum SortOrder {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ListDocumentsFilter {
     /// 限定来源类型
-    pub source_type: Option<String>,
+    pub source_type: Option<SourceType>,
     /// 限定文档状态
     pub status: Option<DocumentStatus>,
     /// 标题模糊匹配
@@ -332,10 +334,10 @@ mod tests {
     #[allow(dead_code)]
     fn create_test_document_view() -> DocumentView {
         DocumentView {
-            id: "doc_001".to_string(),
+            id: DocumentId::new("doc_001"),
             title: "Test Document".to_string(),
-            content_type: "markdown".to_string(),
-            status: DocumentStatus::Published,
+            content_type: ContentType::Markdown,
+            status: DocumentStatus::Active,
             version: 5,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -345,14 +347,23 @@ mod tests {
     }
 
     #[test]
+    fn test_create_document_view_helper() {
+        let view = create_test_document_view();
+        assert_eq!(view.id.as_str(), "doc_001");
+        assert_eq!(view.title, "Test Document");
+        assert_eq!(view.version, 5);
+        assert_eq!(view.node_count, 10);
+    }
+
+    #[test]
     fn test_query_trait_implementation() {
         let query = GetDocumentQuery {
-            document_id: "doc_001".to_string(),
+            document_id: DocumentId::new("doc_001"),
             include_nodes: true,
             include_blocks: false,
         };
 
-        assert_eq!(query.document_id, "doc_001");
+        assert_eq!(query.document_id.as_str(), "doc_001");
         assert!(query.include_nodes);
         assert!(!query.include_blocks);
     }
@@ -360,14 +371,13 @@ mod tests {
     #[test]
     fn test_get_document_query_serialization() {
         let query = GetDocumentQuery {
-            document_id: "doc_002".to_string(),
+            document_id: DocumentId::new("doc_002"),
             include_nodes: true,
             include_blocks: true,
         };
 
         let json = serde_json::to_string(&query).expect("序列化失败");
-        let deserialized: GetDocumentQuery =
-            serde_json::from_str(&json).expect("反序列化失败");
+        let deserialized: GetDocumentQuery = serde_json::from_str(&json).expect("反序列化失败");
 
         assert_eq!(deserialized.document_id, query.document_id);
         assert_eq!(deserialized.include_nodes, query.include_nodes);
@@ -403,7 +413,7 @@ mod tests {
             sort_by: SortField::UpdatedAt,
             sort_order: SortOrder::Desc,
             filters: Some(ListDocumentsFilter {
-                source_type: Some("Markdown".to_string()),
+                source_type: Some(SourceType::Markdown),
                 ..Default::default()
             }),
         };
@@ -417,10 +427,10 @@ mod tests {
     #[test]
     fn test_document_view_serialization_skips_none_fields() {
         let view = DocumentView {
-            id: "doc_003".to_string(),
+            id: DocumentId::new("doc_003"),
             title: "No Content Doc".to_string(),
-            content_type: "plain".to_string(),
-            status: DocumentStatus::Draft,
+            content_type: ContentType::Plain,
+            status: DocumentStatus::Pending,
             version: 1,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -435,11 +445,11 @@ mod tests {
     #[test]
     fn test_search_result_item_structure() {
         let item = SearchResultItem {
-            id: "doc_004".to_string(),
+            id: DocumentId::new("doc_004"),
             title: "Async Rust Guide".to_string(),
             score: 0.95,
             highlight: Some("**async** is powerful".to_string()),
-            content_type: "markdown".to_string(),
+            content_type: ContentType::Markdown,
         };
 
         assert!((item.score - 0.95).abs() < f64::EPSILON);
@@ -463,9 +473,9 @@ mod tests {
     #[test]
     fn test_node_view_with_optional_position() {
         let with_pos = NodeView {
-            id: "node_001".to_string(),
-            document_id: "doc_001".to_string(),
-            node_type: "Heading".to_string(),
+            id: NodeId::new("node_001"),
+            document_id: DocumentId::new("doc_001"),
+            node_type: NodeType::Block,
             content: "# Introduction".to_string(),
             position: Some(NodePositionView {
                 start_line: 1,
@@ -474,9 +484,9 @@ mod tests {
         };
 
         let without_pos = NodeView {
-            id: "node_002".to_string(),
-            document_id: "doc_001".to_string(),
-            node_type: "Paragraph".to_string(),
+            id: NodeId::new("node_002"),
+            document_id: DocumentId::new("doc_001"),
+            node_type: NodeType::Token,
             content: "Some text".to_string(),
             position: None,
         };

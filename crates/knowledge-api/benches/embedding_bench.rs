@@ -1,26 +1,18 @@
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use knowledge_api::embedding_service::{EmbeddingModel, EmbeddingService};
-use knowledge_core::model::Block;
+use knowledge_core::math::cosine_similarity;
+use std::hint::black_box;
 
 const EMBEDDING_DIM: usize = 1536;
-
-fn create_test_block(_id: &str, content: &str) -> (Block, String) {
-    let block = Block {
-        id: None,
-        doc_id: "document:embed_bench".parse().expect("RecordId 解析失败"),
-        block_type: knowledge_core::model::BlockType::Paragraph,
-        start_line: 0,
-        end_line: 10,
-        embedding: None,
-        idempotency_key: None,
-    };
-    (block, content.to_string())
-}
 
 #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
 fn blake3_to_u64(data: &[u8]) -> u64 {
     let hash = blake3::hash(data);
-    u64::from_le_bytes(hash.as_bytes()[..8].try_into().expect("blake3 输出至少 8 字节"))
+    u64::from_le_bytes(
+        hash.as_bytes()[..8]
+            .try_into()
+            .expect("blake3 输出至少 8 字节"),
+    )
 }
 
 #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
@@ -67,18 +59,6 @@ fn simhash_embedding(text: &str, dimension: usize) -> Vec<f32> {
         .sqrt()
         .max(f64::EPSILON);
     v.iter().map(|x| (x / norm) as f32).collect()
-}
-
-fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    let denom = norm_a * norm_b;
-    if denom < f32::EPSILON {
-        0.0
-    } else {
-        dot_product / denom
-    }
 }
 
 fn bench_simhash_embedding_single(c: &mut Criterion) {
@@ -128,11 +108,7 @@ fn bench_simhash_embedding_dimensions(c: &mut Criterion) {
 
 fn bench_batch_embedding_throughput(c: &mut Criterion) {
     let texts: Vec<String> = (0..500)
-        .map(|i| {
-            format!(
-                "Benchmark embedding text chunk number {i} for throughput testing"
-            )
-        })
+        .map(|i| format!("Benchmark embedding text chunk number {i} for throughput testing"))
         .collect();
 
     let mut group = c.benchmark_group("embedding_batch_throughput");
@@ -186,7 +162,9 @@ fn bench_cosine_similarity(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("cosine_similar", format!("{dim}d")),
             &(a, b),
-            |bencher, (a, b): &(Vec<f32>, Vec<f32>)| bencher.iter(|| black_box(cosine_similarity(black_box(a), black_box(b)))),
+            |bencher, (a, b): &(Vec<f32>, Vec<f32>)| {
+                bencher.iter(|| black_box(cosine_similarity(black_box(a), black_box(b))));
+            },
         );
     }
 
@@ -196,7 +174,11 @@ fn bench_cosine_similarity(c: &mut Criterion) {
 #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
 fn deterministic_f32(seed: u32, extra: u32) -> f32 {
     let hash = blake3::hash(format!("{seed}:{extra}").as_bytes());
-    let h = u64::from_le_bytes(hash.as_bytes()[..8].try_into().expect("blake3 输出至少 8 字节"));
+    let h = u64::from_le_bytes(
+        hash.as_bytes()[..8]
+            .try_into()
+            .expect("blake3 输出至少 8 字节"),
+    );
     ((h % 10000) as f32 / 10000.0).mul_add(2.0, -1.0)
 }
 
@@ -207,7 +189,11 @@ fn bench_vector_operations(c: &mut Criterion) {
         .map(|i| (i as f32).mul_add(0.001, 0.5).sin())
         .collect();
     let large_vecs: Vec<Vec<f32>> = (0..1000u32)
-        .map(|i| (0..EMBEDDING_DIM).map(|j| deterministic_f32(i, j as u32)).collect())
+        .map(|i| {
+            (0..EMBEDDING_DIM)
+                .map(|j| deterministic_f32(i, j as u32))
+                .collect()
+        })
         .collect();
 
     let mut group = c.benchmark_group("embedding_vector_ops");
@@ -242,7 +228,7 @@ fn bench_vector_operations(c: &mut Criterion) {
             &(query, &large_vecs, k),
             |b, (query, corpus, k)| {
                 b.iter(|| {
-                    let mut scores: Vec<(usize, f32)> = corpus
+                    let mut scores: Vec<(usize, f64)> = corpus
                         .iter()
                         .enumerate()
                         .map(|(i, v)| {
@@ -251,7 +237,7 @@ fn bench_vector_operations(c: &mut Criterion) {
                         })
                         .collect();
                     scores.sort_by(|a, b| b.1.total_cmp(&a.1));
-                    let top_k: Vec<(usize, f32)> = scores.into_iter().take(*k).collect();
+                    let top_k: Vec<(usize, f64)> = scores.into_iter().take(*k).collect();
                     black_box(top_k);
                 });
             },
@@ -269,43 +255,40 @@ fn bench_embedding_service_async(c: &mut Criterion) {
     let service =
         EmbeddingService::new(EmbeddingModel::LocalBgeLarge, EMBEDDING_DIM, 16, 256).unwrap();
 
-    let (block, content) = create_test_block(
-        "bench_1",
-        "This is a test block for async embedding benchmark.",
-    );
+    let block_id = "bench_1".to_string();
+    let content = "This is a test block for async embedding benchmark.".to_string();
 
     group.bench_function("single_embed_async", |b| {
         b.iter(|| {
             rt.block_on(async {
-                let result = service.embed_block(black_box(&block), black_box(&content)).await.unwrap();
+                let result = service
+                    .embed_block(black_box(&block_id), black_box(&content))
+                    .await
+                    .unwrap();
                 black_box(result.embedding);
             });
         });
     });
 
-    let blocks_and_contents: Vec<(Block, String)> = (0..50u32)
-        .map(|i| {
-            create_test_block(
-                &format!("bench_{i}"),
-                &format!("Test block {i} content for batch embedding benchmarking."),
-            )
-        })
+    let block_ids: Vec<String> = (0..50u32).map(|i| format!("bench_{i}")).collect();
+    let contents: Vec<String> = (0..50u32)
+        .map(|i| format!("Test block {i} content for batch embedding benchmarking."))
         .collect();
-
-    let blocks: Vec<Block> = blocks_and_contents.iter().map(|(b, _)| b.clone()).collect();
-    let contents: Vec<String> = blocks_and_contents.iter().map(|(_, c)| c.clone()).collect();
 
     for batch_size in [1usize, 10, 25, 50] {
         group.throughput(Throughput::Elements(batch_size as u64));
-        let batch_blocks = blocks[..batch_size].to_vec();
-        let batch_contents = contents[..batch_size].to_vec();
+        let batch_ids: Vec<String> = block_ids[..batch_size].to_vec();
+        let batch_contents: Vec<String> = contents[..batch_size].to_vec();
         group.bench_with_input(
             BenchmarkId::new("batch_embed_async", format!("n{batch_size}")),
-            &(batch_blocks, batch_contents),
-            |b, (blocks, contents)| {
+            &(batch_ids, batch_contents),
+            |b, (ids, contents)| {
                 b.iter(|| {
                     rt.block_on(async {
-                        let results = service.embed_batch(black_box(blocks), black_box(contents)).await.unwrap();
+                        let results = service
+                            .embed_batch(black_box(ids), black_box(contents))
+                            .await
+                            .unwrap();
                         black_box(results);
                     });
                 });

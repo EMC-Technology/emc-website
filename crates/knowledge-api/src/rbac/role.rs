@@ -83,9 +83,9 @@ impl Role {
         inherited: &[Permission],
     ) -> bool {
         let effective = self.effective_permissions(inherited);
-        effective.iter().any(|p| {
-            &p.resource_type == resource_type && p.actions.iter().any(|a| a == action)
-        })
+        effective
+            .iter()
+            .any(|p| &p.resource_type == resource_type && p.actions.iter().any(|a| a == action))
     }
 }
 
@@ -144,6 +144,304 @@ pub enum ResourceType {
     AuditLog,
     /// API 密钥（ApiKey)
     ApiKey,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_permission(id: &str, resource_type: ResourceType, actions: &[&str]) -> Permission {
+        Permission {
+            id: Uuid::parse_str(id).unwrap(),
+            resource_type,
+            actions: actions.iter().map(|s| (*s).to_string()).collect(),
+            conditions: None,
+            scope: PermissionScope::Global,
+        }
+    }
+
+    fn make_role(name: &str, permissions: Vec<Permission>) -> Role {
+        Role {
+            id: Uuid::new_v4(),
+            name: name.to_string(),
+            display_name: name.to_string(),
+            description: format!("{name} role"),
+            permissions,
+            parent_roles: vec![],
+            is_system: false,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn test_resource_type_standard_actions() {
+        assert_eq!(
+            ResourceType::Document.standard_actions(),
+            &["create", "read", "update", "delete", "export"]
+        );
+        assert_eq!(
+            ResourceType::Node.standard_actions(),
+            &["create", "read", "update", "delete", "move", "link"]
+        );
+        assert_eq!(
+            ResourceType::Edge.standard_actions(),
+            &["create", "read", "delete"]
+        );
+        assert_eq!(
+            ResourceType::User.standard_actions(),
+            &["create", "read", "update", "delete", "manage_roles"]
+        );
+        assert_eq!(
+            ResourceType::Role.standard_actions(),
+            &["create", "read", "update", "delete", "assign"]
+        );
+        assert_eq!(
+            ResourceType::System.standard_actions(),
+            &["read", "update", "configure"]
+        );
+        assert_eq!(
+            ResourceType::Tool.standard_actions(),
+            &["register", "deregister", "invoke", "configure"]
+        );
+        assert_eq!(
+            ResourceType::Agent.standard_actions(),
+            &["create", "read", "execute", "stop", "delete"]
+        );
+        assert_eq!(
+            ResourceType::Workflow.standard_actions(),
+            &["create", "read", "update", "delete", "execute", "pause"]
+        );
+        assert_eq!(
+            ResourceType::RagConfig.standard_actions(),
+            &["read", "update", "rebuild_index"]
+        );
+        assert_eq!(
+            ResourceType::VectorIndex.standard_actions(),
+            &["create", "read", "delete", "query"]
+        );
+        assert_eq!(
+            ResourceType::AuditLog.standard_actions(),
+            &["read", "export"]
+        );
+        assert_eq!(
+            ResourceType::ApiKey.standard_actions(),
+            &["create", "read", "revoke", "rotate"]
+        );
+    }
+
+    #[test]
+    fn test_resource_type_display_name() {
+        assert_eq!(ResourceType::Document.display_name(), "文档");
+        assert_eq!(ResourceType::Node.display_name(), "知识节点");
+        assert_eq!(ResourceType::Edge.display_name(), "关系边");
+        assert_eq!(ResourceType::User.display_name(), "用户");
+        assert_eq!(ResourceType::Role.display_name(), "角色");
+        assert_eq!(ResourceType::System.display_name(), "系统");
+        assert_eq!(ResourceType::Tool.display_name(), "MCP 工具");
+        assert_eq!(ResourceType::Agent.display_name(), "AI Agent");
+        assert_eq!(ResourceType::Workflow.display_name(), "工作流");
+        assert_eq!(ResourceType::RagConfig.display_name(), "RAG 配置");
+        assert_eq!(ResourceType::VectorIndex.display_name(), "向量索引");
+        assert_eq!(ResourceType::AuditLog.display_name(), "审计日志");
+        assert_eq!(ResourceType::ApiKey.display_name(), "API 密钥");
+    }
+
+    #[test]
+    fn test_resource_type_display_trait() {
+        assert_eq!(format!("{}", ResourceType::Document), "文档");
+        assert_eq!(format!("{}", ResourceType::ApiKey), "API 密钥");
+    }
+
+    #[test]
+    fn test_resource_type_serialization_roundtrip() {
+        let variants = [
+            ResourceType::Document,
+            ResourceType::Node,
+            ResourceType::Edge,
+            ResourceType::User,
+            ResourceType::Role,
+            ResourceType::System,
+            ResourceType::Tool,
+            ResourceType::Agent,
+            ResourceType::Workflow,
+            ResourceType::RagConfig,
+            ResourceType::VectorIndex,
+            ResourceType::AuditLog,
+            ResourceType::ApiKey,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let de: ResourceType = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, de);
+        }
+    }
+
+    #[test]
+    fn test_permission_scope_own() {
+        let scope = PermissionScope::Own;
+        assert!(scope.contains_resource("user1", "user1", &[], "org1"));
+        assert!(!scope.contains_resource("user1", "user2", &[], "org1"));
+    }
+
+    #[test]
+    fn test_permission_scope_team() {
+        let scope = PermissionScope::Team;
+        assert!(scope.contains_resource("user1", "user2", &["org1".to_string()], "org1"));
+        assert!(!scope.contains_resource("user1", "user2", &["org2".to_string()], "org1"));
+    }
+
+    #[test]
+    fn test_permission_scope_organization_and_global() {
+        assert!(PermissionScope::Organization.contains_resource("a", "b", &[], "c"));
+        assert!(PermissionScope::Global.contains_resource("a", "b", &[], "c"));
+    }
+
+    #[test]
+    fn test_permission_scope_custom() {
+        let scope = PermissionScope::Custom(vec!["scope1".to_string(), "scope2".to_string()]);
+        assert!(scope.contains_resource("scope1", "other", &[], "other"));
+        assert!(scope.contains_resource("other", "other", &[], "scope2"));
+        assert!(!scope.contains_resource("other", "other", &[], "other"));
+    }
+
+    #[test]
+    fn test_permission_scope_serialization_roundtrip() {
+        let scopes = [
+            PermissionScope::Own,
+            PermissionScope::Team,
+            PermissionScope::Organization,
+            PermissionScope::Global,
+            PermissionScope::Custom(vec!["a".to_string()]),
+        ];
+        for s in &scopes {
+            let json = serde_json::to_string(s).unwrap();
+            let de: PermissionScope = serde_json::from_str(&json).unwrap();
+            assert_eq!(*s, de);
+        }
+    }
+
+    #[test]
+    fn test_role_effective_permissions_no_inherited() {
+        let perm = make_permission(
+            "00000000-0000-0000-0000-000000000001",
+            ResourceType::Document,
+            &["read"],
+        );
+        let role = make_role("viewer", vec![perm.clone()]);
+        let effective = role.effective_permissions(&[]);
+        assert_eq!(effective.len(), 1);
+        assert_eq!(effective[0].id, perm.id);
+    }
+
+    #[test]
+    fn test_role_effective_permissions_with_inherited() {
+        let own_perm = make_permission(
+            "00000000-0000-0000-0000-000000000001",
+            ResourceType::Document,
+            &["read"],
+        );
+        let inherited_perm = make_permission(
+            "00000000-0000-0000-0000-000000000002",
+            ResourceType::Node,
+            &["read"],
+        );
+        let role = make_role("viewer", vec![own_perm]);
+        let effective = role.effective_permissions(&[inherited_perm]);
+        assert_eq!(effective.len(), 2);
+    }
+
+    #[test]
+    fn test_role_effective_permissions_dedup() {
+        let perm = make_permission(
+            "00000000-0000-0000-0000-000000000001",
+            ResourceType::Document,
+            &["read"],
+        );
+        let role = make_role("viewer", vec![perm.clone()]);
+        let effective = role.effective_permissions(std::slice::from_ref(&perm));
+        assert_eq!(effective.len(), 1);
+    }
+
+    #[test]
+    fn test_role_has_permission_for_granted() {
+        let perm = make_permission(
+            "00000000-0000-0000-0000-000000000001",
+            ResourceType::Document,
+            &["read", "write"],
+        );
+        let role = make_role("editor", vec![perm]);
+        assert!(role.has_permission_for(&ResourceType::Document, "read", &[]));
+    }
+
+    #[test]
+    fn test_role_has_permission_for_denied() {
+        let perm = make_permission(
+            "00000000-0000-0000-0000-000000000001",
+            ResourceType::Document,
+            &["read"],
+        );
+        let role = make_role("viewer", vec![perm]);
+        assert!(!role.has_permission_for(&ResourceType::Document, "delete", &[]));
+        assert!(!role.has_permission_for(&ResourceType::Node, "read", &[]));
+    }
+
+    #[test]
+    fn test_role_has_permission_for_inherited() {
+        let inherited_perm = make_permission(
+            "00000000-0000-0000-0000-000000000002",
+            ResourceType::Node,
+            &["read"],
+        );
+        let role = make_role("viewer", vec![]);
+        assert!(role.has_permission_for(&ResourceType::Node, "read", &[inherited_perm]));
+    }
+
+    #[test]
+    fn test_role_serialization_roundtrip() {
+        let perm = make_permission(
+            "00000000-0000-0000-0000-000000000001",
+            ResourceType::Document,
+            &["read"],
+        );
+        let role = make_role("test", vec![perm]);
+        let json = serde_json::to_string(&role).unwrap();
+        let de: Role = serde_json::from_str(&json).unwrap();
+        assert_eq!(role.name, de.name);
+        assert_eq!(role.permissions.len(), de.permissions.len());
+    }
+
+    #[test]
+    fn test_assignment_source_serialization() {
+        let sources = [
+            AssignmentSource::Manual,
+            AssignmentSource::AutoRule,
+            AssignmentSource::Inherited,
+            AssignmentSource::ApiKey,
+        ];
+        for s in &sources {
+            let json = serde_json::to_string(s).unwrap();
+            let de: AssignmentSource = serde_json::from_str(&json).unwrap();
+            assert_eq!(*s, de);
+        }
+    }
+
+    #[test]
+    fn test_user_role_assignment_serialization() {
+        let assignment = UserRoleAssignment {
+            id: Uuid::new_v4(),
+            user_id: "user1".to_string(),
+            role_id: Uuid::new_v4(),
+            assignment_source: AssignmentSource::Manual,
+            assigned_by: Some("admin".to_string()),
+            expires_at: None,
+            created_at: Utc::now(),
+        };
+        let json = serde_json::to_string(&assignment).unwrap();
+        let de: UserRoleAssignment = serde_json::from_str(&json).unwrap();
+        assert_eq!(assignment.user_id, de.user_id);
+        assert_eq!(assignment.assigned_by, de.assigned_by);
+    }
 }
 
 impl ResourceType {
@@ -224,13 +522,11 @@ impl PermissionScope {
     ) -> bool {
         match self {
             Self::Own => owner_id == principal_id,
-            Self::Team => team_ids.iter().any(|tid| {
-                tid.as_str() == org_id
-            }),
+            Self::Team => team_ids.iter().any(|tid| tid.as_str() == org_id),
             Self::Organization | Self::Global => true,
-            Self::Custom(scope_ids) => scope_ids.iter().any(|sid| {
-                sid.as_str() == org_id || sid.as_str() == owner_id
-            }),
+            Self::Custom(scope_ids) => scope_ids
+                .iter()
+                .any(|sid| sid.as_str() == org_id || sid.as_str() == owner_id),
         }
     }
 }

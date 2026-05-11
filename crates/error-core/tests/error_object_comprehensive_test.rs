@@ -3,9 +3,9 @@
 //! This module tests the complete lifecycle of error objects, covering all edge cases and boundary values.
 #![allow(clippy::uninlined_format_args, clippy::too_many_lines)]
 
+use error_core::classification::{ErrorSource, ImpactScope, Recoverability, Severity};
 use error_core::error_object::{ErrorObject, ErrorObjectBuilder};
-use error_core::classification::{ErrorSource, Severity, ImpactScope, Recoverability};
-use error_core::propagation::{ContextFrame, RecoveryHint, RetryConfig};
+use error_core::propagation::{ContextFrame, RecoveryAction, RecoveryHint, RetryConfig};
 use std::collections::HashMap;
 
 #[test]
@@ -19,34 +19,34 @@ fn test_error_object_complete_lifecycle() {
         ErrorSource::SYS,
         ErrorSource::USR,
     ];
-    
+
     let severities = [
         Severity::CRITICAL,
         Severity::ERROR,
         Severity::WARNING,
         Severity::INFO,
     ];
-    
+
     let impact_scopes = [
         ImpactScope::GLOBAL,
         ImpactScope::SESSION,
         ImpactScope::MODULE,
         ImpactScope::OPERATION,
     ];
-    
+
     let recoverabilities = [
         Recoverability::AutoRecoverable,
         Recoverability::ManualIntervention,
         Recoverability::NonRecoverable,
     ];
-    
+
     // Test all combinations
     for source in &sources {
         for severity in &severities {
             for impact_scope in &impact_scopes {
                 for recoverability in &recoverabilities {
                     // Create error object
-                    let mut error = ErrorObject::builder()
+                    let error = ErrorObject::builder()
                         .code("ERR-AIM-LM-002_ERR_S")
                         .source(*source)
                         .severity(*severity)
@@ -60,28 +60,31 @@ fn test_error_object_complete_lifecycle() {
                         .request_id("request_456")
                         .detail("model_name", serde_json::json!("gpt-4"))
                         .build();
-                    
-                    // Test all getters
+
                     assert_eq!(error.code(), "ERR-AIM-LM-002_ERR_S");
                     assert_eq!(error.source(), *source);
                     assert_eq!(error.severity(), *severity);
                     assert_eq!(error.impact_scope(), *impact_scope);
                     assert_eq!(error.recoverability(), *recoverability);
                     assert_eq!(error.message(), "AI model call timed out");
-                    assert_eq!(error.user_message(), "AI model service is temporarily unavailable");
+                    assert_eq!(
+                        error.user_message(),
+                        "AI model service is temporarily unavailable"
+                    );
                     assert_eq!(error.module_path(), "ai_model::lm_manager");
                     assert_eq!(error.operation(), "generate_code_completion");
                     assert_eq!(error.session_id().unwrap(), "session_123");
                     assert_eq!(error.request_id().unwrap(), "request_456");
-                    assert_eq!(error.details().get("model_name").unwrap(), &serde_json::json!("gpt-4"));
-                    
-                    // Test add_context_frame
+                    assert_eq!(
+                        error.details().get("model_name").unwrap(),
+                        &serde_json::json!("gpt-4")
+                    );
+
                     let context_frame = ContextFrame::new("api_gateway", HashMap::new());
-                    error.add_context_frame(context_frame);
+                    let error = error.with_context_frame(context_frame);
                     assert_eq!(error.context_chain().len(), 1);
                     assert_eq!(error.context_chain()[0].source(), "api_gateway");
-                    
-                    // Test set_cause
+
                     let cause = ErrorObject::builder()
                         .code("ERR-NET-API-001_ERR_S")
                         .source(ErrorSource::NET)
@@ -93,15 +96,15 @@ fn test_error_object_complete_lifecycle() {
                         .module_path("network::api_client")
                         .operation("send_request")
                         .build();
-                    
-                    error.set_cause(cause);
+
+                    let error = error.with_cause(cause);
                     assert!(error.cause().is_some());
                     assert_eq!(error.cause().unwrap().code(), "ERR-NET-API-001_ERR_S");
-                    
+
                     // Test equality
                     let error_clone = error.clone();
                     assert_eq!(error, error_clone);
-                    
+
                     // Test debug formatting
                     let debug_str = format!("{:?}", error);
                     assert!(debug_str.contains("ErrorObject"));
@@ -116,9 +119,10 @@ fn test_error_object_complete_lifecycle() {
 fn test_error_object_builder_comprehensive() {
     // Test builder with all optional fields
     let context_frame = ContextFrame::new("api_gateway", HashMap::new());
-    let recovery_hint = RecoveryHint::new("Retry", "Retry the operation", HashMap::new());
+    let recovery_hint =
+        RecoveryHint::new(RecoveryAction::Retry, "Retry the operation", HashMap::new());
     let retry_config = RetryConfig::new(3, 1000, 10000, 2.0, true);
-    
+
     let cause = ErrorObject::builder()
         .code("ERR-NET-API-001_ERR_S")
         .source(ErrorSource::NET)
@@ -130,7 +134,7 @@ fn test_error_object_builder_comprehensive() {
         .module_path("network::api_client")
         .operation("send_request")
         .build();
-    
+
     let error = ErrorObject::builder()
         .code("ERR-AIM-LM-002_ERR_S")
         .source(ErrorSource::AIM)
@@ -150,7 +154,7 @@ fn test_error_object_builder_comprehensive() {
         .retry_config(retry_config)
         .cause(cause)
         .build();
-    
+
     // Test all fields
     assert_eq!(error.code(), "ERR-AIM-LM-002_ERR_S");
     assert_eq!(error.source(), ErrorSource::AIM);
@@ -158,13 +162,22 @@ fn test_error_object_builder_comprehensive() {
     assert_eq!(error.impact_scope(), ImpactScope::SESSION);
     assert_eq!(error.recoverability(), Recoverability::AutoRecoverable);
     assert_eq!(error.message(), "AI model call timed out");
-    assert_eq!(error.user_message(), "AI model service is temporarily unavailable");
+    assert_eq!(
+        error.user_message(),
+        "AI model service is temporarily unavailable"
+    );
     assert_eq!(error.module_path(), "ai_model::lm_manager");
     assert_eq!(error.operation(), "generate_code_completion");
     assert_eq!(error.session_id().unwrap(), "session_123");
     assert_eq!(error.request_id().unwrap(), "request_456");
-    assert_eq!(error.details().get("model_name").unwrap(), &serde_json::json!("gpt-4"));
-    assert_eq!(error.details().get("timeout").unwrap(), &serde_json::json!(30000));
+    assert_eq!(
+        error.details().get("model_name").unwrap(),
+        &serde_json::json!("gpt-4")
+    );
+    assert_eq!(
+        error.details().get("timeout").unwrap(),
+        &serde_json::json!(30000)
+    );
     assert_eq!(error.context_chain().len(), 1);
     assert_eq!(error.recovery_hints().len(), 1);
     assert!(error.retry_config().is_some());
@@ -177,7 +190,7 @@ fn test_error_object_missing_required_fields() {
     let builder = ErrorObject::builder();
     let result = builder.build_checked();
     assert!(result.is_err());
-    
+
     // Test missing individual required fields
     // Missing code
     let result = ErrorObject::builder()
@@ -191,7 +204,7 @@ fn test_error_object_missing_required_fields() {
         .operation("generate_code_completion")
         .build_checked();
     assert!(result.is_err());
-    
+
     // Missing source
     let result = ErrorObject::builder()
         .code("ERR-AIM-LM-002_ERR_S")
@@ -204,7 +217,7 @@ fn test_error_object_missing_required_fields() {
         .operation("generate_code_completion")
         .build_checked();
     assert!(result.is_err());
-    
+
     // Missing severity
     let result = ErrorObject::builder()
         .code("ERR-AIM-LM-002_ERR_S")
@@ -217,7 +230,7 @@ fn test_error_object_missing_required_fields() {
         .operation("generate_code_completion")
         .build_checked();
     assert!(result.is_err());
-    
+
     // Missing impact_scope
     let result = ErrorObject::builder()
         .code("ERR-AIM-LM-002_ERR_S")
@@ -230,7 +243,7 @@ fn test_error_object_missing_required_fields() {
         .operation("generate_code_completion")
         .build_checked();
     assert!(result.is_err());
-    
+
     // Missing recoverability
     let result = ErrorObject::builder()
         .code("ERR-AIM-LM-002_ERR_S")
@@ -243,7 +256,7 @@ fn test_error_object_missing_required_fields() {
         .operation("generate_code_completion")
         .build_checked();
     assert!(result.is_err());
-    
+
     // Missing message
     let result = ErrorObject::builder()
         .code("ERR-AIM-LM-002_ERR_S")
@@ -256,7 +269,7 @@ fn test_error_object_missing_required_fields() {
         .operation("generate_code_completion")
         .build_checked();
     assert!(result.is_err());
-    
+
     // Missing user_message
     let result = ErrorObject::builder()
         .code("ERR-AIM-LM-002_ERR_S")
@@ -269,7 +282,7 @@ fn test_error_object_missing_required_fields() {
         .operation("generate_code_completion")
         .build_checked();
     assert!(result.is_err());
-    
+
     // Missing module_path
     let result = ErrorObject::builder()
         .code("ERR-AIM-LM-002_ERR_S")
@@ -282,7 +295,7 @@ fn test_error_object_missing_required_fields() {
         .operation("generate_code_completion")
         .build_checked();
     assert!(result.is_err());
-    
+
     // Missing operation
     let result = ErrorObject::builder()
         .code("ERR-AIM-LM-002_ERR_S")
@@ -301,9 +314,9 @@ fn test_error_object_missing_required_fields() {
 fn test_error_object_default_builder() {
     // Test the Default implementation for ErrorObjectBuilder
     use std::default::Default;
-    
+
     let builder = ErrorObjectBuilder::default();
-    
+
     // Test that we can build an error object from the default builder
     let _result = builder
         .code("ERR-AIM-LM-002_ERR_S")

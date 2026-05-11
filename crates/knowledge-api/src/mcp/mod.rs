@@ -18,15 +18,15 @@
 //! | `tools` | 内置工具定义 |
 //! | `resources` | 资源端点 |
 
+pub mod resources;
 pub mod server;
 pub mod tools;
-pub mod resources;
 
 // 企业级模块
-pub mod registry;
 pub mod prompts;
-pub mod sessions;
 pub mod rate_limit;
+pub mod registry;
+pub mod sessions;
 
 // 重新导出旧版 prompts（保持向后兼容）
 #[allow(clippy::module_inception)]
@@ -36,7 +36,7 @@ pub use server::McpServer;
 pub use server::run_mcp_server;
 
 // 企业级 API 导出
-pub use registry::{ToolRegistry, ToolDefinition, ToolHandler, CallContext, ToolCallResult};
 pub use prompts::PromptManager;
-pub use sessions::SessionManager;
 pub use rate_limit::{TokenBucketRateLimiter, TokenUsageTracker};
+pub use registry::{CallContext, ToolCallResult, ToolDefinition, ToolHandler, ToolRegistry};
+pub use sessions::SessionManager;

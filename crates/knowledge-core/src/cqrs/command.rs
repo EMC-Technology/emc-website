@@ -1,6 +1,8 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
+
+use crate::model::{ContentType, Direction, DocumentId, NodeId, NodeType, RefType, SourceType};
 
 /// Command trait - 表示写操作的意图
 ///
@@ -57,7 +59,7 @@ pub trait Command: Send + Sync + Serialize + Deserialize<'static> + std::fmt::De
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentCreatedResult {
     /// 新创建的文档 ID
-    pub document_id: String,
+    pub document_id: DocumentId,
     /// 创建后的聚合根版本号
     pub version: u64,
     /// 命令执行时间戳
@@ -68,7 +70,7 @@ pub struct DocumentCreatedResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentUpdatedResult {
     /// 被更新的文档 ID
-    pub document_id: String,
+    pub document_id: DocumentId,
     /// 更新后的聚合根版本号
     pub version: u64,
     /// 更新前的聚合根版本号
@@ -81,7 +83,7 @@ pub struct DocumentUpdatedResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentDeletedResult {
     /// 被删除的文档 ID
-    pub document_id: String,
+    pub document_id: DocumentId,
     /// 删除时的最终版本号
     pub final_version: u64,
     /// 命令执行时间戳
@@ -92,9 +94,9 @@ pub struct DocumentDeletedResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeCreatedResult {
     /// 新创建的节点 ID
-    pub node_id: String,
+    pub node_id: NodeId,
     /// 所属文档 ID
-    pub document_id: String,
+    pub document_id: DocumentId,
     /// 创建后的聚合根版本号
     pub version: u64,
     /// 命令执行时间戳
@@ -105,11 +107,11 @@ pub struct NodeCreatedResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodesLinkedResult {
     /// 源节点 ID
-    pub source_node_id: String,
+    pub source_node_id: NodeId,
     /// 目标节点 ID
-    pub target_node_id: String,
-    /// 关联类型（如 Usage、Definition）
-    pub relation_type: String,
+    pub target_node_id: NodeId,
+    /// 关联类型
+    pub relation_type: RefType,
     /// 关联后的聚合根版本号
     pub version: u64,
     /// 命令执行时间戳
@@ -120,7 +122,7 @@ pub struct NodesLinkedResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileIngestedResult {
     /// 导入后创建的文档 ID
-    pub document_id: String,
+    pub document_id: DocumentId,
     /// 原始文件路径
     pub file_path: String,
     /// 解析产生的块数量
@@ -152,13 +154,13 @@ pub struct CreateDocumentCommand {
     pub command_id: Uuid,
     /// 目标聚合根 ID
     #[serde(rename = "aggregateId")]
-    pub aggregate_id: String,
+    pub aggregate_id: DocumentId,
     /// 文档标题
     pub title: String,
     /// 文档内容（Markdown 或纯文本）
     pub content: String,
-    /// 内容 MIME 类型（如 `text/markdown`、`text/plain`）
-    pub content_type: String,
+    /// 内容 MIME 类型
+    pub content_type: ContentType,
     /// 附加元数据（键值对）
     pub metadata: serde_json::Value,
     /// 预期版本号（乐观锁）
@@ -174,7 +176,7 @@ impl Command for CreateDocumentCommand {
     }
 
     fn aggregate_id(&self) -> &str {
-        &self.aggregate_id
+        self.aggregate_id.as_str()
     }
 
     fn expected_version(&self) -> Option<u64> {
@@ -206,13 +208,13 @@ pub struct UpdateDocumentCommand {
     pub command_id: Uuid,
     /// 目标聚合根 ID
     #[serde(rename = "aggregateId")]
-    pub aggregate_id: String,
+    pub aggregate_id: DocumentId,
     /// 新标题（None 表示不修改）
     pub title: Option<String>,
     /// 新内容（None 表示不修改）
     pub content: Option<String>,
     /// 新内容类型（None 表示不修改）
-    pub content_type: Option<String>,
+    pub content_type: Option<ContentType>,
     /// 新元数据（None 表示不修改）
     pub metadata: Option<serde_json::Value>,
     /// 预期版本号（乐观锁）
@@ -228,7 +230,7 @@ impl Command for UpdateDocumentCommand {
     }
 
     fn aggregate_id(&self) -> &str {
-        &self.aggregate_id
+        self.aggregate_id.as_str()
     }
 
     fn expected_version(&self) -> Option<u64> {
@@ -246,7 +248,7 @@ pub struct DeleteDocumentCommand {
     pub command_id: Uuid,
     /// 目标聚合根 ID
     #[serde(rename = "aggregateId")]
-    pub aggregate_id: String,
+    pub aggregate_id: DocumentId,
     /// 预期版本号（乐观锁）
     #[serde(rename = "expectedVersion")]
     pub expected_version: Option<u64>,
@@ -260,7 +262,7 @@ impl Command for DeleteDocumentCommand {
     }
 
     fn aggregate_id(&self) -> &str {
-        &self.aggregate_id
+        self.aggregate_id.as_str()
     }
 
     fn expected_version(&self) -> Option<u64> {
@@ -278,11 +280,11 @@ pub struct CreateNodeCommand {
     pub command_id: Uuid,
     /// 目标聚合根 ID
     #[serde(rename = "aggregateId")]
-    pub aggregate_id: String,
+    pub aggregate_id: NodeId,
     /// 所属文档 ID
-    pub document_id: String,
-    /// 节点类型（如 `Heading`、`Paragraph`、`Code`）
-    pub node_type: String,
+    pub document_id: DocumentId,
+    /// 节点类型
+    pub node_type: NodeType,
     /// 节点文本内容
     pub content: String,
     /// 节点在源文件中的位置信息
@@ -315,7 +317,7 @@ impl Command for CreateNodeCommand {
     }
 
     fn aggregate_id(&self) -> &str {
-        &self.aggregate_id
+        self.aggregate_id.as_str()
     }
 
     fn expected_version(&self) -> Option<u64> {
@@ -333,15 +335,15 @@ pub struct LinkNodesCommand {
     pub command_id: Uuid,
     /// 目标聚合根 ID
     #[serde(rename = "aggregateId")]
-    pub aggregate_id: String,
+    pub aggregate_id: NodeId,
     /// 源节点 ID（边的起点）
-    pub source_node_id: String,
+    pub source_node_id: NodeId,
     /// 目标节点 ID（边的终点）
-    pub target_node_id: String,
-    /// 关联类型（如 `Usage`、`Definition`、`Link`）
-    pub relation_type: String,
-    /// 方向性（`OneWay`、`TwoWay`、`ImplicitTwoWay`）
-    pub direction: String,
+    pub target_node_id: NodeId,
+    /// 关联类型
+    pub relation_type: RefType,
+    /// 方向性
+    pub direction: Direction,
     /// 附加元数据
     pub metadata: serde_json::Value,
     /// 预期版本号（乐观锁）
@@ -357,7 +359,7 @@ impl Command for LinkNodesCommand {
     }
 
     fn aggregate_id(&self) -> &str {
-        &self.aggregate_id
+        self.aggregate_id.as_str()
     }
 
     fn expected_version(&self) -> Option<u64> {
@@ -375,11 +377,11 @@ pub struct IngestFileCommand {
     pub command_id: Uuid,
     /// 目标聚合根 ID
     #[serde(rename = "aggregateId")]
-    pub aggregate_id: String,
+    pub aggregate_id: DocumentId,
     /// 待导入文件的路径
     pub file_path: String,
-    /// 文件来源类型（`markdown`、`code`、`plain`）
-    pub source_type: String,
+    /// 文件来源类型
+    pub source_type: SourceType,
     /// 导入选项（分块大小、是否提取引用等）
     pub options: IngestOptions,
     /// 预期版本号（乐观锁）
@@ -421,7 +423,7 @@ impl Command for IngestFileCommand {
     }
 
     fn aggregate_id(&self) -> &str {
-        &self.aggregate_id
+        self.aggregate_id.as_str()
     }
 
     fn expected_version(&self) -> Option<u64> {
@@ -449,7 +451,7 @@ pub enum ReindexScope {
     /// 全量重建所有文档
     All,
     /// 仅重建指定 ID 列表中的文档
-    Documents(Vec<String>),
+    Documents(Vec<DocumentId>),
     /// 重建指定时间之后变更的文档
     Since(DateTime<Utc>),
 }
@@ -478,10 +480,10 @@ mod tests {
     fn create_test_command() -> CreateDocumentCommand {
         CreateDocumentCommand {
             command_id: Uuid::new_v4(),
-            aggregate_id: "doc_001".to_string(),
+            aggregate_id: DocumentId::new("doc_001"),
             title: "Test Document".to_string(),
             content: "# Hello World\n\nThis is test content.".to_string(),
-            content_type: "markdown".to_string(),
+            content_type: ContentType::Markdown,
             metadata: serde_json::json!({"author": "test_user"}),
             expected_version: None,
         }
@@ -512,7 +514,7 @@ mod tests {
     fn test_update_document_command_with_optional_fields() {
         let cmd = UpdateDocumentCommand {
             command_id: Uuid::new_v4(),
-            aggregate_id: "doc_002".to_string(),
+            aggregate_id: "doc_002".into(),
             title: Some("Updated Title".to_string()),
             content: None,
             content_type: None,
@@ -529,7 +531,7 @@ mod tests {
     fn test_delete_document_command_minimal() {
         let cmd = DeleteDocumentCommand {
             command_id: Uuid::new_v4(),
-            aggregate_id: "doc_003".to_string(),
+            aggregate_id: "doc_003".into(),
             expected_version: Some(10),
         };
 
@@ -541,9 +543,9 @@ mod tests {
         let options = IngestOptions::default();
         let cmd = IngestFileCommand {
             command_id: Uuid::new_v4(),
-            aggregate_id: "doc_004".to_string(),
+            aggregate_id: "doc_004".into(),
             file_path: "/path/to/file.md".to_string(),
-            source_type: "markdown".to_string(),
+            source_type: SourceType::Markdown,
             options,
             expected_version: None,
         };
@@ -564,7 +566,7 @@ mod tests {
 
         let docs_scope = ReindexCommand {
             command_id: Uuid::new_v4(),
-            scope: ReindexScope::Documents(vec!["doc1".to_string(), "doc2".to_string()]),
+            scope: ReindexScope::Documents(vec!["doc1".into(), "doc2".into()]),
             force_full: true,
         };
         match docs_scope.scope {
@@ -577,17 +579,17 @@ mod tests {
     fn test_link_nodes_command_directions() {
         let cmd = LinkNodesCommand {
             command_id: Uuid::new_v4(),
-            aggregate_id: "graph_001".to_string(),
-            source_node_id: "node_a".to_string(),
-            target_node_id: "node_b".to_string(),
-            relation_type: "Usage".to_string(),
-            direction: "OneWay".to_string(),
+            aggregate_id: "graph_001".into(),
+            source_node_id: "node_a".into(),
+            target_node_id: "node_b".into(),
+            relation_type: RefType::Usage,
+            direction: Direction::OneWay,
             metadata: serde_json::json!({}),
             expected_version: None,
         };
 
-        assert_eq!(cmd.relation_type, "Usage");
-        assert_eq!(cmd.direction, "OneWay");
+        assert_eq!(cmd.relation_type, RefType::Usage);
+        assert_eq!(cmd.direction, Direction::OneWay);
     }
 
     #[tokio::test]

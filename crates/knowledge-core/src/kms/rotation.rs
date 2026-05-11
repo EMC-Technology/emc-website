@@ -93,16 +93,33 @@ impl Default for RotationScheduleConfig {
     }
 }
 
+/// 轮换事件触发源
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RotationTriggeredBy {
+    /// 自动调度触发
+    Scheduler,
+    /// 手动操作触发
+    ManualOp(String),
+    /// API 调用触发
+    ApiCall(String),
+    /// 系统启动检查触发
+    StartupCheck,
+}
+
 /// 轮换事件
 #[derive(Debug, Clone)]
 pub enum RotationEvent {
     /// 轮换开始
     Started {
+        /// 触发源
+        triggered_by: RotationTriggeredBy,
         /// 密钥 ID
         key_id: String,
     },
     /// 轮换成功完成
     Completed {
+        /// 触发源
+        triggered_by: RotationTriggeredBy,
         /// 密钥 ID
         key_id: String,
         /// 轮换结果
@@ -110,6 +127,8 @@ pub enum RotationEvent {
     },
     /// 轮换失败
     Failed {
+        /// 触发源
+        triggered_by: RotationTriggeredBy,
         /// 密钥 ID
         key_id: String,
         /// 错误信息
@@ -117,6 +136,8 @@ pub enum RotationEvent {
     },
     /// 跳过轮换（未到期）
     Skipped {
+        /// 触发源
+        triggered_by: RotationTriggeredBy,
         /// 密钥 ID
         key_id: String,
         /// 跳过原因
@@ -245,12 +266,14 @@ impl<KMS: KeyManagementService + 'static> KeyRotationScheduler<KMS> {
                 let now = Utc::now();
                 for key_id in due_keys {
                     let _ = tx.send(RotationEvent::Started {
+                        triggered_by: RotationTriggeredBy::Scheduler,
                         key_id: key_id.clone(),
                     });
 
                     match kms.rotate_key(&key_id).await {
                         Ok(result) => {
                             let _ = tx.send(RotationEvent::Completed {
+                                triggered_by: RotationTriggeredBy::Scheduler,
                                 key_id: key_id.clone(),
                                 result: result.clone(),
                             });
@@ -268,6 +291,7 @@ impl<KMS: KeyManagementService + 'static> KeyRotationScheduler<KMS> {
                         }
                         Err(e) => {
                             let _ = tx.send(RotationEvent::Failed {
+                                triggered_by: RotationTriggeredBy::Scheduler,
                                 key_id: key_id.clone(),
                                 error: e.to_string(),
                             });
@@ -377,10 +401,10 @@ impl<KMS: KeyManagementService + 'static> KeyRotationScheduler<KMS> {
 
 impl<KMS: KeyManagementService + 'static> Drop for KeyRotationScheduler<KMS> {
     fn drop(&mut self) {
-        if let Ok(guard) = self.task_handle.try_read() {
-            if let Some(handle) = guard.as_ref() {
-                handle.abort();
-            }
+        if let Ok(guard) = self.task_handle.try_read()
+            && let Some(handle) = guard.as_ref()
+        {
+            handle.abort();
         }
     }
 }

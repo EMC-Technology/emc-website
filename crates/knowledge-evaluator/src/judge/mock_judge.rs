@@ -49,4 +49,12 @@ mod tests {
         assert_eq!(result.content, "yes");
         assert_eq!(result.model, "mock");
     }
+
+    #[test]
+    fn test_mock_judge_default() {
+        let judge = MockJudge;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(judge.judge("prompt", "desc")).unwrap();
+        assert_eq!(result.content, "yes");
+    }
 }

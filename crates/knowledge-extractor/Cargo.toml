@@ -18,7 +18,7 @@ default = ["db"]
 db = ["knowledge-core/db", "dep:surrealdb"]
 
 [dependencies]
-knowledge-core = { path = "../knowledge-core", version = "0.1.0", default-features = false }
+knowledge-core = { path = "../knowledge-core", version = "0.2.0", default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -34,3 +34,6 @@ surrealdb = { version = "1.3", optional = true, default-features = false, featur
 [dev-dependencies]
 tokio = { workspace = true }
 surrealdb = { version = "1.3", default-features = false, features = ["kv-mem", "protocol-ws"] }
+
+[lints]
+workspace = true

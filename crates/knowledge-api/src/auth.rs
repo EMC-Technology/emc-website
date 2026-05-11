@@ -14,12 +14,25 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use zeroize::Zeroizing;
 
 use crate::authz::middleware::AuthenticatedPrincipal;
 use crate::error_handler::ApiError;
 use crate::handler::AppState;
 use error_core::helpers;
-use knowledge_core::{AuditEvent, AuditLogger};
+use knowledge_core::{AuditEvent, AuditLogger, audit::AuditRole, audit::AuditScope};
+
+impl From<Role> for AuditRole {
+    fn from(role: Role) -> Self {
+        match role {
+            Role::Admin => Self::Admin,
+            Role::Editor => Self::Editor,
+            Role::Viewer => Self::Viewer,
+            Role::ServiceAccount => Self::Custom("ServiceAccount".to_string()),
+            Role::Anonymous => Self::Custom("Anonymous".to_string()),
+        }
+    }
+}
 
 /// 用户角色枚举
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
@@ -34,6 +47,18 @@ pub enum Role {
     ServiceAccount,
     /// 匿名用户：无任何权限
     Anonymous,
+}
+
+impl std::fmt::Display for Role {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Admin => write!(f, "admin"),
+            Self::Editor => write!(f, "editor"),
+            Self::Viewer => write!(f, "viewer"),
+            Self::ServiceAccount => write!(f, "serviceaccount"),
+            Self::Anonymous => write!(f, "anonymous"),
+        }
+    }
 }
 
 impl std::str::FromStr for Role {
@@ -87,7 +112,7 @@ pub struct Claims {
     /// 用户名
     pub sub: String,
     /// 角色标识
-    pub role: String,
+    pub role: Role,
     /// 过期时间（Unix 时间戳）
     pub exp: u64,
     /// 签发时间（Unix 时间戳）
@@ -100,13 +125,70 @@ pub struct Claims {
     pub jti: String,
 }
 
+/// Token 黑名单（用于 JWT 撤销）
+pub trait TokenBlacklist: Send + Sync {
+    /// 将 Token 的 jti 加入黑名单
+    ///
+    /// # Errors
+    ///
+    /// 当黑名单操作失败时返回错误
+    fn revoke(&self, jti: &str, expires_at: chrono::DateTime<chrono::Utc>) -> crate::Result<()>;
+
+    /// 检查 Token 是否已被撤销
+    fn is_revoked(&self, jti: &str) -> bool;
+}
+
+/// 内存 Token 黑名单实现
+pub struct InMemoryTokenBlacklist {
+    revoked: dashmap::DashMap<String, chrono::DateTime<chrono::Utc>>,
+}
+
+impl InMemoryTokenBlacklist {
+    /// 创建新的内存黑名单
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            revoked: dashmap::DashMap::new(),
+        }
+    }
+
+    /// 清理已过期的黑名单条目
+    pub fn cleanup_expired(&self) {
+        let now = chrono::Utc::now();
+        self.revoked.retain(|_, expires_at| *expires_at > now);
+    }
+}
+
+impl Default for InMemoryTokenBlacklist {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TokenBlacklist for InMemoryTokenBlacklist {
+    fn revoke(&self, jti: &str, expires_at: chrono::DateTime<chrono::Utc>) -> crate::Result<()> {
+        self.revoked.insert(jti.to_string(), expires_at);
+        Ok(())
+    }
+
+    fn is_revoked(&self, jti: &str) -> bool {
+        if let Some(expires_at) = self.revoked.get(jti)
+            && *expires_at > chrono::Utc::now()
+        {
+            return true;
+        }
+        false
+    }
+}
+
 /// 认证服务
 ///
 /// 提供 JWT Token 的生成与验证功能。
 pub struct AuthService {
-    jwt_secret: String,
+    jwt_secret: Zeroizing<String>,
     jwt_expiry_hours: u8,
     audit_logger: Option<Box<AuditLogger>>,
+    blacklist: Option<Box<dyn TokenBlacklist>>,
 }
 
 impl AuthService {
@@ -117,15 +199,22 @@ impl AuthService {
     /// 当 JWT 密钥为空或过短时返回错误。
     pub fn new(jwt_secret: &str, jwt_expiry_hours: u8) -> crate::Result<Self> {
         if jwt_secret.is_empty() {
-            return Err(helpers::auth_error("JWT 密钥不能为空，请设置环境变量 KNOWLEDGE_JWT_SECRET", "auth_new"));
+            return Err(helpers::auth_error(
+                "JWT 密钥不能为空，请设置环境变量 KNOWLEDGE_JWT_SECRET",
+                "auth_new",
+            ));
         }
         if jwt_secret.len() < 32 {
-            return Err(helpers::auth_error("JWT 密钥长度不能少于 32 个字符（HMAC-SHA256 要求 256 位密钥）", "auth_new"));
+            return Err(helpers::auth_error(
+                "JWT 密钥长度不能少于 32 个字符（HMAC-SHA256 要求 256 位密钥）",
+                "auth_new",
+            ));
         }
         Ok(Self {
-            jwt_secret: jwt_secret.to_string(),
+            jwt_secret: Zeroizing::new(jwt_secret.to_string()),
             jwt_expiry_hours,
             audit_logger: None,
+            blacklist: None,
         })
     }
 
@@ -134,6 +223,30 @@ impl AuthService {
     pub fn with_audit_logger(mut self, logger: AuditLogger) -> Self {
         self.audit_logger = Some(Box::new(logger));
         self
+    }
+
+    /// 为认证服务附加 Token 黑名单（Builder 模式）
+    #[must_use]
+    pub fn with_blacklist(mut self, blacklist: Box<dyn TokenBlacklist>) -> Self {
+        self.blacklist = Some(blacklist);
+        self
+    }
+
+    /// 撤销 Token
+    ///
+    /// # Errors
+    ///
+    /// 当黑名单操作失败时返回错误
+    pub fn revoke_token(
+        &self,
+        jti: &str,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> crate::Result<()> {
+        if let Some(blacklist) = &self.blacklist {
+            blacklist.revoke(jti, expires_at)
+        } else {
+            Err(helpers::auth_error("Token 黑名单未配置", "revoke_token"))
+        }
     }
 
     /// # Errors
@@ -151,7 +264,7 @@ impl AuthService {
 
         let claims = Claims {
             sub: username.to_string(),
-            role: serde_json::to_string(role)?,
+            role: role.clone(),
             exp,
             iat: now,
             iss: "knowledge-api".to_string(),
@@ -167,10 +280,11 @@ impl AuthService {
 
         if let Some(logger) = &self.audit_logger {
             let event = AuditEvent::PermissionChange {
+                triggered_by: knowledge_core::audit::AuditTriggeredBy::User(username.to_string()),
                 user_id: username.to_string(),
-                role: format!("{role:?}"),
+                role: role.clone().into(),
             };
-            let _ = logger.log(username, &event, "auth");
+            let _ = logger.log(username, &event, &AuditScope::Local);
         }
 
         Ok(token)
@@ -191,15 +305,23 @@ impl AuthService {
             },
         )?;
 
-        Ok(claims.claims)
+        let claims = claims.claims;
+
+        if let Some(blacklist) = &self.blacklist
+            && blacklist.is_revoked(&claims.jti)
+        {
+            return Err(helpers::auth_error("Token 已被撤销", "validate_token"));
+        }
+
+        Ok(claims)
     }
 
     /// # Errors
     ///
     /// 角色字段反序列化失败时返回错误。
-    pub fn get_role_from_claims(&self, claims: &Claims) -> crate::Result<Role> {
-        let role: Role = serde_json::from_str(&claims.role)?;
-        Ok(role)
+    #[must_use]
+    pub fn get_role_from_claims(&self, claims: &Claims) -> Role {
+        claims.role.clone()
     }
 }
 
@@ -222,25 +344,16 @@ pub async fn auth_middleware(
 
     let (role, principal) = if let Some(token) = token {
         match auth_service.validate_token(token) {
-            Ok(claims) => match auth_service.get_role_from_claims(&claims) {
-                Ok(role) => {
-                    let principal = AuthenticatedPrincipal {
-                        id: claims.sub.clone(),
-                        entity_type: "user".to_string(),
-                        roles: vec![format!("{role:?}")],
-                        attrs: HashMap::new(),
-                    };
-                    (role, Some(principal))
-                },
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "JWT Token 角色字段解析失败，拒绝请求"
-                    );
-                    return (axum::http::StatusCode::UNAUTHORIZED, "Token 角色无效")
-                        .into_response();
-                }
-            },
+            Ok(claims) => {
+                let role = auth_service.get_role_from_claims(&claims);
+                let principal = AuthenticatedPrincipal {
+                    id: claims.sub.clone(),
+                    entity_type: crate::authz::middleware::PrincipalEntityType::User,
+                    roles: vec![role.to_string()],
+                    attrs: HashMap::new(),
+                };
+                (role, Some(principal))
+            }
             Err(e) => {
                 tracing::warn!(
                     error = %e,
@@ -275,7 +388,11 @@ pub async fn permission_middleware(
         "GET" | "HEAD" | "OPTIONS" => Permission::Read,
         "POST" | "PUT" | "PATCH" => Permission::Write,
         "DELETE" => Permission::Delete,
-        _ => Permission::Admin,
+        "TRACE" | "CONNECT" => Permission::Admin,
+        other => {
+            tracing::warn!(method = other, "未知 HTTP 方法，默认归类为 Admin");
+            Permission::Admin
+        }
     };
 
     if !role.has_permission(permission) {
@@ -331,12 +448,11 @@ impl LoginRateLimiter {
         });
         let now = Instant::now();
 
-        if let Some(attempt) = attempts.get(username) {
-            if let Some(locked_until) = attempt.locked_until {
-                if now < locked_until {
-                    return false;
-                }
-            }
+        if let Some(attempt) = attempts.get(username)
+            && let Some(locked_until) = attempt.locked_until
+            && now < locked_until
+        {
+            return false;
         }
 
         let entry = attempts
@@ -347,12 +463,12 @@ impl LoginRateLimiter {
                 locked_until: None,
             });
 
-        if let Some(locked_until) = entry.locked_until {
-            if now >= locked_until {
-                entry.failure_count = 0;
-                entry.first_failure = now;
-                entry.locked_until = None;
-            }
+        if let Some(locked_until) = entry.locked_until
+            && now >= locked_until
+        {
+            entry.failure_count = 0;
+            entry.first_failure = now;
+            entry.locked_until = None;
         }
 
         if now.duration_since(entry.first_failure) > self.window {
@@ -364,7 +480,7 @@ impl LoginRateLimiter {
         if entry.failure_count >= self.max_attempts {
             entry.locked_until = Some(now + self.lockout);
             tracing::warn!(
-                username = username,
+                username = "***",
                 "登录速率限制触发，锁定 15 分钟 [AUDIT-SEC-001]"
             );
         }
@@ -407,7 +523,7 @@ pub struct LoginResponse {
     /// JWT Token
     pub token: String,
     /// 用户角色
-    pub role: String,
+    pub role: Role,
 }
 
 /// 登录处理器
@@ -425,12 +541,18 @@ pub async fn login(
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, ApiError> {
     if req.username.is_empty() || req.password.is_empty() {
-        return Err(ApiError::from(helpers::auth_error("用户名和密码不能为空", "login")));
+        return Err(ApiError::from(helpers::auth_error(
+            "用户名和密码不能为空",
+            "login",
+        )));
     }
 
     let rate_limiter = &state.rate_limiter;
     if !rate_limiter.check_and_record(&req.username) {
-        return Err(ApiError::from(helpers::auth_error("登录尝试过于频繁，请稍后再试", "login")));
+        return Err(ApiError::from(helpers::auth_error(
+            "登录尝试过于频繁，请稍后再试",
+            "login",
+        )));
     }
 
     let auth_service = &state.auth_service;
@@ -446,44 +568,52 @@ pub async fn login(
                 None
             }
         })
-        .ok_or_else(|| {
-            ApiError::from(helpers::auth_error("用户名或密码错误", "login"))
-        })?;
+        .ok_or_else(|| ApiError::from(helpers::auth_error("用户名或密码错误", "login")))?;
 
     rate_limiter.record_success(&req.username);
 
-    let token = auth_service.generate_token(username, &role)
+    let token = auth_service
+        .generate_token(username, &role)
         .map_err(ApiError::from)?;
 
-    Ok(Json(LoginResponse {
-        token,
-        role: format!("{role:?}"),
-    }))
+    Ok(Json(LoginResponse { token, role }))
 }
 
 fn configured_users() -> Vec<(String, (Role, String))> {
     let admin_pass = std::env::var("KNOWLEDGE_ADMIN_PASSWORD").unwrap_or_else(|_| {
-        tracing::error!("KNOWLEDGE_ADMIN_PASSWORD 未设置，admin 用户不可用");
+        tracing::warn!("KNOWLEDGE_ADMIN_PASSWORD 未设置，admin 用户不可用");
         String::new()
     });
     let editor_pass = std::env::var("KNOWLEDGE_EDITOR_PASSWORD").unwrap_or_else(|_| {
-        tracing::error!("KNOWLEDGE_EDITOR_PASSWORD 未设置，editor 用户不可用");
+        tracing::warn!("KNOWLEDGE_EDITOR_PASSWORD 未设置，editor 用户不可用");
         String::new()
     });
     let viewer_pass = std::env::var("KNOWLEDGE_VIEWER_PASSWORD").unwrap_or_else(|_| {
-        tracing::error!("KNOWLEDGE_VIEWER_PASSWORD 未设置，viewer 用户不可用");
+        tracing::warn!("KNOWLEDGE_VIEWER_PASSWORD 未设置，viewer 用户不可用");
         String::new()
     });
 
     let mut users = Vec::new();
     if !admin_pass.is_empty() {
-        users.push(("admin".to_string(), (Role::Admin, admin_pass)));
+        if admin_pass.len() < 8 {
+            tracing::error!("KNOWLEDGE_ADMIN_PASSWORD 长度不足 8 字符，admin 用户不可用");
+        } else {
+            users.push(("admin".to_string(), (Role::Admin, admin_pass)));
+        }
     }
     if !editor_pass.is_empty() {
-        users.push(("editor".to_string(), (Role::Editor, editor_pass)));
+        if editor_pass.len() < 8 {
+            tracing::error!("KNOWLEDGE_EDITOR_PASSWORD 长度不足 8 字符，editor 用户不可用");
+        } else {
+            users.push(("editor".to_string(), (Role::Editor, editor_pass)));
+        }
     }
     if !viewer_pass.is_empty() {
-        users.push(("viewer".to_string(), (Role::Viewer, viewer_pass)));
+        if viewer_pass.len() < 8 {
+            tracing::error!("KNOWLEDGE_VIEWER_PASSWORD 长度不足 8 字符，viewer 用户不可用");
+        } else {
+            users.push(("viewer".to_string(), (Role::Viewer, viewer_pass)));
+        }
     }
 
     if users.is_empty() {
@@ -515,7 +645,8 @@ fn hash_password_argon2(password: &str) -> crate::Result<String> {
     }
 
     let salt = SaltString::generate(&mut password_hash::rand_core::OsRng);
-    let params = Params::new(19456, 2, 1, Some(32)).unwrap_or_else(|_| Params::default());
+    let params = Params::new(19456, 2, 1, Some(32))
+        .map_err(|e| helpers::auth_error(&format!("Argon2 参数创建失败: {e}"), "hash_password"))?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
 
     let hash = argon2
@@ -599,13 +730,14 @@ mod tests {
 
     #[test]
     fn test_jwt_token() {
-        let auth_service = AuthService::new("test-secret-that-is-at-least-32-chars", 1).expect("测试密钥应合法");
+        let auth_service =
+            AuthService::new("test-secret-that-is-at-least-32-chars", 1).expect("测试密钥应合法");
         let token = auth_service
             .generate_token("testuser", &Role::Editor)
             .unwrap();
         let claims = auth_service.validate_token(&token).unwrap();
         assert_eq!(claims.sub, "testuser");
-        let role = auth_service.get_role_from_claims(&claims).unwrap();
+        let role = auth_service.get_role_from_claims(&claims);
         assert_eq!(role, Role::Editor);
     }
 

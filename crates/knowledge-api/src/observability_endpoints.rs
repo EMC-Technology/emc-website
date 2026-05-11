@@ -22,10 +22,10 @@ use crate::observability::is_production;
 ///
 /// 返回 Prometheus exposition format 兼容的纯文本指标数据。
 /// # Errors
-    ///
-    /// 当 Prometheus Recorder 安装失败或环境为生产环境时返回错误响应。
-    #[must_use]
-    pub async fn metrics_endpoint() -> impl IntoResponse {
+///
+/// 当 Prometheus Recorder 安装失败或环境为生产环境时返回错误响应。
+#[must_use]
+pub async fn metrics_endpoint() -> impl IntoResponse {
     use metrics_exporter_prometheus::PrometheusBuilder;
 
     let handle = match PrometheusBuilder::new().install_recorder() {
@@ -44,10 +44,38 @@ use crate::observability::is_production;
     let metrics = handle.render();
     (
         StatusCode::OK,
-        [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
         metrics,
     )
         .into_response()
+}
+
+/// 运行环境枚举
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub enum Environment {
+    /// 开发环境
+    Development,
+    /// 预发布环境
+    Staging,
+    /// 生产环境
+    Production,
+}
+
+impl Environment {
+    fn from_env() -> Self {
+        match std::env::var("ENVIRONMENT")
+            .unwrap_or_else(|_| "development".to_string())
+            .to_lowercase()
+            .as_str()
+        {
+            "production" | "prod" => Self::Production,
+            "staging" | "stage" => Self::Staging,
+            _ => Self::Development,
+        }
+    }
 }
 
 /// Tracing 调试信息响应
@@ -56,7 +84,7 @@ pub struct TracingDebugResponse {
     /// 当前请求的 trace 信息
     pub current_trace: super::middleware::tracing_middleware::TraceInfo,
     /// 是否为生产环境
-    pub environment: String,
+    pub environment: Environment,
     /// 服务版本
     pub service_version: &'static str,
     /// 可用端点列表
@@ -71,10 +99,10 @@ pub struct TracingDebugResponse {
 /// 在生产环境中返回 403 Forbidden。
 #[tracing::instrument(fields(endpoint = "/debug/tracing"))]
 /// # Errors
-    ///
-    /// 当在生产环境中调用或追踪信息获取失败时返回错误。
-    #[must_use = "调试端点结果必须被使用"]
-    pub async fn tracing_debug_endpoint(
+///
+/// 当在生产环境中调用或追踪信息获取失败时返回错误。
+#[must_use = "调试端点结果必须被使用"]
+pub async fn tracing_debug_endpoint(
     headers: HeaderMap,
 ) -> Result<Json<TracingDebugResponse>, ApiError> {
     if is_production() {
@@ -97,14 +125,9 @@ pub struct TracingDebugResponse {
 
     Ok(Json(TracingDebugResponse {
         current_trace: current_trace_info(),
-        environment: std::env::var("ENVIRONMENT")
-            .unwrap_or_else(|_| "development".to_string()),
+        environment: Environment::from_env(),
         service_version: crate::API_VERSION,
-        available_endpoints: vec![
-            "/metrics",
-            "/api/v1/debug/tracing",
-            "/healthz",
-        ],
+        available_endpoints: vec!["/metrics", "/api/v1/debug/tracing", "/healthz"],
     }))
 }
 
@@ -140,7 +163,9 @@ impl ApiError {
 impl From<ApiError> for error_core::ErrorObject {
     fn from(err: ApiError) -> Self {
         match err {
-            ApiError::Forbidden { message, code } => error_core::helpers::observability_forbidden(&message, &code),
+            ApiError::Forbidden { message, code } => {
+                error_core::helpers::observability_forbidden(&message, &code)
+            }
         }
     }
 }

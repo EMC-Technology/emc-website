@@ -6,13 +6,13 @@ ignore = [
     "RUSTSEC-2025-0010",  # ring <0.17 不再维护 — 本项目使用 ring 0.17+，不受影响（unaffected: >=0.17）
     "RUSTSEC-2023-0071",  # openssl X509StoreRef UUF — 本项目不直接使用 openssl 的 objects() API
     "RUSTSEC-2024-0370",  # rustls DoS — 本项目不使用 rustls 作为 TLS 服务端
-    "RUSTSEC-2024-0437",  # protobuf 栈溢出 — 本项目不使用 protobuf crate（间接依赖未暴露 skip_group 入口）
     "RUSTSEC-2024-0436",  # paste 不再维护 — 间接依赖，无安全风险，待上游 crate 迁移至 pastey
     "RUSTSEC-2025-0123",  # opentelemetry-jaeger 不再维护 — 待迁移至 opentelemetry-otlp + jaeger-propagator
     "RUSTSEC-2023-0089",  # regex 栈溢出 — 本项目仅使用硬编码正则，不受不可信输入影响
     "RUSTSEC-2025-0141",  # bincode 不再维护 — 待迁移至 postcard 或 rkyv
     "RUSTSEC-2025-0119",  # number_prefix 不再维护 — 间接依赖，无安全风险
     "RUSTSEC-2024-0358",  # object_store AWS WebIdentityToken 日志泄露 — 本项目不使用 object_store crate
+    "RUSTSEC-2026-0104",  # rustls-webpki CRL 解析 panic — 本项目不解析证书吊销列表
 ]
 
 [licenses]

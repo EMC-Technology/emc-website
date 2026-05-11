@@ -5,9 +5,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use crate::Result;
 use crate::error::helpers;
 use crate::kms::traits::*;
-use crate::Result;
 
 /// AWS KMS 适配器
 ///
@@ -129,9 +129,7 @@ impl AwsKms {
 
     /// 从环境变量创建 AWS KMS 适配器
     pub async fn from_env() -> Result<Self> {
-        let config = aws_sdk_kms::Config::builder()
-            .load_from_env()
-            .build();
+        let config = aws_sdk_kms::Config::builder().load_from_env().build();
 
         let client = aws_sdk_kms::Client::from_conf(config);
 
@@ -160,9 +158,8 @@ impl AwsKms {
                 Ok(result) => return Ok(result),
                 Err(e) => {
                     if attempt < self.max_retries {
-                        let delay = std::time::Duration::from_millis(
-                            u64::from(100 * 2u32.pow(attempt)),
-                        );
+                        let delay =
+                            std::time::Duration::from_millis(u64::from(100 * 2u32.pow(attempt)));
                         tracing::warn!(
                             attempt = attempt + 1,
                             max_retries = self.max_retries,
@@ -177,7 +174,10 @@ impl AwsKms {
             }
         }
 
-        Err(last_error.unwrap())
+        last_error.map_or_else(
+            || Err(helpers::internal_error("重试循环未产生错误，逻辑不可达")),
+            Err,
+        )
     }
 
     /// 从 AWS 密钥元数据转换为内部 KeyMetadata
@@ -185,7 +185,11 @@ impl AwsKms {
         let key_usage = match aws_key.key_usage() {
             aws_sdk_kms::types::KeyUsage::EncryptDecrypt => KeyUsage::EncryptDecrypt,
             aws_sdk_kms::types::KeyUsage::SignVerify => KeyUsage::SignVerify,
-            _ => KeyUsage::Both,
+            aws_sdk_kms::types::KeyUsage::GenerateVerifyMac => KeyUsage::Both,
+            other => {
+                tracing::warn!(?other, "未识别的 AWS KeyUsage，回退至 Both");
+                KeyUsage::Both
+            }
         };
 
         let key_spec = match aws_key.key_spec() {
@@ -197,7 +201,17 @@ impl AwsKms {
             aws_sdk_kms::types::KeySpec::EccNistP256 => KeySpec::EccP256,
             aws_sdk_kms::types::KeySpec::EccNistP384 => KeySpec::EccP384,
             aws_sdk_kms::types::KeySpec::SymmetricDefault => KeySpec::Aes256,
-            _ => KeySpec::Aes256,
+            aws_sdk_kms::types::KeySpec::Hmac224 => KeySpec::Hmac256,
+            aws_sdk_kms::types::KeySpec::Hmac256 => KeySpec::Hmac256,
+            aws_sdk_kms::types::KeySpec::Hmac384 => KeySpec::Hmac256,
+            aws_sdk_kms::types::KeySpec::Hmac512 => KeySpec::Hmac256,
+            aws_sdk_kms::types::KeySpec::EccNistP521 => KeySpec::EccP384,
+            aws_sdk_kms::types::KeySpec::EccSecgP256k1 => KeySpec::EccP256,
+            aws_sdk_kms::types::KeySpec::Sm2 => KeySpec::Aes256,
+            other => {
+                tracing::warn!(?other, "未识别的 AWS KeySpec，回退至 Aes256");
+                KeySpec::Aes256
+            }
         };
 
         let key_type = match key_spec {
@@ -205,7 +219,7 @@ impl AwsKms {
             KeySpec::Rsa2048 | KeySpec::Rsa3072 | KeySpec::Rsa4096 => KeyType::Rsa,
             KeySpec::EccP256 | KeySpec::EccP384 => KeyType::Ecc,
             KeySpec::Ed25519 => KeyType::Eddsa,
-            _ => KeyType::Symmetric,
+            KeySpec::Hmac256 => KeyType::Hmac,
         };
 
         KeyMetadata {
@@ -249,8 +263,14 @@ impl KeyManagementService for AwsKms {
             })
             .await?;
 
-        let ciphertext_blob = result.ciphertext_blob().map(|blob| blob.as_ref().to_vec()).unwrap_or_default();
-        let plaintext = result.plaintext().map(|blob| blob.as_ref().to_vec()).unwrap_or_default();
+        let ciphertext_blob = result
+            .ciphertext_blob()
+            .map(|blob| blob.as_ref().to_vec())
+            .unwrap_or_default();
+        let plaintext = result
+            .plaintext()
+            .map(|blob| blob.as_ref().to_vec())
+            .unwrap_or_default();
 
         let encrypted_key = EncryptedKey::new(
             format!("dek-{}", uuid::Uuid::new_v4()),
@@ -284,18 +304,23 @@ impl KeyManagementService for AwsKms {
             let result = self
                 .client
                 .decrypt()
-                .ciphertext_blob(aws_sdk_kms::primitives::Blob::new(dek.ciphertext_blob.clone()))
+                .ciphertext_blob(aws_sdk_kms::primitives::Blob::new(
+                    dek.ciphertext_blob.clone(),
+                ))
                 .key_id(&dek.encrypted_with)
                 .send()
                 .await
                 .map_err(|e| helpers::io_error(&format!("AWS KMS 解密 DEK 失败: {}", e)))?;
 
-            result.plaintext().map(|blob| blob.as_ref().to_vec()).unwrap_or_default()
+            result
+                .plaintext()
+                .map(|blob| blob.as_ref().to_vec())
+                .unwrap_or_default()
         };
 
         use aes_gcm::{
-            aead::{Aead, AeadCore, KeyInit},
             Aes256Gcm, Nonce,
+            aead::{Aead, AeadCore, KeyInit},
         };
 
         let cipher = Aes256Gcm::new_from_slice(&dek_plaintext)
@@ -325,16 +350,21 @@ impl KeyManagementService for AwsKms {
             let result = self
                 .client
                 .decrypt()
-                .ciphertext_blob(aws_sdk_kms::primitives::Blob::new(dek.ciphertext_blob.clone()))
+                .ciphertext_blob(aws_sdk_kms::primitives::Blob::new(
+                    dek.ciphertext_blob.clone(),
+                ))
                 .key_id(&dek.encrypted_with)
                 .send()
                 .await
                 .map_err(|e| helpers::io_error(&format!("AWS KMS 解密 DEK 失败: {}", e)))?;
 
-            result.plaintext().map(|blob| blob.as_ref().to_vec()).unwrap_or_default()
+            result
+                .plaintext()
+                .map(|blob| blob.as_ref().to_vec())
+                .unwrap_or_default()
         };
 
-        use aes_gcm::{aead::Aead, KeyInit, Nonce};
+        use aes_gcm::{KeyInit, Nonce, aead::Aead};
 
         let cipher = Aes256Gcm::new_from_slice(&dek_plaintext)
             .map_err(|e| helpers::crypto_error(&format!("AES 初始化失败: {}", e)))?;
@@ -347,6 +377,48 @@ impl KeyManagementService for AwsKms {
         let plaintext = cipher
             .decrypt(nonce, ciphertext.data.as_slice())
             .map_err(|_| helpers::crypto_error("解密失败：数据可能已损坏或 Nonce 不匹配"))?;
+
+        Ok(plaintext)
+    }
+
+    async fn decrypt_dek(&self, dek: &EncryptedKey) -> Result<Vec<u8>> {
+        let cache = self.dek_cache.read().await;
+        let cached = cache.get(&dek.key_id);
+
+        if let Some(cached) = cached {
+            return Ok(cached.plaintext.clone());
+        }
+        drop(cache);
+
+        let result = self
+            .client
+            .decrypt()
+            .ciphertext_blob(aws_sdk_kms::primitives::Blob::new(
+                dek.ciphertext_blob.clone(),
+            ))
+            .key_id(&dek.encrypted_with)
+            .send()
+            .await
+            .map_err(|e| helpers::io_error(&format!("AWS KMS 解密 DEK 失败: {}", e)))?;
+
+        let plaintext = result
+            .plaintext()
+            .map(|blob| blob.as_ref().to_vec())
+            .unwrap_or_default();
+
+        {
+            let mut cache = self.dek_cache.write().await;
+            cache.put(
+                dek.key_id.clone(),
+                crate::kms::traits::DecryptedDek {
+                    plaintext_key: plaintext.clone(),
+                    algorithm: dek.algorithm.clone(),
+                    decrypted_at: chrono::Utc::now(),
+                    source_key_id: dek.key_id.clone(),
+                    expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+                },
+            );
+        }
 
         Ok(plaintext)
     }
@@ -368,7 +440,10 @@ impl KeyManagementService for AwsKms {
             .await
             .map_err(|e| helpers::io_error(&format!("AWS KMS 签名失败: {}", e)))?;
 
-        let signature_bytes = result.signature().map(|blob| blob.as_ref().to_vec()).unwrap_or_default();
+        let signature_bytes = result
+            .signature()
+            .map(|blob| blob.as_ref().to_vec())
+            .unwrap_or_default();
 
         Ok(Signature::new(
             signature_bytes,
@@ -497,13 +572,7 @@ impl KeyManagementService for AwsKms {
     async fn health_check(&self) -> Result<KmsHealthStatus> {
         let start = std::time::Instant::now();
 
-        match self
-            .client
-            .list_keys()
-            .limit(1)
-            .send()
-            .await
-        {
+        match self.client.list_keys().limit(1).send().await {
             Ok(_) => {
                 #[allow(clippy::cast_possible_truncation)]
                 let latency = start.elapsed().as_millis() as u64;
@@ -538,7 +607,11 @@ impl AwsKmsConfigBuilder {
         self
     }
 
-    pub fn credentials(mut self, access_key: impl Into<String>, secret_key: impl Into<String>) -> Self {
+    pub fn credentials(
+        mut self,
+        access_key: impl Into<String>,
+        secret_key: impl Into<String>,
+    ) -> Self {
         self.config.access_key = Some(access_key.into());
         self.config.secret_key = Some(secret_key.into());
         self
@@ -578,15 +651,24 @@ mod tests {
         let config = AwsKmsConfigBuilder::new()
             .region("ap-northeast-1")
             .key_id("arn:aws:kms:ap-northeast-1:123456789:key/test-key")
-            .credentials("AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+            .credentials(
+                "AKIAIOSFODNN7EXAMPLE",
+                "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            )
             .max_retries(5)
             .timeout_ms(10000)
             .build();
 
         assert_eq!(config.region, "ap-northeast-1");
-        assert_eq!(config.key_id, "arn:aws:kms:ap-northeast-1:123456789:key/test-key");
+        assert_eq!(
+            config.key_id,
+            "arn:aws:kms:ap-northeast-1:123456789:key/test-key"
+        );
         assert_eq!(config.access_key, Some("AKIAIOSFODNN7EXAMPLE".to_string()));
-        assert_eq!(config.secret_key, Some("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string()));
+        assert_eq!(
+            config.secret_key,
+            Some("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string())
+        );
         assert_eq!(config.max_retries, Some(5));
         assert_eq!(config.timeout_ms, Some(10000));
     }

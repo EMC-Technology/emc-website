@@ -1,9 +1,9 @@
 //! Utility functions
-//! 
+//!
 //! This module provides utility functions for error handling and related operations.
 
-use std::error::Error;
 use crate::error_object::ErrorObject;
+use std::error::Error;
 
 /// Utility functions for error handling
 pub struct ErrorUtils;
@@ -24,7 +24,7 @@ impl ErrorUtils {
             .operation(operation)
             .build()
     }
-    
+
     /// Extract the root cause of an error
     pub fn get_root_cause(error: &dyn Error) -> &dyn Error {
         let mut current = error;
@@ -33,18 +33,18 @@ impl ErrorUtils {
         }
         current
     }
-    
+
     /// Format an error chain as a string
     pub fn format_error_chain(error: &dyn Error) -> String {
         let mut chain = Vec::new();
         let mut current = error;
-        
+
         while let Some(cause) = current.source() {
             chain.push(current.to_string());
             current = cause;
         }
         chain.push(current.to_string());
-        
+
         chain.join(" -> ")
     }
 }
@@ -65,7 +65,7 @@ impl StringUtils {
             format!("{truncated}...")
         }
     }
-    
+
     /// Sanitize a string for logging
     #[must_use]
     pub fn sanitize_for_logging(s: &str) -> String {
@@ -91,21 +91,21 @@ impl StringUtils {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_error_utils_from_std_error() {
         #[derive(Debug, thiserror::Error)]
         #[error("Test error")]
         struct TestError;
-        
+
         let error = TestError;
         let error_object = ErrorUtils::from_std_error(&error, "test::module", "test_operation");
-        
+
         assert_eq!(error_object.code(), "ERR-INT-GEN-001_ERR_O");
         assert_eq!(error_object.module_path(), "test::module");
         assert_eq!(error_object.operation(), "test_operation");
     }
-    
+
     #[test]
     fn test_string_utils_truncate() {
         let long_string = "This is a very long string that needs to be truncated";

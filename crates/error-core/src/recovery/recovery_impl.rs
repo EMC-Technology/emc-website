@@ -59,44 +59,108 @@ impl RecoveryStateMachine {
         self.retry_attempts
     }
 
+    /// Check if a transition to the target state is valid
+    ///
+    /// 合法转换路径：
+    /// - Initial → Recovering
+    /// - Recovering → Recovered | Failed | `CircuitOpen` | Degraded
+    /// - Failed → Recovering（重试）
+    /// - `CircuitOpen` → Recovering（半开恢复）| Degraded（降级运行）
+    /// - Degraded → Recovering（恢复尝试）
+    /// - Recovered → Recovering（新错误触发）
+    #[must_use]
+    pub const fn can_transition_to(&self, target: &RecoveryState) -> bool {
+        matches!(
+            (&self.state, target),
+            (
+                RecoveryState::Initial
+                    | RecoveryState::Failed
+                    | RecoveryState::CircuitOpen
+                    | RecoveryState::Degraded
+                    | RecoveryState::Recovered,
+                RecoveryState::Recovering
+            ) | (
+                RecoveryState::Recovering,
+                RecoveryState::Recovered
+                    | RecoveryState::Failed
+                    | RecoveryState::CircuitOpen
+                    | RecoveryState::Degraded
+            ) | (RecoveryState::CircuitOpen, RecoveryState::Degraded)
+        )
+    }
+
     /// Start the recovery process
     ///
-    /// # Note
+    /// # Errors
     ///
-    /// 可从任意状态调用。调用者应确保状态转换的语义合理性。
-    pub const fn start_recovery(&mut self) {
-        self.state = RecoveryState::Recovering;
+    /// 当从当前状态不允许转换到 `Recovering` 时返回当前状态的克隆
+    pub fn start_recovery(&mut self) -> std::result::Result<(), RecoveryState> {
+        if self.can_transition_to(&RecoveryState::Recovering) {
+            self.state = RecoveryState::Recovering;
+            Ok(())
+        } else {
+            Err(self.state.clone())
+        }
     }
 
     /// Record a successful recovery
     ///
-    /// # Note
+    /// # Errors
     ///
-    /// 可从任意状态调用。调用者应确保状态转换的语义合理性。
-    pub const fn recover_success(&mut self) {
-        self.state = RecoveryState::Recovered;
-        self.retry_attempts = 0;
+    /// 当从当前状态不允许转换到 `Recovered` 时返回当前状态的克隆
+    pub fn recover_success(&mut self) -> std::result::Result<(), RecoveryState> {
+        if self.can_transition_to(&RecoveryState::Recovered) {
+            self.state = RecoveryState::Recovered;
+            self.retry_attempts = 0;
+            Ok(())
+        } else {
+            Err(self.state.clone())
+        }
     }
 
     /// Record a failed recovery attempt
-    pub const fn recover_failed(&mut self) {
+    ///
+    /// # Errors
+    ///
+    /// 当当前状态不是 `Recovering` 时返回当前状态的克隆
+    pub fn recover_failed(&mut self) -> std::result::Result<(), RecoveryState> {
+        if !matches!(self.state, RecoveryState::Recovering) {
+            return Err(self.state.clone());
+        }
         self.retry_attempts = self.retry_attempts.saturating_add(1);
 
         if self.retry_attempts >= self.max_attempts {
             self.state = RecoveryState::Failed;
-        } else {
-            self.state = RecoveryState::Recovering;
         }
+        Ok(())
     }
 
     /// Open the circuit breaker
-    pub const fn open_circuit(&mut self) {
-        self.state = RecoveryState::CircuitOpen;
+    ///
+    /// # Errors
+    ///
+    /// 当从当前状态不允许转换到 `CircuitOpen` 时返回当前状态的克隆
+    pub fn open_circuit(&mut self) -> std::result::Result<(), RecoveryState> {
+        if self.can_transition_to(&RecoveryState::CircuitOpen) {
+            self.state = RecoveryState::CircuitOpen;
+            Ok(())
+        } else {
+            Err(self.state.clone())
+        }
     }
 
     /// Activate graceful degradation
-    pub const fn activate_degradation(&mut self) {
-        self.state = RecoveryState::Degraded;
+    ///
+    /// # Errors
+    ///
+    /// 当从当前状态不允许转换到 `Degraded` 时返回当前状态的克隆
+    pub fn activate_degradation(&mut self) -> std::result::Result<(), RecoveryState> {
+        if self.can_transition_to(&RecoveryState::Degraded) {
+            self.state = RecoveryState::Degraded;
+            Ok(())
+        } else {
+            Err(self.state.clone())
+        }
     }
 
     /// Calculate the next retry delay
@@ -299,7 +363,6 @@ impl CircuitBreaker {
     }
 
     /// Record a failed request
-    #[allow(clippy::match_wildcard_for_single_variants)]
     pub fn record_failure(&mut self) {
         match self.state {
             CircuitBreakerState::Closed => {
@@ -313,7 +376,9 @@ impl CircuitBreaker {
                 self.state = CircuitBreakerState::Open;
                 self.last_failure = Some(std::time::Instant::now());
             }
-            _ => {}
+            CircuitBreakerState::Open => {
+                // 断路器已打开，记录失败无意义（已处于阻断状态）
+            }
         }
     }
 
@@ -358,18 +423,18 @@ mod tests {
 
         assert_eq!(*machine.state(), RecoveryState::Initial);
 
-        machine.start_recovery();
+        assert!(machine.start_recovery().is_ok());
         assert_eq!(*machine.state(), RecoveryState::Recovering);
 
-        machine.recover_failed();
+        assert!(machine.recover_failed().is_ok());
         assert_eq!(*machine.state(), RecoveryState::Recovering);
         assert_eq!(machine.retry_attempts(), 1);
 
-        machine.recover_failed();
+        assert!(machine.recover_failed().is_ok());
         assert_eq!(*machine.state(), RecoveryState::Recovering);
         assert_eq!(machine.retry_attempts(), 2);
 
-        machine.recover_failed();
+        assert!(machine.recover_failed().is_ok());
         assert_eq!(*machine.state(), RecoveryState::Failed);
         assert_eq!(machine.retry_attempts(), 3);
     }
@@ -397,31 +462,27 @@ mod tests {
         let retry_config = RetryConfig::new(3, 1000, 10000, 2.0, true);
         let mut machine = RecoveryStateMachine::new(3, retry_config);
 
-        // Test state transitions
         assert_eq!(*machine.state(), RecoveryState::Initial);
         assert_eq!(machine.retry_attempts(), 0);
 
-        machine.start_recovery();
+        assert!(machine.start_recovery().is_ok());
         assert_eq!(*machine.state(), RecoveryState::Recovering);
 
-        machine.recover_success();
+        assert!(machine.recover_success().is_ok());
         assert_eq!(*machine.state(), RecoveryState::Recovered);
         assert_eq!(machine.retry_attempts(), 0);
 
-        machine.start_recovery();
-        machine.recover_failed();
+        assert!(machine.start_recovery().is_ok());
+        assert!(machine.recover_failed().is_ok());
         assert_eq!(machine.retry_attempts(), 1);
 
-        // Test calculate_retry_delay
         let delay = machine.calculate_retry_delay();
         assert!(delay >= Duration::from_secs(1));
 
-        // Test open_circuit
-        machine.open_circuit();
+        assert!(machine.open_circuit().is_ok());
         assert_eq!(*machine.state(), RecoveryState::CircuitOpen);
 
-        // Test activate_degradation
-        machine.activate_degradation();
+        assert!(machine.activate_degradation().is_ok());
         assert_eq!(*machine.state(), RecoveryState::Degraded);
     }
 
@@ -533,5 +594,88 @@ mod tests {
         breaker.set_state(CircuitBreakerState::HalfOpen);
 
         assert!(breaker.allow_request());
+    }
+
+    #[test]
+    fn test_start_recovery_invalid_transition_returns_err() {
+        let retry_config = RetryConfig::new(3, 1000, 10000, 2.0, false);
+        let mut machine = RecoveryStateMachine::new(3, retry_config);
+        assert!(machine.start_recovery().is_ok());
+        assert_eq!(*machine.state(), RecoveryState::Recovering);
+
+        let result = machine.start_recovery();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), RecoveryState::Recovering);
+    }
+
+    #[test]
+    fn test_recover_success_invalid_transition_returns_err() {
+        let retry_config = RetryConfig::new(3, 1000, 10000, 2.0, false);
+        let mut machine = RecoveryStateMachine::new(3, retry_config);
+
+        let result = machine.recover_success();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), RecoveryState::Initial);
+    }
+
+    #[test]
+    fn test_recover_failed_not_recovering_returns_err() {
+        let retry_config = RetryConfig::new(3, 1000, 10000, 2.0, false);
+        let mut machine = RecoveryStateMachine::new(3, retry_config);
+
+        let result = machine.recover_failed();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), RecoveryState::Initial);
+    }
+
+    #[test]
+    fn test_open_circuit_invalid_transition_returns_err() {
+        let retry_config = RetryConfig::new(3, 1000, 10000, 2.0, false);
+        let mut machine = RecoveryStateMachine::new(3, retry_config);
+
+        let result = machine.open_circuit();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), RecoveryState::Initial);
+    }
+
+    #[test]
+    fn test_activate_degradation_invalid_transition_returns_err() {
+        let retry_config = RetryConfig::new(3, 1000, 10000, 2.0, false);
+        let mut machine = RecoveryStateMachine::new(3, retry_config);
+
+        let result = machine.activate_degradation();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), RecoveryState::Initial);
+    }
+
+    #[test]
+    fn test_calculate_retry_delay_without_jitter() {
+        let retry_config = RetryConfig::new(3, 1000, 10000, 2.0, false);
+        let mut machine = RecoveryStateMachine::new(3, retry_config);
+
+        let delay0 = machine.calculate_retry_delay();
+        assert_eq!(delay0, Duration::from_millis(1000));
+
+        machine.start_recovery().unwrap();
+        machine.recover_failed().unwrap();
+        let delay1 = machine.calculate_retry_delay();
+        assert_eq!(delay1, Duration::from_millis(2000));
+
+        machine.recover_failed().unwrap();
+        let delay2 = machine.calculate_retry_delay();
+        assert_eq!(delay2, Duration::from_millis(4000));
+    }
+
+    #[test]
+    fn test_can_transition_to_all_invalid_paths() {
+        let retry_config = RetryConfig::new(3, 1000, 10000, 2.0, false);
+        let machine = RecoveryStateMachine::new(3, retry_config);
+
+        assert!(!machine.can_transition_to(&RecoveryState::Initial));
+        assert!(!machine.can_transition_to(&RecoveryState::Recovered));
+        assert!(!machine.can_transition_to(&RecoveryState::Failed));
+        assert!(!machine.can_transition_to(&RecoveryState::CircuitOpen));
+        assert!(!machine.can_transition_to(&RecoveryState::Degraded));
+        assert!(machine.can_transition_to(&RecoveryState::Recovering));
     }
 }

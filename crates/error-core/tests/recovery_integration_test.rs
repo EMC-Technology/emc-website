@@ -1,10 +1,10 @@
-use error_core::prelude::*;
-use error_core::recovery::RecoveryStateMachine;
-use error_core::propagation::RetryConfig;
-use error_core::recovery::ExponentialBackoff;
-use error_core::recovery::CircuitBreaker;
-use std::time::Duration;
 use error_core::error_capture::GatewayErrorCapture;
+use error_core::prelude::*;
+use error_core::propagation::RetryConfig;
+use error_core::recovery::CircuitBreaker;
+use error_core::recovery::ExponentialBackoff;
+use error_core::recovery::RecoveryStateMachine;
+use std::time::Duration;
 
 #[test]
 fn test_recovery_integration() {
@@ -19,8 +19,11 @@ fn test_recovery_integration() {
     // 测试恢复状态机
     let retry_config = RetryConfig::new(3, 100, 1000, 2.0, true);
     let mut recovery_state = RecoveryStateMachine::new(3, retry_config.clone());
-    recovery_state.start_recovery();
-    assert_eq!(*recovery_state.state(), error_core::recovery::RecoveryState::Recovering);
+    assert!(recovery_state.start_recovery().is_ok());
+    assert_eq!(
+        *recovery_state.state(),
+        error_core::recovery::RecoveryState::Recovering
+    );
 
     // 测试指数退避
     let mut backoff = ExponentialBackoff::new(retry_config);

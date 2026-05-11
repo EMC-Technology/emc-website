@@ -51,26 +51,37 @@ macro_rules! define_lang_getter_legacy {
                 const _: () = assert!(
                     std::mem::size_of::<$crate_name::Language>()
                         == std::mem::size_of::<tree_sitter::Language>(),
-                    concat!(stringify!($crate_name), "::Language 与 tree_sitter::Language 大小不一致")
+                    concat!(
+                        stringify!($crate_name),
+                        "::Language 与 tree_sitter::Language 大小不一致"
+                    )
                 );
                 const _: () = assert!(
                     std::mem::align_of::<$crate_name::Language>()
                         == std::mem::align_of::<tree_sitter::Language>(),
-                    concat!(stringify!($crate_name), "::Language 与 tree_sitter::Language 对齐不一致")
+                    concat!(
+                        stringify!($crate_name),
+                        "::Language 与 tree_sitter::Language 对齐不一致"
+                    )
                 );
                 // SAFETY: 旧版 `language()` 返回的 `Language` 类型与 `tree_sitter::Language`
                 // 内存布局完全相同（均为 C FFI 指针的 newtype wrapper），
                 // 上述编译期断言已验证 size_of 和 align_of 一致。
-                // transmute_copy 仅复制字节而不改变语义，因此转换是安全的。
-                // 前置条件：old_lang 是由对应 tree-sitter crate 返回的有效 Language 实例。
-                // 不变量：两种类型的内存布局在语义上等价（均为封装单个 C 指针的 newtype wrapper）。
-                // 字段布局等价性论证：size_of/align_of 一致是必要条件而非充分条件，
-                // 但此处依赖 tree-sitter 生态的领域知识：旧版 crate 的 Language 类型
-                // 和新版 tree_sitter::Language 均为对 C 结构体 `TSLanguage*` 的
-                // 单字段 newtype wrapper，其字段顺序和类型在语义上保证一致。
-                // 编译期断言已保证两者大小完全相等，因此 transmute_copy 不存在截断风险。
+                // 使用 ptr::read + 指针转换替代 transmute_copy：
+                // 1. 将 old_lang 的地址转换为 *const tree_sitter::Language
+                // 2. 通过 ptr::read 按新类型读取字节（不改变位模式）
+                // 3. 不会产生未对齐读取（align_of 已验证一致）
+                // 相比 transmute_copy，此方式避免了 #[allow(unions)] 和
+                // 潜在的编译器特殊处理，且更清晰地表达了"按位重新解释"的语义。
+                assert_eq!(
+                    std::mem::size_of_val(&old_lang),
+                    std::mem::size_of::<tree_sitter::Language>(),
+                    "tree-sitter Language 类型大小运行时不一致 — 可能的 ABI 不兼容，拒绝转换"
+                );
                 unsafe {
-                    std::mem::transmute_copy::<_, tree_sitter::Language>(&old_lang)
+                    let ptr: *const tree_sitter::Language =
+                        &old_lang as *const _ as *const tree_sitter::Language;
+                    ptr.read()
                 }
             })
         }
@@ -91,8 +102,16 @@ pub struct GrammarCachePool;
 impl GrammarCachePool {
     define_lang_getter!(rust, "lang-rust", tree_sitter_rust::LANGUAGE);
     define_lang_getter!(python, "lang-python", tree_sitter_python::LANGUAGE);
-    define_lang_getter!(javascript, "lang-javascript", tree_sitter_javascript::LANGUAGE);
-    define_lang_getter!(typescript, "lang-typescript", tree_sitter_typescript::LANGUAGE_TYPESCRIPT);
+    define_lang_getter!(
+        javascript,
+        "lang-javascript",
+        tree_sitter_javascript::LANGUAGE
+    );
+    define_lang_getter!(
+        typescript,
+        "lang-typescript",
+        tree_sitter_typescript::LANGUAGE_TYPESCRIPT
+    );
     define_lang_getter!(go, "lang-go", tree_sitter_go::LANGUAGE);
     define_lang_getter!(c, "lang-c", tree_sitter_c::LANGUAGE);
     define_lang_getter!(cpp, "lang-cpp", tree_sitter_cpp::LANGUAGE);
@@ -180,10 +199,7 @@ impl GrammarCachePool {
                     tracing::debug!("预加载 {} grammar 成功", lang);
                 }
                 Err(e) if e.code().contains("PARSE") && e.source() == ErrorSource::USR => {
-                    tracing::debug!(
-                        "{} grammar 未安装（feature flag 未启用），跳过预加载",
-                        lang
-                    );
+                    tracing::debug!("{} grammar 未安装（feature flag 未启用），跳过预加载", lang);
                 }
                 Err(e) => return Err(e),
             }
@@ -237,8 +253,8 @@ impl GrammarCachePool {
 
 #[cfg(test)]
 mod tests {
-    use error_core::prelude::ErrorSource;
     use super::*;
+    use error_core::prelude::ErrorSource;
 
     /// 测试 Rust grammar 加载（仅在 lang-rust feature 启用时有效）
     #[test]
@@ -246,7 +262,10 @@ mod tests {
         match GrammarCachePool::get_language("rust") {
             Ok(_) => {}
             Err(e) if e.code().contains("PARSE") && e.source() == ErrorSource::USR => {
-                eprintln!("Rust grammar 未安装（未启用 lang-rust feature），跳过测试: {}", e.message());
+                eprintln!(
+                    "Rust grammar 未安装（未启用 lang-rust feature），跳过测试: {}",
+                    e.message()
+                );
             }
             Err(e) => panic!("意外的错误类型: {e}"),
         }
@@ -258,7 +277,10 @@ mod tests {
         match GrammarCachePool::get_language("python") {
             Ok(_) => {}
             Err(e) if e.code().contains("PARSE") && e.source() == ErrorSource::USR => {
-                eprintln!("Python grammar 未安装（未启用 lang-python feature），跳过测试: {}", e.message());
+                eprintln!(
+                    "Python grammar 未安装（未启用 lang-python feature），跳过测试: {}",
+                    e.message()
+                );
             }
             Err(e) => panic!("意外的错误类型: {e}"),
         }
@@ -304,7 +326,12 @@ mod tests {
                     "多次获取同一语言应返回相同的实例"
                 );
             }
-            (Err(e1), Err(e2)) if e1.code().contains("PARSE") && e1.source() == ErrorSource::USR && e2.code().contains("PARSE") && e2.source() == ErrorSource::USR => {
+            (Err(e1), Err(e2))
+                if e1.code().contains("PARSE")
+                    && e1.source() == ErrorSource::USR
+                    && e2.code().contains("PARSE")
+                    && e2.source() == ErrorSource::USR =>
+            {
                 eprintln!("Rust grammar 未安装（可选依赖），跳过测试");
             }
             (Err(e), _) | (_, Err(e)) => panic!("意外的错误: {e}"),
@@ -342,6 +369,68 @@ mod tests {
             result.is_ok(),
             "预加载不应失败（缺失的 grammar 应被静默跳过）: {:?}",
             result.err()
+        );
+    }
+
+    #[test]
+    fn test_supported_languages_contains_expected_entries() {
+        let langs = GrammarCachePool::supported_languages();
+        #[cfg(feature = "lang-rust")]
+        {
+            assert!(langs.contains(&"rust"), "启用 lang-rust 时应包含 rust");
+        }
+        #[cfg(feature = "lang-python")]
+        {
+            assert!(
+                langs.contains(&"python"),
+                "启用 lang-python 时应包含 python"
+            );
+        }
+    }
+
+    #[test]
+    fn test_get_language_returns_same_instance_on_repeated_calls() {
+        let result1 = GrammarCachePool::get_language("rust");
+        let result2 = GrammarCachePool::get_language("rust");
+        if let (Ok(lang1), Ok(lang2)) = (result1, result2) {
+            assert_eq!(
+                std::ptr::addr_of!(*lang1),
+                std::ptr::addr_of!(*lang2),
+                "重复调用应返回相同的静态引用"
+            );
+        }
+    }
+
+    #[test]
+    fn test_preload_common_languages_idempotent() {
+        let result1 = GrammarCachePool::preload_common_languages();
+        let result2 = GrammarCachePool::preload_common_languages();
+        assert!(result1.is_ok(), "首次预加载应成功");
+        assert!(result2.is_ok(), "重复预加载应成功");
+    }
+
+    #[test]
+    fn test_get_language_case_sensitive() {
+        let result = GrammarCachePool::get_language("Rust");
+        assert!(result.is_err(), "大写语言名应返回错误");
+    }
+
+    #[test]
+    fn test_get_language_empty_string() {
+        let result = GrammarCachePool::get_language("");
+        assert!(result.is_err(), "空字符串应返回错误");
+    }
+
+    #[test]
+    fn test_supported_languages_no_duplicates() {
+        let langs = GrammarCachePool::supported_languages();
+        let mut sorted = langs.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(
+            langs.len(),
+            sorted.len(),
+            "supported_languages 不应包含重复项"
         );
     }
 }

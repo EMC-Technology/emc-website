@@ -120,9 +120,10 @@ impl ToolRegistry {
         let mut registry = self.tools.write().await;
 
         if registry.contains_key(&name) {
-            return Err(error_core::helpers::validation_error(&format!(
-                "工具 '{name}' 已存在"
-            ), "register_tool"));
+            return Err(error_core::helpers::validation_error(
+                &format!("工具 '{name}' 已存在"),
+                "register_tool",
+            ));
         }
 
         let tool_name = name.clone();
@@ -171,7 +172,10 @@ impl ToolRegistry {
             info!(tool_name = %name, "工具已注销");
             Ok(())
         } else {
-            Err(error_core::helpers::not_found("Tool", &format!("工具 '{name}' 不存在")))
+            Err(error_core::helpers::not_found(
+                "Tool",
+                &format!("工具 '{name}' 不存在"),
+            ))
         }
     }
 
@@ -196,6 +200,41 @@ pub struct ToolCall {
     pub call_id: Uuid,
 }
 
+/// 工具执行错误类型枚举（Axiom-3: 可枚举的封闭集合）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[allow(missing_docs)]
+pub enum ToolErrorKind {
+    /// 工具未找到
+    NotFound { tool_name: String },
+    /// 参数验证失败
+    InvalidParameters { reason: String },
+    /// 执行超时
+    Timeout { elapsed_secs: u64 },
+    /// 权限不足
+    PermissionDenied { required_permission: String },
+    /// 外部服务不可用
+    ServiceUnavailable,
+    /// 其他错误
+    Other { reason: String },
+}
+
+impl std::fmt::Display for ToolErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound { tool_name } => write!(f, "工具未找到: {tool_name}"),
+            Self::InvalidParameters { reason } => write!(f, "参数无效: {reason}"),
+            Self::Timeout { elapsed_secs } => write!(f, "执行超时: {elapsed_secs}s"),
+            Self::PermissionDenied {
+                required_permission,
+            } => {
+                write!(f, "权限不足: {required_permission}")
+            }
+            Self::ServiceUnavailable => write!(f, "外部服务不可用"),
+            Self::Other { reason } => write!(f, "{reason}"),
+        }
+    }
+}
+
 /// 工具调用结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolInvocationResult {
@@ -211,8 +250,8 @@ pub struct ToolInvocationResult {
     pub duration_ms: u64,
     /// 重试次数
     pub retry_count: u32,
-    /// 错误信息（失败时）
-    pub error: Option<String>,
+    /// 结构化错误信息（Axiom-3: 可枚举的封闭集合）
+    pub error: Option<ToolErrorKind>,
 }
 
 /// 重试策略
@@ -352,6 +391,16 @@ impl AgentToolInvoker {
         self.registry.register(tool).await
     }
 
+    /// 获取所有已注册工具的名称列表
+    pub async fn list_names(&self) -> Vec<String> {
+        self.registry.list_names().await
+    }
+
+    /// 获取所有工具的 Schema 列表（用于 LLM）
+    pub async fn get_schemas(&self) -> Vec<ToolSchema> {
+        self.registry.get_schemas().await
+    }
+
     /// 调用工具（带验证、重试、日志）
     ///
     /// 完整的调用流程：
@@ -419,7 +468,7 @@ impl AgentToolInvoker {
                 success: false,
                 duration_ms: start_time.elapsed().as_millis() as u64,
                 retry_count: 0,
-                error: Some(e),
+                error: Some(ToolErrorKind::InvalidParameters { reason: e }),
             });
         }
 
@@ -468,7 +517,9 @@ impl AgentToolInvoker {
                         error: if output.success {
                             None
                         } else {
-                            Some(output.result)
+                            Some(ToolErrorKind::Other {
+                                reason: output.result.clone(),
+                            })
                         },
                     });
                 }
@@ -515,7 +566,7 @@ impl AgentToolInvoker {
             success: false,
             duration_ms,
             retry_count: self.retry_policy.max_attempts - 1,
-            error: Some(error_msg),
+            error: Some(ToolErrorKind::Other { reason: error_msg }),
         })
     }
 
@@ -565,10 +616,10 @@ impl AgentToolInvoker {
         // 如果 schema 中定义了 required 字段，检查必填参数
         if let Some(required) = schema.get("required").and_then(|r| r.as_array()) {
             for req_field in required {
-                if let Some(field_name) = req_field.as_str() {
-                    if arguments.get(field_name).is_none() {
-                        return Err(format!("缺少必填参数: '{field_name}'"));
-                    }
+                if let Some(field_name) = req_field.as_str()
+                    && arguments.get(field_name).is_none()
+                {
+                    return Err(format!("缺少必填参数: '{field_name}'"));
                 }
             }
         }
@@ -658,9 +709,7 @@ impl Tool for SearchTool {
         // 这里应该调用实际的搜索逻辑
         // 简化实现，返回模拟结果
         Ok(ToolOutput::success_with_metadata(
-            format!(
-                r#"{{"query": "{query}", "results": [], "total": 0, "limit": {limit}}}"#
-            ),
+            format!(r#"{{"query": "{query}", "results": [], "total": 0, "limit": {limit}}}"#),
             serde_json::json!({"mock": true}),
         ))
     }
@@ -708,9 +757,7 @@ impl Tool for GetContextTool {
         debug!(symbol = %symbol, "获取上下文");
 
         Ok(ToolOutput::success_with_metadata(
-            format!(
-                r#"{{"symbol": "{symbol}", "callers": [], "callees": [], "references": []}}"#
-            ),
+            format!(r#"{{"symbol": "{symbol}", "callers": [], "callees": [], "references": []}}"#),
             serde_json::json!({"mock": true}),
         ))
     }
@@ -781,8 +828,9 @@ mod tests {
         }
 
         fn parameters_schema(&self) -> &serde_json::Value {
-            static SCHEMA: std::sync::LazyLock<serde_json::Value> =
-                std::sync::LazyLock::new(|| serde_json::json!({"type": "object", "properties": {}}));
+            static SCHEMA: std::sync::LazyLock<serde_json::Value> = std::sync::LazyLock::new(
+                || serde_json::json!({"type": "object", "properties": {}}),
+            );
             &SCHEMA
         }
 
@@ -793,7 +841,10 @@ mod tests {
         ) -> crate::Result<ToolOutput> {
             self.fail_count
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Err(error_core::helpers::agent_tool_error("fail_tool", "模拟失败"))
+            Err(error_core::helpers::agent_tool_error(
+                "fail_tool",
+                "模拟失败",
+            ))
         }
     }
 

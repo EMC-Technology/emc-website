@@ -1,6 +1,7 @@
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use knowledge_parser::pipeline::Pipeline;
 use knowledge_parser::text_splitter::TextSplitterBlocker;
+use std::hint::black_box;
 
 const SMALL_MD: &str = r#"# Benchmark Document
 
@@ -128,7 +129,8 @@ fn bench_text_chunking(c: &mut Criterion) {
     let mut group = c.benchmark_group("parser_text_chunking");
 
     for chunk_size in [256usize, 512, 1000, 2000] {
-        let config_splitter = TextSplitterBlocker::with_config(chunk_size, chunk_size / 5).expect("基准测试配置应合法");
+        let config_splitter = TextSplitterBlocker::with_config(chunk_size, chunk_size / 5)
+            .expect("基准测试配置应合法");
 
         for text_size_kb in [1usize, 10, 100, 1000] {
             let text = "The quick brown fox jumps over the lazy dog. ".repeat(text_size_kb * 50);
@@ -142,7 +144,11 @@ fn bench_text_chunking(c: &mut Criterion) {
                 &text,
                 |b, content| {
                     b.iter(|| {
-                        black_box(config_splitter.split_to_blocks(black_box(content), "bench://chunk").unwrap());
+                        black_box(
+                            config_splitter
+                                .split_to_blocks(black_box(content), "bench://chunk")
+                                .unwrap(),
+                        );
                     });
                 },
             );
@@ -152,7 +158,13 @@ fn bench_text_chunking(c: &mut Criterion) {
     let large_text = generate_large_markdown(10_000);
     group.throughput(Throughput::Bytes(large_text.len() as u64));
     group.bench_with_input("split_10mb_markdown", &large_text, |b, content| {
-        b.iter(|| { black_box(splitter.split_to_blocks(black_box(content), "bench://10mb").unwrap()); });
+        b.iter(|| {
+            black_box(
+                splitter
+                    .split_to_blocks(black_box(content), "bench://10mb")
+                    .unwrap(),
+            );
+        });
     });
 
     group.finish();
@@ -188,7 +200,7 @@ fn bench_pipeline_dag_execution(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements(doc_count as u64));
         group.bench_with_input(
-            BenchmarkId::new("run_pipeline", format!("{doc_count}docs")), 
+            BenchmarkId::new("run_pipeline", format!("{doc_count}docs")),
             &docs,
             |b, docs| {
                 b.iter(|| {
@@ -211,7 +223,7 @@ fn bench_blake3_file_hashing(c: &mut Criterion) {
         let data = vec![0xCDu8; size_kb * 1024];
         group.throughput(Throughput::Bytes((size_kb * 1024) as u64));
         group.bench_with_input(
-            BenchmarkId::new("incremental_hash", format!("{size_kb}KB")), 
+            BenchmarkId::new("incremental_hash", format!("{size_kb}KB")),
             &data,
             |b, data| {
                 b.iter(|| {
@@ -251,7 +263,9 @@ fn bench_source_type_detection(c: &mut Criterion) {
             .next_back()
             .unwrap_or("none");
         group.bench_function(format!("detect_{name}"), |b| {
-            b.iter(|| { black_box(SourceTypeDetector::detect(Path::new(path_str)).unwrap()); });
+            b.iter(|| {
+                black_box(SourceTypeDetector::detect(Path::new(path_str)).unwrap());
+            });
         });
     }
 
@@ -302,7 +316,9 @@ fn bench_string_operations_for_parsing(c: &mut Criterion) {
     group.throughput(Throughput::Bytes(large_text.len() as u64));
 
     group.bench_with_input("char_iter_100kb", &large_text, |b, text| {
-        b.iter(|| { black_box(black_box(text).chars().count()); });
+        b.iter(|| {
+            black_box(black_box(text).chars().count());
+        });
     });
 
     group.bench_with_input("whitespace_split_100kb", &large_text, |b, text| {
@@ -312,7 +328,9 @@ fn bench_string_operations_for_parsing(c: &mut Criterion) {
     });
 
     group.bench_with_input("line_count_100kb", &large_text, |b, text| {
-        b.iter(|| { black_box(black_box(text).lines().count()); });
+        b.iter(|| {
+            black_box(black_box(text).lines().count());
+        });
     });
 
     group.finish();

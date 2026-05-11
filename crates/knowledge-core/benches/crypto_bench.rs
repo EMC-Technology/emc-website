@@ -1,7 +1,6 @@
-use criterion::{
-    black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput,
-};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use knowledge_core::crypto::{Decryptor, Encryptor, KeyManager};
+use std::hint::black_box;
 
 const DATA_SIZES: &[usize] = &[1_024, 10_240, 102_400, 1_048_576];
 

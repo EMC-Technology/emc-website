@@ -3,13 +3,13 @@
 //! GraphBuilder 将 Markdown/Code 解析产出的 Document、Block、Token、Reference
 //! 组装为完整的 BuiltGraph，并为每个实体生成 BLAKE3 幂等键。
 
-use knowledge_core::model::{Block, Document, SourceType, Token, Reference};
 use crate::Result;
-use crate::file_ingester::IngestedFile;
-use crate::markdown_pipeline::MarkdownPipeline;
 use crate::code_pipeline::CodePipeline;
-use crate::symbol_resolver::SymbolResolver;
+use crate::file_ingester::IngestedFile;
 use crate::idempotency::IdempotencyKeyGenerator;
+use crate::markdown_pipeline::MarkdownPipeline;
+use crate::symbol_resolver::SymbolResolver;
+use knowledge_core::model::{Block, Document, Reference, SourceType, Token};
 
 /// 图构建器的完整输出
 #[derive(Debug)]
@@ -67,7 +67,11 @@ impl GraphBuilder {
     pub fn build_from_markdown(&mut self, file: &IngestedFile) -> Result<BuiltGraph> {
         let (document, blocks, tokens) = self.markdown_pipeline.process(file)?;
 
-        let doc_id_str = document.id.as_ref().map(std::string::ToString::to_string).unwrap_or_default();
+        let doc_id_str = document
+            .id
+            .as_ref()
+            .map(std::string::ToString::to_string)
+            .unwrap_or_default();
         let references = self.symbol_resolver.resolve(&tokens, &doc_id_str);
 
         let blocks = Self::assign_idempotency_keys(blocks, &document.hash, &file.content);
@@ -88,7 +92,11 @@ impl GraphBuilder {
     pub fn build_from_code(&mut self, file: &IngestedFile) -> Result<BuiltGraph> {
         let (document, blocks, tokens) = self.code_pipeline.process(file)?;
 
-        let doc_id_str = document.id.as_ref().map(std::string::ToString::to_string).unwrap_or_default();
+        let doc_id_str = document
+            .id
+            .as_ref()
+            .map(std::string::ToString::to_string)
+            .unwrap_or_default();
         let references = self.symbol_resolver.resolve(&tokens, &doc_id_str);
 
         let blocks = Self::assign_idempotency_keys(blocks, &document.hash, &file.content);
@@ -117,12 +125,17 @@ impl GraphBuilder {
     ///
     /// 幂等键基于 `doc_hash + start_line + end_line + content_hash` 生成，
     /// 确保内容变更时幂等键不同，支持增量更新检测。
-    fn assign_idempotency_keys(blocks: Vec<Block>, doc_hash: &str, file_content: &str) -> Vec<Block> {
+    fn assign_idempotency_keys(
+        blocks: Vec<Block>,
+        doc_hash: &str,
+        file_content: &str,
+    ) -> Vec<Block> {
         blocks
             .into_iter()
             .map(|mut block| {
                 if block.idempotency_key.is_none() {
-                    let block_content = extract_block_text(file_content, block.start_line, block.end_line);
+                    let block_content =
+                        extract_block_text(file_content, block.start_line, block.end_line);
                     block.idempotency_key = Some(IdempotencyKeyGenerator::generate_for_block(
                         doc_hash,
                         block.start_line,
@@ -158,7 +171,11 @@ mod tests {
 
     fn make_ingested_file(content: &str, source_type: SourceType) -> IngestedFile {
         IngestedFile {
-            path: std::path::PathBuf::from("/test.md"),
+            path: if source_type == SourceType::Code {
+                std::path::PathBuf::from("/test.rs")
+            } else {
+                std::path::PathBuf::from("/test.md")
+            },
             content: content.to_string(),
             hash: "a".repeat(64),
             file_size: content.len() as u64,
@@ -171,7 +188,11 @@ mod tests {
         let mut builder = GraphBuilder::new();
         let file = make_ingested_file("# Hello\n\nWorld", SourceType::Markdown);
         let result = builder.build_from_markdown(&file);
-        assert!(result.is_ok(), "简单 Markdown 应成功构建: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "简单 Markdown 应成功构建: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -193,10 +214,7 @@ mod tests {
         let graph = builder.build_from_markdown(&file).unwrap();
 
         for block in &graph.blocks {
-            assert!(
-                block.idempotency_key.is_some(),
-                "每个 Block 应被分配幂等键"
-            );
+            assert!(block.idempotency_key.is_some(), "每个 Block 应被分配幂等键");
             let key = block.idempotency_key.as_ref().unwrap();
             assert_eq!(key.len(), 64, "幂等键应为 64 字符 BLAKE3 hex");
         }
@@ -231,7 +249,8 @@ mod tests {
 
     #[test]
     fn test_record_id_to_string_formats_correctly() {
-        let doc_id: RecordIdType = surrealdb::sql::Thing::from(("doc".to_string(), "abc123".to_string()));
+        let doc_id: RecordIdType =
+            surrealdb::sql::Thing::from(("doc".to_string(), "abc123".to_string()));
         let s = record_id_to_string(&doc_id);
         assert_eq!(s, "doc:abc123");
     }
@@ -280,5 +299,87 @@ mod tests {
                 .any(|b| b.block_type == knowledge_core::model::BlockType::Heading),
             "Markdown 标题行应产生 Heading 类型的 Block"
         );
+    }
+
+    #[test]
+    fn test_default_creates_valid_builder() {
+        let mut builder = GraphBuilder::default();
+        let file = make_ingested_file("# Test", SourceType::Markdown);
+        let result = builder.build_from_markdown(&file);
+        assert!(
+            result.is_ok(),
+            "Default 构建器应能正常工作: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_build_from_code_with_rust_file() {
+        let mut builder = GraphBuilder::new();
+        let file = make_ingested_file("fn main() { println!(\"hello\"); }", SourceType::Code);
+        let result = builder.build_from_code(&file);
+        match result {
+            Ok(graph) => {
+                assert_eq!(graph.document.source_type, SourceType::Code);
+                assert!(!graph.blocks.is_empty(), "代码文件应产生 Block");
+            }
+            Err(e)
+                if e.code().contains("PARSE")
+                    && e.source() == error_core::prelude::ErrorSource::USR =>
+            {
+                eprintln!("Rust grammar 未安装，跳过: {}", e.message());
+            }
+            Err(e) => panic!("意外的错误: {e}"),
+        }
+    }
+
+    #[test]
+    fn test_build_routes_code_to_code_pipeline() {
+        let mut builder = GraphBuilder::new();
+        let file = make_ingested_file("fn foo() {}", SourceType::Code);
+        let result = builder.build(&file);
+        match result {
+            Ok(graph) => {
+                assert_eq!(graph.document.source_type, SourceType::Code);
+            }
+            Err(e) if e.code().contains("PARSE") => {
+                eprintln!("Grammar 未安装，跳过: {}", e.message());
+            }
+            Err(e) => panic!("意外的错误: {e}"),
+        }
+    }
+
+    #[test]
+    fn test_extract_block_text_normal_range() {
+        let content = "line0\nline1\nline2\nline3";
+        let text = extract_block_text(content, 1, 2);
+        assert_eq!(text, "line1\nline2");
+    }
+
+    #[test]
+    fn test_extract_block_text_start_beyond_content() {
+        let content = "line0\nline1";
+        let text = extract_block_text(content, 10, 15);
+        assert!(text.is_empty(), "start 超出内容范围应返回空字符串");
+    }
+
+    #[test]
+    fn test_extract_block_text_end_clamped_to_content() {
+        let content = "line0\nline1\nline2";
+        let text = extract_block_text(content, 1, 10);
+        assert_eq!(text, "line1\nline2", "end 应被裁剪到内容范围内");
+    }
+
+    #[test]
+    fn test_extract_block_text_single_line() {
+        let content = "only line";
+        let text = extract_block_text(content, 0, 0);
+        assert_eq!(text, "only line");
+    }
+
+    #[test]
+    fn test_extract_block_text_empty_content() {
+        let text = extract_block_text("", 0, 0);
+        assert!(text.is_empty(), "空内容应返回空字符串");
     }
 }

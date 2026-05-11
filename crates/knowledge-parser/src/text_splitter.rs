@@ -8,7 +8,7 @@
 //! - **重叠保持**：相邻 chunk 之间保留 `chunk_overlap` 字符的重叠区域
 
 use crate::Result;
-use knowledge_core::model::{Block, BlockType, RecordIdType};
+use knowledge_core::model::{Block, BlockStatus, BlockType, RecordIdType};
 use surrealdb::sql::Thing;
 use text_splitter::{Characters, TextSplitter};
 
@@ -100,7 +100,6 @@ impl TextSplitterBlocker {
                 block_type,
                 start_line: current_line,
                 end_line,
-                embedding: None,
                 idempotency_key: Some(
                     crate::idempotency::IdempotencyKeyGenerator::generate_for_block(
                         &doc_hash,
@@ -109,6 +108,7 @@ impl TextSplitterBlocker {
                         chunk,
                     ),
                 ),
+                status: BlockStatus::Created,
             };
 
             blocks.push(block);
@@ -202,5 +202,63 @@ mod tests {
         let splitter = TextSplitterBlocker::with_config(500, 50).expect("合法配置应成功");
         assert_eq!(splitter.max_chunk_size(), 500);
         assert_eq!(splitter.chunk_overlap(), 50);
+    }
+
+    #[test]
+    fn test_default_creates_splitter() {
+        let splitter = TextSplitterBlocker::default();
+        assert_eq!(splitter.max_chunk_size(), DEFAULT_MAX_CHUNK_SIZE);
+        assert_eq!(splitter.chunk_overlap(), DEFAULT_CHUNK_OVERLAP);
+    }
+
+    #[test]
+    fn test_split_ast_to_blocks_returns_empty() {
+        let splitter = TextSplitterBlocker::new();
+        let ast = comrak::nodes::NodeValue::Document;
+        let result = splitter.split_ast_to_blocks(&ast);
+        assert!(result.is_ok(), "split_ast_to_blocks 应成功");
+        assert!(result.unwrap().is_empty(), "当前实现应返回空列表");
+    }
+
+    #[test]
+    fn test_split_heading_block_type() {
+        let splitter = TextSplitterBlocker::new();
+        let content = "# Heading\n\nParagraph text";
+        let blocks = splitter
+            .split_to_blocks(content, "test://heading")
+            .expect("分块应成功");
+        assert!(
+            blocks.iter().any(|b| b.block_type == BlockType::Heading),
+            "以 # 开头的内容应产生 Heading 类型的 Block"
+        );
+    }
+
+    #[test]
+    fn test_split_blocks_have_idempotency_keys() {
+        let splitter = TextSplitterBlocker::new();
+        let content = "First paragraph.\n\nSecond paragraph.";
+        let blocks = splitter
+            .split_to_blocks(content, "test://keys")
+            .expect("分块应成功");
+        for block in &blocks {
+            assert!(block.idempotency_key.is_some(), "每个 Block 应有幂等键");
+            let key = block.idempotency_key.as_ref().unwrap();
+            assert_eq!(key.len(), 64, "幂等键应为 64 字符");
+        }
+    }
+
+    #[test]
+    fn test_split_blocks_have_valid_line_ranges() {
+        let splitter = TextSplitterBlocker::new();
+        let content = "First line\nSecond line\n\nThird line\nFourth line";
+        let blocks = splitter
+            .split_to_blocks(content, "test://lines")
+            .expect("分块应成功");
+        for block in &blocks {
+            assert!(
+                block.start_line <= block.end_line,
+                "start_line 应 <= end_line"
+            );
+        }
     }
 }

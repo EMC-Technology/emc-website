@@ -91,7 +91,10 @@ mod tests {
     #[test]
     fn test_database_error_code_matches_registry() {
         let err = database_error("connection lost");
-        assert_eq!(err.code(), error_core::error_code::registry::DB_QUERY_FAILED);
+        assert_eq!(
+            err.code(),
+            error_core::error_code::registry::DB_QUERY_FAILED
+        );
     }
 
     #[test]

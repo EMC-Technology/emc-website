@@ -61,7 +61,9 @@ impl GoldenDataset {
         }
 
         let data: DatasetFile = serde_json::from_str(content)?;
-        let dataset_id = data.dataset_id.or(data.id).ok_or_else(|| error_core::helpers::validation_error("数据集 ID 不能为空", "load_dataset"))?;
+        let dataset_id = data.dataset_id.or(data.id).ok_or_else(|| {
+            error_core::helpers::validation_error("数据集 ID 不能为空", "load_dataset")
+        })?;
         Ok(Self {
             dataset_id,
             description: data.description,
@@ -95,12 +97,11 @@ impl GoldenDataset {
 
         let content = std::fs::read_to_string(path).map_err(|e| error::dataset_load_error(&e))?;
         let data: DatasetFile = serde_yaml::from_str(&content).map_err(|e| {
-            error::dataset_load_error(&std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                e,
-            ))
+            error::dataset_load_error(&std::io::Error::new(std::io::ErrorKind::InvalidData, e))
         })?;
-        let dataset_id = data.dataset_id.or(data.id).ok_or_else(|| error_core::helpers::validation_error("数据集 ID 不能为空", "load_dataset"))?;
+        let dataset_id = data.dataset_id.or(data.id).ok_or_else(|| {
+            error_core::helpers::validation_error("数据集 ID 不能为空", "load_dataset")
+        })?;
         Ok(Self {
             dataset_id,
             description: data.description,
@@ -219,5 +220,151 @@ mod tests {
 
         let expert = ds.filter_by_difficulty(SampleDifficulty::Expert);
         assert!(expert.is_empty());
+    }
+
+    #[test]
+    fn test_from_json_file_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("dataset.json");
+        let json = r#"{
+            "id": "file-ds",
+            "description": "File loaded dataset",
+            "version": "1.0",
+            "samples": [
+                {
+                    "id": "s1",
+                    "query": "Q1",
+                    "expected_answer": "A1",
+                    "context_ids": [],
+                    "difficulty": "easy",
+                    "category": "cat1",
+                    "metadata": {}
+                }
+            ]
+        }"#;
+        std::fs::write(&file_path, json).unwrap();
+
+        let ds = GoldenDataset::from_json(&file_path).unwrap();
+        assert_eq!(ds.dataset_id, "file-ds");
+        assert_eq!(ds.description, "File loaded dataset");
+        assert_eq!(ds.samples.len(), 1);
+    }
+
+    #[test]
+    fn test_from_json_file_not_found() {
+        let result = GoldenDataset::from_json(Path::new("/nonexistent/path/dataset.json"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_from_json_str_missing_id() {
+        let json = r#"{
+            "version": "1.0",
+            "samples": []
+        }"#;
+        let result = GoldenDataset::from_json_str(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_from_yaml_file_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("dataset.yaml");
+        let yaml = r#"
+id: yaml-ds
+description: YAML loaded dataset
+version: "1.0"
+samples:
+  - id: s1
+    query: "What is Rust?"
+    expected_answer: "A systems language"
+    context_ids:
+      - c1
+    difficulty: easy
+    category: programming
+    metadata: {}
+"#;
+        std::fs::write(&file_path, yaml).unwrap();
+
+        let ds = GoldenDataset::from_yaml(&file_path).unwrap();
+        assert_eq!(ds.dataset_id, "yaml-ds");
+        assert_eq!(ds.description, "YAML loaded dataset");
+        assert_eq!(ds.samples.len(), 1);
+        assert_eq!(ds.samples[0].query, "What is Rust?");
+    }
+
+    #[test]
+    fn test_from_yaml_file_not_found() {
+        let result = GoldenDataset::from_yaml(Path::new("/nonexistent/path/dataset.yaml"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_from_yaml_invalid_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("bad.yaml");
+        std::fs::write(&file_path, "{{invalid yaml:::}").unwrap();
+
+        let result = GoldenDataset::from_yaml(&file_path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_from_yaml_missing_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("no_id.yaml");
+        let yaml = r#"
+version: "1.0"
+samples: []
+"#;
+        std::fs::write(&file_path, yaml).unwrap();
+
+        let result = GoldenDataset::from_yaml(&file_path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_from_yaml_with_dataset_id_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("with_dataset_id.yaml");
+        let yaml = r#"
+dataset_id: ds-via-dataset-id
+version: "2.0"
+samples: []
+"#;
+        std::fs::write(&file_path, yaml).unwrap();
+
+        let ds = GoldenDataset::from_yaml(&file_path).unwrap();
+        assert_eq!(ds.dataset_id, "ds-via-dataset-id");
+    }
+
+    #[test]
+    fn test_from_yaml_with_created_at() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("with_created_at.yaml");
+        let yaml = r#"
+id: ds-with-ts
+version: "1.0"
+samples: []
+created_at: "2025-01-01T00:00:00Z"
+"#;
+        std::fs::write(&file_path, yaml).unwrap();
+
+        let ds = GoldenDataset::from_yaml(&file_path).unwrap();
+        assert_eq!(ds.dataset_id, "ds-with-ts");
+        assert!(ds.created_at.timestamp() > 0);
+    }
+
+    #[test]
+    fn test_from_json_str_with_created_at() {
+        let json = r#"{
+            "id": "ds-ts",
+            "version": "1.0",
+            "samples": [],
+            "created_at": "2025-06-15T12:00:00Z"
+        }"#;
+        let ds = GoldenDataset::from_json_str(json).unwrap();
+        assert_eq!(ds.dataset_id, "ds-ts");
+        assert!(ds.created_at.timestamp() > 0);
     }
 }

@@ -20,6 +20,17 @@ pub enum SampleDifficulty {
     Expert,
 }
 
+impl std::fmt::Display for SampleDifficulty {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Easy => write!(f, "Easy"),
+            Self::Medium => write!(f, "Medium"),
+            Self::Hard => write!(f, "Hard"),
+            Self::Expert => write!(f, "Expert"),
+        }
+    }
+}
+
 /// Golden Dataset 评估样本
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GoldenSample {
@@ -106,7 +117,7 @@ pub struct EvaluationReport {
     /// 各样本评估结果
     pub sample_results: Vec<SampleEvalResult>,
     /// 按难度分组的评分
-    pub scores_by_difficulty: std::collections::HashMap<String, Vec<AggregatedMetric>>,
+    pub scores_by_difficulty: std::collections::HashMap<SampleDifficulty, Vec<AggregatedMetric>>,
     /// 按类别分组的评分
     pub scores_by_category: std::collections::HashMap<String, Vec<AggregatedMetric>>,
 }
@@ -117,7 +128,7 @@ pub struct EvaluationReport {
 #[async_trait::async_trait]
 pub trait RAGMetric: Send + Sync {
     /// 获取指标名称
-    fn name(&self) -> &str;
+    fn name(&self) -> &'static str;
     /// 评估单个样本
     ///
     /// # Errors
@@ -155,5 +166,25 @@ mod tests {
         };
         let json = serde_json::to_string(&score).unwrap();
         assert!(json.contains("faithfulness"));
+    }
+
+    #[test]
+    fn test_sample_difficulty_display_easy() {
+        assert_eq!(format!("{}", SampleDifficulty::Easy), "Easy");
+    }
+
+    #[test]
+    fn test_sample_difficulty_display_medium() {
+        assert_eq!(format!("{}", SampleDifficulty::Medium), "Medium");
+    }
+
+    #[test]
+    fn test_sample_difficulty_display_hard() {
+        assert_eq!(format!("{}", SampleDifficulty::Hard), "Hard");
+    }
+
+    #[test]
+    fn test_sample_difficulty_display_expert() {
+        assert_eq!(format!("{}", SampleDifficulty::Expert), "Expert");
     }
 }

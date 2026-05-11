@@ -57,8 +57,8 @@ pub const CACHE_STRATEGIES: &[(&str, CacheStrategyConfig)] = &[
     (
         "embedding_result",
         CacheStrategyConfig {
-            l1_ttl: Duration::from_secs(86400),   // 24h
-            l2_ttl: Duration::from_secs(172800),  // 48h
+            l1_ttl: Duration::from_secs(86400),  // 24h
+            l2_ttl: Duration::from_secs(172800), // 48h
             strategy: CacheStrategy::LookAside,
             target_hit_rate: 0.95,
         },
@@ -66,8 +66,8 @@ pub const CACHE_STRATEGIES: &[(&str, CacheStrategyConfig)] = &[
     (
         "knowledge_node",
         CacheStrategyConfig {
-            l1_ttl: Duration::from_secs(3600),     // 1h
-            l2_ttl: Duration::from_secs(7200),     // 2h
+            l1_ttl: Duration::from_secs(3600), // 1h
+            l2_ttl: Duration::from_secs(7200), // 2h
             strategy: CacheStrategy::WriteThrough,
             target_hit_rate: 0.80,
         },
@@ -75,8 +75,8 @@ pub const CACHE_STRATEGIES: &[(&str, CacheStrategyConfig)] = &[
     (
         "permission_check",
         CacheStrategyConfig {
-            l1_ttl: Duration::from_secs(300),      // 5min
-            l2_ttl: Duration::from_secs(600),      // 10min
+            l1_ttl: Duration::from_secs(300), // 5min
+            l2_ttl: Duration::from_secs(600), // 10min
             strategy: CacheStrategy::RefreshAhead,
             target_hit_rate: 0.99,
         },
@@ -134,10 +134,8 @@ mod tests {
 
     #[test]
     fn test_all_strategies_covered() {
-        let strategies: Vec<&CacheStrategy> = CACHE_STRATEGIES
-            .iter()
-            .map(|(_, c)| &c.strategy)
-            .collect();
+        let strategies: Vec<&CacheStrategy> =
+            CACHE_STRATEGIES.iter().map(|(_, c)| &c.strategy).collect();
 
         assert!(strategies.contains(&&CacheStrategy::LookAside));
         assert!(strategies.contains(&&CacheStrategy::WriteThrough));

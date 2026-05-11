@@ -175,7 +175,10 @@ impl CandleModelLoader {
         device_type: &CandleDevice,
     ) -> ModelInfo {
         let text_config = if architecture == "gemma4" {
-            config.get("text_config").cloned().unwrap_or_else(|| config.clone())
+            config
+                .get("text_config")
+                .cloned()
+                .unwrap_or_else(|| config.clone())
         } else {
             config.clone()
         };
@@ -276,7 +279,9 @@ impl CandleModelLoader {
 
     const fn resolve_dtype(&self) -> DType {
         match &self.config.quantization {
-            super::model_loader::Quantization::Fp32 | super::model_loader::Quantization::Int8 | super::model_loader::Quantization::Int4 => DType::F32,
+            super::model_loader::Quantization::Fp32
+            | super::model_loader::Quantization::Int8
+            | super::model_loader::Quantization::Int4 => DType::F32,
             super::model_loader::Quantization::Fp16 => DType::F16,
         }
     }
@@ -345,7 +350,9 @@ impl ModelLoader for CandleModelLoader {
         //    - VarBuilder 在 load() 函数作用域内创建，通过 ? 传播错误
         //    - 构建的 Gemma4TextModel 持有权重数据的所有权
         //    - 当 CandleLoadedModel 被 drop 时，mmap 句柄被正确关闭
-        // 6. 若未来支持多实例共享缓存目录，需引入文件锁（flock）保证独占访问
+        // 6. 当前设计假设单实例部署，同一缓存目录不会被多个进程并发写入。
+        //    若未来支持多实例共享缓存目录，需引入文件锁（flock/LockFileEx）保证独占访问。
+        //    可通过添加 fs4 crate 依赖实现跨平台文件锁。
         let vb = unsafe {
             VarBuilder::from_mmaped_safetensors(&[safetensors_path], dtype, &device)
                 .map_err(|e| ModelLoaderError::LoadFailed(format!("safetensors加载失败: {e}")))?

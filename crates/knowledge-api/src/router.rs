@@ -14,17 +14,18 @@ use axum::{
 };
 use tower_http::cors::CorsLayer;
 
-use crate::auth::{Role, auth_middleware, permission_middleware, login};
+use crate::auth::{Role, auth_middleware, login, permission_middleware};
 use crate::authz::middleware::authorization_middleware;
 use crate::error_handler::error_handler_middleware;
 use crate::handler::{
     AppState, delete_document, full_text_search, get_block, get_block_tokens, get_document,
-    get_document_blocks, get_token, health_check, list_documents, trace_references, upload_document,
-    vector_search,
+    get_document_blocks, get_token, health_check, list_documents, trace_references,
+    upload_document, vector_search,
 };
 use crate::logging_middleware::logging_middleware;
 use crate::middleware::{
-    pii_redact::pii_redact_middleware, security_headers::security_headers_middleware, tracing_middleware::tracing_middleware,
+    pii_redact::pii_redact_middleware, security_headers::security_headers_middleware,
+    tracing_middleware::tracing_middleware,
 };
 use crate::observability_endpoints::{metrics_endpoint, tracing_debug_endpoint};
 
@@ -57,7 +58,11 @@ pub fn build_router(state: AppState) -> Router {
             let manager = manager.clone();
             async move {
                 if role == Role::Anonymous {
-                    return (axum::http::StatusCode::UNAUTHORIZED, "WebSocket requires authentication").into_response();
+                    return (
+                        axum::http::StatusCode::UNAUTHORIZED,
+                        "WebSocket requires authentication",
+                    )
+                        .into_response();
                 }
                 manager.handle_ws_upgrade(ws).into_response()
             }
@@ -72,8 +77,11 @@ pub fn build_router(state: AppState) -> Router {
         .route("/blocks/{id}/tokens", get(get_block_tokens))
         .route("/tokens/{id}", get(get_token))
         .route("/tokens/{id}/references", get(trace_references))
-        .route("/search/vector", post(vector_search))
         .route("/search/fulltext", get(full_text_search));
+
+    let search_routes = Router::new()
+        .route("/search/vector", post(vector_search))
+        .layer(middleware::from_fn(permission_middleware));
 
     let write_routes = Router::new()
         .route("/documents", post(upload_document))
@@ -85,6 +93,7 @@ pub fn build_router(state: AppState) -> Router {
 
     let protected_routes = Router::new()
         .merge(read_routes)
+        .merge(search_routes)
         .merge(write_routes)
         .merge(delete_routes)
         .route("/ws", ws_route)
@@ -136,8 +145,12 @@ pub fn build_router(state: AppState) -> Router {
         axum::http::header::CONTENT_TYPE,
         axum::http::header::AUTHORIZATION,
         // SAFETY: W3C trace header 名称为硬编码常量字符串，解析为 HeaderName 不可能失败
-        TRACEPARENT_HEADER.parse().expect("hardcoded W3C trace header name is valid"),
-        TRACESTATE_HEADER.parse().expect("hardcoded W3C trace header name is valid"),
+        TRACEPARENT_HEADER
+            .parse()
+            .expect("hardcoded W3C trace header name is valid"),
+        TRACESTATE_HEADER
+            .parse()
+            .expect("hardcoded W3C trace header name is valid"),
     ];
 
     let cors = if origins.is_empty() {
@@ -147,9 +160,15 @@ pub fn build_router(state: AppState) -> Router {
         );
         // SAFETY: localhost URL 为硬编码字面量，解析为 Origin 不可能失败
         let localhost_origins: Vec<_> = [
-            "http://localhost:3000".parse().expect("localhost URL is valid"),
-            "http://localhost:5173".parse().expect("localhost URL is valid"),
-            "http://127.0.0.1:3000".parse().expect("localhost URL is valid"),
+            "http://localhost:3000"
+                .parse()
+                .expect("localhost URL is valid"),
+            "http://localhost:5173"
+                .parse()
+                .expect("localhost URL is valid"),
+            "http://127.0.0.1:3000"
+                .parse()
+                .expect("localhost URL is valid"),
         ]
         .into_iter()
         .collect();

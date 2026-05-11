@@ -14,8 +14,6 @@
 
 /// AI Agent 工作流引擎（ReAct 模式）
 pub mod agent;
-/// 插件化集成架构：闭源安全 + 即插即用
-pub mod plugins;
 /// Axum 应用启动与生命周期管理
 pub mod application;
 /// 用户角色与权限控制（基础 JWT 认证）
@@ -48,6 +46,8 @@ pub mod middleware;
 pub mod observability;
 /// 可观测性端点（/metrics, /debug/tracing）
 pub mod observability_endpoints;
+/// 插件化集成架构：闭源安全 + 即插即用
+pub mod plugins;
 /// 查询类型定义
 pub mod query_types;
 /// 细粒度 RBAC 角色权限管理（含继承、范围控制）
@@ -119,8 +119,8 @@ pub mod event_subscriber;
 pub use context_generator::ContextGenerator;
 pub use embedding_factory::EmbeddingFactory as EmbeddingModelFactory;
 pub use embedding_model::{
-    EmbeddingModel as EmbeddingModelTrait, EmbeddingModelInfo,
-    EmbeddingModelType, EmbeddingResult as ModelEmbeddingResult,
+    EmbeddingModel as EmbeddingModelTrait, EmbeddingModelInfo, EmbeddingModelType,
+    EmbeddingResult as ModelEmbeddingResult,
 };
 pub use embedding_service::{EmbeddingModel, EmbeddingResult, EmbeddingService};
 pub use knowledge_vm::{
@@ -132,13 +132,9 @@ pub use query_types::{
 };
 
 pub use model_factory::{ModelLoaderFactory, ModelRegistry, load_model, load_model_with_config};
-pub use model_loader::{
-    ModelLoader, ModelLoaderError, LoadedModel, ModelConfig as LoaderConfig,
-};
+pub use model_loader::{LoadedModel, ModelConfig as LoaderConfig, ModelLoader, ModelLoaderError};
 
-pub use dto::{
-    ApiResponse, HealthStatus, ListQueryParams, PaginationMeta, UploadDocumentRequest,
-};
+pub use dto::{ApiResponse, HealthStatus, ListQueryParams, PaginationMeta, UploadDocumentRequest};
 pub use handler::AppState;
 pub use mcp::run_mcp_server;
 pub use router::build_router;

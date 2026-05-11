@@ -108,6 +108,7 @@ publish-dry-run:
     cargo publish -p knowledge-extractor --dry-run
     cargo publish -p knowledge-evaluator --dry-run
     cargo publish -p knowledge-api --dry-run
+    cargo publish -p ullm --dry-run
 
 # 清理构建产物
 clean:
@@ -117,7 +118,7 @@ clean:
 check-meta:
     #!/usr/bin/env bash
     set -euo pipefail
-    for crate in error-core knowledge-core knowledge-parser knowledge-extractor knowledge-evaluator knowledge-api knowledge-frontend; do
+    for crate in error-core knowledge-core knowledge-parser knowledge-extractor knowledge-evaluator knowledge-api knowledge-frontend ullm; do
         echo "=== $crate ==="
         cargo publish -p "$crate" --dry-run 2>&1 | tail -1 || true
     done

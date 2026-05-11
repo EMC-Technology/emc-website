@@ -4,7 +4,7 @@
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, ItemFn, AttributeArgs, NestedMeta};
+use syn::{AttributeArgs, ItemFn, NestedMeta, parse_macro_input};
 
 /// MCP 工具自动注册宏
 ///
@@ -42,11 +42,10 @@ pub fn mcp_tool(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr_args = parse_macro_input!(attr as AttributeArgs);
     let input_fn = parse_macro_input!(item as ItemFn);
 
-    let tool_name = extract_attr_string(&attr_args, "name")
-        .expect("name 属性为必填项");
+    let tool_name = extract_attr_string(&attr_args, "name").expect("name 属性为必填项");
     let description = extract_attr_string(&attr_args, "description");
-    let category = extract_attr_string(&attr_args, "category")
-        .unwrap_or_else(|| "Custom".to_string());
+    let category =
+        extract_attr_string(&attr_args, "category").unwrap_or_else(|| "Custom".to_string());
     let tags = extract_attr_list(&attr_args, "tags");
 
     let fn_name = &input_fn.sig.ident;
@@ -54,8 +53,9 @@ pub fn mcp_tool(attr: TokenStream, item: TokenStream) -> TokenStream {
     let fn_inputs = &input_fn.sig.inputs;
     let fn_output = &input_fn.sig.output;
 
-    let struct_name =
-        syn::Ident::new(&format!("{}Handler", fn_name), fn_name.span());
+    let struct_name = syn::Ident::new(&format!("{}Handler", fn_name), fn_name.span());
+    let register_fn_name = syn::Ident::new(&format!("register_{}", fn_name), fn_name.span());
+    let params_struct_name = syn::Ident::new(&format!("{}Params", fn_name), fn_name.span());
 
     let expanded = quote! {
         #[derive(Clone)]
@@ -75,7 +75,7 @@ pub fn mcp_tool(attr: TokenStream, item: TokenStream) -> TokenStream {
                 ctx: mcp_registry::CallContext,
             ) -> std::result::Result<mcp_registry::ToolCallResult, error_core::ErrorObject> {
                 // 参数反序列化
-                let params: #fn_name Params = serde_json::from_value(args)
+                let params: #params_struct_name = serde_json::from_value(args)
                     .map_err(|e| error_core::ErrorObject::bad_request(&format!(
                         "参数解析失败: {}", e
                     )))?;
@@ -101,7 +101,7 @@ pub fn mcp_tool(attr: TokenStream, item: TokenStream) -> TokenStream {
 
         /// 自动生成的参数结构体
         #[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
-        pub struct #fn_name Params {
+        pub struct #params_struct_name {
             #(#fn_inputs)*
         }
 
@@ -109,13 +109,13 @@ pub fn mcp_tool(attr: TokenStream, item: TokenStream) -> TokenStream {
         #input_fn
 
         /// 注册辅助函数
-        pub fn register_#fn_name(
+        pub fn #register_fn_name(
             registry: &mcp_registry::ToolRegistry,
         ) -> std::result::Result<uuid::Uuid, error_core::ErrorObject> {
             let definition = mcp_registry::ToolDefinition {
                 name: #tool_name.to_string(),
                 description: #description,
-                input_schema: schemars::schema_for!(#fn_name Params),
+                input_schema: schemars::schema_for!(#params_struct_name),
                 capabilities: mcp_registry::ToolCapabilities::default(),
                 rate_limits: mcp_registry::RateLimitConfig::default(),
                 auth_requirements: mcp_registry::AuthRequirements::default(),

@@ -174,18 +174,15 @@ pub fn build_schema_definition() -> String {
 /// # Errors
 ///
 /// 当 URI 格式无效或数据库查询失败时返回错误。
-pub fn read_resource(
-    uri: &str,
-    vm: &crate::KnowledgeVM,
-) -> crate::Result<Vec<ResourceContents>> {
-    let parsed = parse_resource_uri(uri).map_err(|e| error_core::helpers::not_found("Resource", &e))?;
+pub fn read_resource(uri: &str, vm: &crate::KnowledgeVM) -> crate::Result<Vec<ResourceContents>> {
+    let parsed =
+        parse_resource_uri(uri).map_err(|e| error_core::helpers::not_found("Resource", &e))?;
 
     match parsed {
-        ResourceUri::Repos => {
-            Err(error_core::helpers::not_found("Resource",
-                "多仓库注册表尚未实现，当前仅支持单仓库模式",
-            ))
-        }
+        ResourceUri::Repos => Err(error_core::helpers::not_found(
+            "Resource",
+            "多仓库注册表尚未实现，当前仅支持单仓库模式",
+        )),
         ResourceUri::RepoContext(name) => {
             let doc_count = count_documents(vm)?;
             let block_count = count_blocks(vm)?;
@@ -206,7 +203,7 @@ fn count_documents(vm: &crate::KnowledgeVM) -> crate::Result<usize> {
             "SELECT count() AS total FROM document GROUP ALL",
             &serde_json::json!({}),
         )
-        .map_err(|e| error_core::helpers::not_found("Resource",&e.to_string()))?;
+        .map_err(|e| error_core::helpers::not_found("Resource", &e.to_string()))?;
     #[allow(clippy::cast_possible_truncation)]
     let total = response
         .into_iter()
@@ -216,14 +213,13 @@ fn count_documents(vm: &crate::KnowledgeVM) -> crate::Result<usize> {
     Ok(total)
 }
 
-
 fn count_blocks(vm: &crate::KnowledgeVM) -> crate::Result<usize> {
     let response = vm
         .execute_parameterized_query(
             "SELECT count() AS total FROM block GROUP ALL",
             &serde_json::json!({}),
         )
-        .map_err(|e| error_core::helpers::not_found("Resource",&e.to_string()))?;
+        .map_err(|e| error_core::helpers::not_found("Resource", &e.to_string()))?;
     #[allow(clippy::cast_possible_truncation)]
     let total = response
         .into_iter()
@@ -239,7 +235,7 @@ fn count_references(vm: &crate::KnowledgeVM) -> crate::Result<usize> {
             "SELECT count() AS total FROM reference GROUP ALL",
             &serde_json::json!({}),
         )
-        .map_err(|e| error_core::helpers::not_found("Resource",&e.to_string()))?;
+        .map_err(|e| error_core::helpers::not_found("Resource", &e.to_string()))?;
     #[allow(clippy::cast_possible_truncation)]
     let total = response
         .into_iter()
@@ -247,4 +243,99 @@ fn count_references(vm: &crate::KnowledgeVM) -> crate::Result<usize> {
         .and_then(|v| v.get("total").and_then(serde_json::Value::as_u64))
         .unwrap_or(0) as usize;
     Ok(total)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_static_resources() {
+        let resources = build_static_resources();
+        assert_eq!(resources.len(), 1);
+        assert_eq!(resources[0].uri, URI_REPOS);
+        assert_eq!(resources[0].name, "indexed-repositories");
+    }
+
+    #[test]
+    fn test_build_resource_templates() {
+        let templates = build_resource_templates();
+        assert_eq!(templates.len(), 2);
+        assert_eq!(templates[0].uri_template, URI_TEMPLATE_REPO_CONTEXT);
+        assert_eq!(templates[1].uri_template, URI_TEMPLATE_REPO_SCHEMA);
+    }
+
+    #[test]
+    fn test_parse_resource_uri_repos() {
+        assert_eq!(parse_resource_uri(URI_REPOS), Ok(ResourceUri::Repos));
+    }
+
+    #[test]
+    fn test_parse_resource_uri_repo_context() {
+        assert_eq!(
+            parse_resource_uri("knowledge://repo/my-repo/context"),
+            Ok(ResourceUri::RepoContext("my-repo".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_parse_resource_uri_repo_schema() {
+        assert_eq!(
+            parse_resource_uri("knowledge://repo/my-repo/schema"),
+            Ok(ResourceUri::RepoSchema("my-repo".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_parse_resource_uri_empty_name_context() {
+        assert!(parse_resource_uri("knowledge://repo//context").is_err());
+    }
+
+    #[test]
+    fn test_parse_resource_uri_empty_name_schema() {
+        assert!(parse_resource_uri("knowledge://repo//schema").is_err());
+    }
+
+    #[test]
+    fn test_parse_resource_uri_unknown() {
+        assert!(parse_resource_uri("knowledge://unknown").is_err());
+        assert!(parse_resource_uri("http://example.com").is_err());
+        assert!(parse_resource_uri("knowledge://repo/test/unknown").is_err());
+    }
+
+    #[test]
+    fn test_build_repo_context_json() {
+        let json = build_repo_context_json("test-repo", 10, 50, 200);
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["repo"], "test-repo");
+        assert_eq!(parsed["document_count"], 10);
+        assert_eq!(parsed["block_count"], 50);
+        assert_eq!(parsed["ref_count"], 200);
+    }
+
+    #[test]
+    fn test_build_schema_definition() {
+        let json = build_schema_definition();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(parsed["tables"].is_object());
+        assert!(parsed["tables"]["document"].is_object());
+        assert!(parsed["tables"]["block"].is_object());
+        assert!(parsed["tables"]["token"].is_object());
+        assert!(parsed["tables"]["reference"].is_object());
+        assert!(parsed["relationships"].is_object());
+        assert!(parsed["ref_type_enum"].is_array());
+    }
+
+    #[test]
+    fn test_resource_uri_equality() {
+        assert_eq!(ResourceUri::Repos, ResourceUri::Repos);
+        assert_eq!(
+            ResourceUri::RepoContext("a".to_string()),
+            ResourceUri::RepoContext("a".to_string())
+        );
+        assert_ne!(
+            ResourceUri::Repos,
+            ResourceUri::RepoContext("a".to_string())
+        );
+    }
 }

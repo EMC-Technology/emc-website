@@ -109,11 +109,7 @@ impl IdempotencyKeyGenerator {
     /// * `content` - Token 的文本内容
     /// * `global_offset` - 全局字符偏移量
     #[must_use]
-    pub fn generate_for_token(
-        block_id: &str,
-        content: &str,
-        global_offset: u64,
-    ) -> String {
+    pub fn generate_for_token(block_id: &str, content: &str, global_offset: u64) -> String {
         let input = format!("{block_id}:{content}:{global_offset}");
         blake3::hash(input.as_bytes()).to_hex().to_string()
     }
@@ -158,11 +154,7 @@ mod tests {
     fn test_generate_for_block_produces_fixed_length() {
         let key = IdempotencyKeyGenerator::generate_for_block("doc:test", 0, 10, "hello");
 
-        assert_eq!(
-            key.len(),
-            64,
-            "BLAKE3 hex 编码应始终为 64 字符"
-        );
+        assert_eq!(key.len(), 64, "BLAKE3 hex 编码应始终为 64 字符");
         assert!(
             key.chars().all(|c| c.is_ascii_hexdigit()),
             "键应只包含十六进制字符"
@@ -174,23 +166,15 @@ mod tests {
         let key1 = IdempotencyKeyGenerator::generate_for_block("doc:a", 5, 15, "content");
         let key2 = IdempotencyKeyGenerator::generate_for_block("doc:a", 5, 15, "content");
 
-        assert_eq!(
-            key1, key2,
-            "相同输入应产生相同的幂等键"
-        );
+        assert_eq!(key1, key2, "相同输入应产生相同的幂等键");
     }
 
     #[test]
     fn test_different_content_produces_different_key() {
-        let key1 =
-            IdempotencyKeyGenerator::generate_for_block("doc:x", 0, 10, "version one");
-        let key2 =
-            IdempotencyKeyGenerator::generate_for_block("doc:x", 0, 10, "version two");
+        let key1 = IdempotencyKeyGenerator::generate_for_block("doc:x", 0, 10, "version one");
+        let key2 = IdempotencyKeyGenerator::generate_for_block("doc:x", 0, 10, "version two");
 
-        assert_ne!(
-            key1, key2,
-            "不同内容应产生不同的幂等键"
-        );
+        assert_ne!(key1, key2, "不同内容应产生不同的幂等键");
     }
 
     #[test]
@@ -198,10 +182,7 @@ mod tests {
         let key1 = IdempotencyKeyGenerator::generate_for_block("doc:y", 0, 10, "same");
         let key2 = IdempotencyKeyGenerator::generate_for_block("doc:y", 5, 15, "same");
 
-        assert_ne!(
-            key1, key2,
-            "不同行范围应产生不同的幂等键"
-        );
+        assert_ne!(key1, key2, "不同行范围应产生不同的幂等键");
     }
 
     #[test]
@@ -209,10 +190,7 @@ mod tests {
         let key1 = IdempotencyKeyGenerator::generate_for_block("doc:alpha", 0, 5, "text");
         let key2 = IdempotencyKeyGenerator::generate_for_block("doc:beta", 0, 5, "text");
 
-        assert_ne!(
-            key1, key2,
-            "不同 doc_id 应产生不同的幂等键"
-        );
+        assert_ne!(key1, key2, "不同 doc_id 应产生不同的幂等键");
     }
 
     #[test]
@@ -225,35 +203,17 @@ mod tests {
     #[test]
     fn test_large_content_handling() {
         let large_content = "x".repeat(100_000);
-        let key = IdempotencyKeyGenerator::generate_for_block(
-            "doc:large",
-            0,
-            1000,
-            &large_content,
-        );
+        let key = IdempotencyKeyGenerator::generate_for_block("doc:large", 0, 1000, &large_content);
 
         assert_eq!(key.len(), 64, "大内容不应影响输出长度");
     }
 
     #[test]
     fn test_unicode_content_stable() {
-        let key1 = IdempotencyKeyGenerator::generate_for_block(
-            "doc:utf8",
-            0,
-            1,
-            "你好世界 🌍",
-        );
-        let key2 = IdempotencyKeyGenerator::generate_for_block(
-            "doc:utf8",
-            0,
-            1,
-            "你好世界 🌍",
-        );
+        let key1 = IdempotencyKeyGenerator::generate_for_block("doc:utf8", 0, 1, "你好世界 🌍");
+        let key2 = IdempotencyKeyGenerator::generate_for_block("doc:utf8", 0, 1, "你好世界 🌍");
 
-        assert_eq!(
-            key1, key2,
-            "Unicode 内容应稳定地产生相同键"
-        );
+        assert_eq!(key1, key2, "Unicode 内容应稳定地产生相同键");
     }
 
     #[test]
@@ -266,11 +226,7 @@ mod tests {
 
     #[test]
     fn test_generate_for_token() {
-        let key = IdempotencyKeyGenerator::generate_for_token(
-            "block:test",
-            "identifier",
-            42,
-        );
+        let key = IdempotencyKeyGenerator::generate_for_token("block:test", "identifier", 42);
 
         assert_eq!(key.len(), 64, "Token 键应为 64 字符");
     }
@@ -291,10 +247,58 @@ mod tests {
 
         let first = &keys[0];
         for key in &keys[1..] {
-            assert_eq!(
-                key, first,
-                "多次调用应产生确定性的相同结果"
-            );
+            assert_eq!(key, first, "多次调用应产生确定性的相同结果");
         }
+    }
+
+    #[test]
+    fn test_keys_equal_same_keys() {
+        let key = IdempotencyKeyGenerator::generate_for_block("doc:test", 0, 10, "hello");
+        assert!(
+            IdempotencyKeyGenerator::keys_equal(&key, &key),
+            "相同键应返回 true"
+        );
+    }
+
+    #[test]
+    fn test_keys_equal_different_keys() {
+        let key1 = IdempotencyKeyGenerator::generate_for_block("doc:a", 0, 10, "hello");
+        let key2 = IdempotencyKeyGenerator::generate_for_block("doc:b", 0, 10, "hello");
+        assert!(
+            !IdempotencyKeyGenerator::keys_equal(&key1, &key2),
+            "不同键应返回 false"
+        );
+    }
+
+    #[test]
+    fn test_keys_equal_empty_keys() {
+        assert!(
+            IdempotencyKeyGenerator::keys_equal("", ""),
+            "空键比较应返回 true"
+        );
+        assert!(
+            !IdempotencyKeyGenerator::keys_equal("a", ""),
+            "空与非空键比较应返回 false"
+        );
+    }
+
+    #[test]
+    fn test_keys_equal_document_keys() {
+        let key1 = IdempotencyKeyGenerator::generate_for_document("/path/a.md", &"a".repeat(64));
+        let key2 = IdempotencyKeyGenerator::generate_for_document("/path/a.md", &"a".repeat(64));
+        assert!(
+            IdempotencyKeyGenerator::keys_equal(&key1, &key2),
+            "相同文档键应返回 true"
+        );
+    }
+
+    #[test]
+    fn test_keys_equal_token_keys() {
+        let key1 = IdempotencyKeyGenerator::generate_for_token("block:1", "word", 42);
+        let key2 = IdempotencyKeyGenerator::generate_for_token("block:1", "word", 42);
+        assert!(
+            IdempotencyKeyGenerator::keys_equal(&key1, &key2),
+            "相同 Token 键应返回 true"
+        );
     }
 }

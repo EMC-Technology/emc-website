@@ -2,9 +2,7 @@ use async_trait::async_trait;
 use std::pin::Pin;
 use tokio_stream::Stream;
 
-use super::agent_backend::{
-    AgentBackend, AgentCapabilities, AgentChunk, AgentResult, AgentTask,
-};
+use super::agent_backend::{AgentBackend, AgentCapabilities, AgentChunk, AgentResult, AgentTask};
 use crate::Result;
 
 /// 远程 Agent 后端 — 通过 gRPC 连接 UPMC 服务

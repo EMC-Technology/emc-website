@@ -3,7 +3,7 @@
 # =============================================================================
 # 阶段1: 构建
 # -----------------------------------------------------------------------------
-FROM rust:1.85-slim AS builder
+FROM rust:1.91-slim AS builder
 
 # 安装构建依赖
 RUN apt-get update && apt-get install -y \
@@ -25,6 +25,7 @@ COPY crates/knowledge-api/Cargo.toml crates/knowledge-api/Cargo.toml
 COPY crates/knowledge-frontend/Cargo.toml crates/knowledge-frontend/Cargo.toml
 COPY crates/knowledge-extractor/Cargo.toml crates/knowledge-extractor/Cargo.toml
 COPY crates/knowledge-evaluator/Cargo.toml crates/knowledge-evaluator/Cargo.toml
+COPY crates/ullm/Cargo.toml crates/ullm/Cargo.toml
 
 # 创建 dummy 源文件以缓存依赖编译
 RUN mkdir -p crates/error-core/src && echo "" > crates/error-core/src/lib.rs && \
@@ -33,7 +34,8 @@ RUN mkdir -p crates/error-core/src && echo "" > crates/error-core/src/lib.rs && 
     mkdir -p crates/knowledge-api/src && echo "" > crates/knowledge-api/src/lib.rs && \
     mkdir -p crates/knowledge-frontend/src && echo "" > crates/knowledge-frontend/src/lib.rs && \
     mkdir -p crates/knowledge-extractor/src && echo "" > crates/knowledge-extractor/src/lib.rs && \
-    mkdir -p crates/knowledge-evaluator/src && echo "" > crates/knowledge-evaluator/src/lib.rs
+    mkdir -p crates/knowledge-evaluator/src && echo "" > crates/knowledge-evaluator/src/lib.rs && \
+    mkdir -p crates/ullm/src && echo "" > crates/ullm/src/lib.rs
 
 # 构建依赖（此层会被 Docker 缓存，仅当 Cargo.toml/Cargo.lock 变化时重建）
 RUN cargo build --release --locked --workspace 2>/dev/null || true
@@ -62,7 +64,7 @@ WORKDIR /app
 
 # 复制构建产物
 COPY --from=builder /app/target/release/knowledge-api /usr/local/bin/
-COPY --from=builder /app/crates/knowledge-api/schema.sql /app/schema.sql
+COPY --from=builder /app/crates/knowledge-core/schema.surql /app/schema.surql
 
 # 创建配置目录和数据目录
 RUN mkdir -p /app/data /app/logs /app/config

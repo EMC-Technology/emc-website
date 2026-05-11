@@ -53,7 +53,14 @@ impl LlmJudgerImpl {
         let doc_list: String = documents
             .iter()
             .enumerate()
-            .map(|(i, d)| format!("{}. [score={:.4}] {}", i + 1, d.relevance_score, d.document.content))
+            .map(|(i, d)| {
+                format!(
+                    "{}. [score={:.4}] {}",
+                    i + 1,
+                    d.relevance_score,
+                    d.document.content
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n");
 
@@ -126,9 +133,10 @@ impl LlmJudgerImpl {
         }
 
         match serde_json::from_str::<Vec<JudgeEntry>>(json_str) {
-            Ok(entries) if entries.len() == doc_count => {
-                entries.into_iter().map(|e| e.relevance.clamp(0.0, 1.0)).collect()
-            }
+            Ok(entries) if entries.len() == doc_count => entries
+                .into_iter()
+                .map(|e| e.relevance.clamp(0.0, 1.0))
+                .collect(),
             _ => {
                 debug!("LLM judge response parse failed, falling back to decay scores");
                 (0..doc_count)
@@ -146,7 +154,9 @@ impl LlmJudgerImpl {
 /// 从 LLM 响应中提取 JSON 数组部分
 fn extract_json_array(response: &str) -> &str {
     let start = response.find('[').unwrap_or(0);
-    let end = response.rfind(']').map_or_else(|| response.len(), |i| i + 1);
+    let end = response
+        .rfind(']')
+        .map_or_else(|| response.len(), |i| i + 1);
     &response[start..end]
 }
 
@@ -221,14 +231,12 @@ mod tests {
     #[tokio::test]
     async fn test_judge_relevance_with_valid_response() {
         let llm = Arc::new(MockLlm {
-            response: r#"[{"index": 1, "relevance": 0.8}, {"index": 2, "relevance": 0.3}]"#.to_string(),
+            response: r#"[{"index": 1, "relevance": 0.8}, {"index": 2, "relevance": 0.3}]"#
+                .to_string(),
         });
         let judger = LlmJudgerImpl::new(llm, "test-llm");
 
-        let docs = vec![
-            make_scored_doc("doc a", 0.9),
-            make_scored_doc("doc b", 0.7),
-        ];
+        let docs = vec![make_scored_doc("doc a", 0.9), make_scored_doc("doc b", 0.7)];
 
         let result = judger.judge_relevance("query", &docs).await.unwrap();
         assert_eq!(result.len(), 2);

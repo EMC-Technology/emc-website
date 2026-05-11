@@ -1,0 +1,49 @@
+[package]
+name = "ullm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
+description = "Universal LLM Access Lifecycle Management Module"
+keywords = ["llm", "ai", "openai", "streaming", "provider"]
+categories = ["api-bindings", "asynchronous", "web-programming"]
+
+[dependencies]
+tokio = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream", "cookies"] }
+serde = { workspace = true, features = ["rc"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { version = "1.0", default-features = false }
+futures-util = { version = "0.3", default-features = false }
+dashmap = { version = "5.5", default-features = false }
+parking_lot = { version = "0.12", default-features = false }
+tracing = { workspace = true }
+uuid = { workspace = true }
+http = { version = "1.0", default-features = false }
+bytes = { version = "1.10", default-features = false }
+pin-project = { version = "1.1", default-features = false }
+once_cell = { version = "1.20", default-features = false }
+tiktoken-rs = { version = "0.6", default-features = false }
+convert_case = { version = "0.6", default-features = false }
+rand = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+base64 = { workspace = true, features = ["std"] }
+chrono = { workspace = true }
+error-core = { workspace = true }
+tokio-stream = { version = "0.1", default-features = false }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }
+proptest = { version = "1.4" }
+serial_test = { version = "3", default-features = false }
+
+[lints]
+workspace = true

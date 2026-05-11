@@ -1,7 +1,7 @@
-use error_core::prelude::*;
-use error_core::logging::LoggingUtils;
-use error_core::logging::LogFileManager;
 use error_core::error_capture::BusinessErrorCapture;
+use error_core::logging::LogFileManager;
+use error_core::logging::LoggingUtils;
+use error_core::prelude::*;
 
 #[test]
 fn test_logging_integration() {

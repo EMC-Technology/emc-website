@@ -1,7 +1,6 @@
 /// 向量存储核心类型定义
 ///
 /// 定义搜索选项、过滤器、结果、距离度量等核心数据结构。
-
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -106,8 +105,8 @@ pub struct ResultMetadata {
     pub chunk_index: usize,
     /// 内容预览文本
     pub content_preview: String,
-    /// 源文件类型（markdown/code/plain）
-    pub source_type: String,
+    /// 源文件类型
+    pub source_type: crate::model::SourceType,
 }
 
 /// 距离度量类型
@@ -158,13 +157,19 @@ impl HybridQuery {
     /// 创建纯文本查询（仅 BM25）
     #[must_use]
     pub fn text_only(text: impl Into<String>) -> Self {
-        Self { text: text.into(), ..Default::default() }
+        Self {
+            text: text.into(),
+            ..Default::default()
+        }
     }
 
     /// 创建纯向量查询
     #[must_use]
     pub fn vector_only(vector: Vec<f32>) -> Self {
-        Self { vector: Some(vector), ..Default::default() }
+        Self {
+            vector: Some(vector),
+            ..Default::default()
+        }
     }
 
     /// 创建混合查询
@@ -173,7 +178,13 @@ impl HybridQuery {
     #[must_use]
     pub fn hybrid(text: impl Into<String>, vector: Vec<f32>, vector_weight: f64) -> Self {
         let bm25_weight = 1.0 - vector_weight;
-        Self { text: text.into(), vector: Some(vector), vector_weight, bm25_weight, options: SearchOptions::default() }
+        Self {
+            text: text.into(),
+            vector: Some(vector),
+            vector_weight,
+            bm25_weight,
+            options: SearchOptions::default(),
+        }
     }
 }
 
@@ -198,5 +209,106 @@ mod tests {
     #[test]
     fn test_distance_metric_default() {
         assert_eq!(DistanceMetric::default(), DistanceMetric::Cosine);
+    }
+
+    #[test]
+    fn test_hybrid_query_vector_only() {
+        let query = HybridQuery::vector_only(vec![1.0, 2.0, 3.0]);
+        assert!(query.text.is_empty());
+        assert_eq!(query.vector, Some(vec![1.0, 2.0, 3.0]));
+        assert!((query.vector_weight - 0.7).abs() < f64::EPSILON);
+        assert!((query.bm25_weight - 0.3).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_hybrid_query_hybrid() {
+        let query = HybridQuery::hybrid("test query", vec![1.0, 2.0], 0.8);
+        assert_eq!(query.text, "test query");
+        assert_eq!(query.vector, Some(vec![1.0, 2.0]));
+        assert!((query.vector_weight - 0.8).abs() < f64::EPSILON);
+        assert!((query.bm25_weight - 0.2).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_hybrid_query_default() {
+        let query = HybridQuery::default();
+        assert!(query.text.is_empty());
+        assert!(query.vector.is_none());
+        assert!((query.vector_weight - 0.7).abs() < f64::EPSILON);
+        assert!((query.bm25_weight - 0.3).abs() < f64::EPSILON);
+        assert_eq!(query.options.top_k, 10);
+    }
+
+    #[test]
+    fn test_search_options_serialization() {
+        let opts = SearchOptions::default();
+        let json = serde_json::to_string(&opts).unwrap();
+        let de: SearchOptions = serde_json::from_str(&json).unwrap();
+        assert_eq!(opts.top_k, de.top_k);
+        assert!((opts.score_threshold - de.score_threshold).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_hybrid_query_serialization() {
+        let query = HybridQuery::text_only("hello world");
+        let json = serde_json::to_string(&query).unwrap();
+        let de: HybridQuery = serde_json::from_str(&json).unwrap();
+        assert_eq!(query.text, de.text);
+    }
+
+    #[test]
+    fn test_filter_serialization() {
+        let filter = Filter {
+            must: vec![Condition::FieldEquals {
+                key: "status".to_string(),
+                value: serde_json::json!("active"),
+            }],
+            should: vec![],
+            must_not: vec![],
+        };
+        let json = serde_json::to_string(&filter).unwrap();
+        let de: Filter = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.must.len(), 1);
+    }
+
+    #[test]
+    fn test_condition_field_in_range() {
+        let condition = Condition::FieldInRange {
+            key: "score".to_string(),
+            range: ValueRange { min: 0.0, max: 1.0 },
+        };
+        let json = serde_json::to_string(&condition).unwrap();
+        let de: Condition = serde_json::from_str(&json).unwrap();
+        assert!(matches!(de, Condition::FieldInRange { .. }));
+    }
+
+    #[test]
+    fn test_condition_field_in() {
+        let condition = Condition::FieldIn {
+            key: "type".to_string(),
+            values: vec![serde_json::json!("a"), serde_json::json!("b")],
+        };
+        let json = serde_json::to_string(&condition).unwrap();
+        let de: Condition = serde_json::from_str(&json).unwrap();
+        assert!(matches!(de, Condition::FieldIn { .. }));
+    }
+
+    #[test]
+    fn test_search_options_with_filter() {
+        let opts = SearchOptions {
+            top_k: 5,
+            score_threshold: 0.9,
+            filter: Some(Filter {
+                must: vec![],
+                should: vec![],
+                must_not: vec![],
+            }),
+            include_vectors: true,
+            include_payload: false,
+        };
+        assert_eq!(opts.top_k, 5);
+        assert!(opts.filter.is_some());
+        assert!(opts.include_vectors);
+        assert!(!opts.include_payload);
     }
 }

@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use surrealdb::opt::RecordId;
 
-use crate::database::DatabaseClient;
-use crate::model::{Block, Document, RecordIdType, RefType, Reference, Token};
 use crate::Result;
+use crate::database::DatabaseClient;
 use crate::error::helpers;
+use crate::model::{Block, Document, RecordIdType, RefType, Reference, Token};
 
 /// 将 SurrealDB 的 Value 类型转换为 serde_json::Value
 ///
@@ -33,9 +33,7 @@ pub fn surreal_value_to_json(value: &surrealdb::sql::Value) -> serde_json::Value
                 .collect();
             serde_json::Value::Object(map)
         }
-        surrealdb::sql::Value::Thing(t) => {
-            serde_json::Value::String(t.to_string())
-        }
+        surrealdb::sql::Value::Thing(t) => serde_json::Value::String(t.to_string()),
         _ => serde_json::Value::String(value.to_string()),
     }
 }
@@ -44,7 +42,9 @@ pub fn surreal_value_to_json(value: &surrealdb::sql::Value) -> serde_json::Value
 ///
 /// 先将 SurrealDB Value 转为 JSON 值，再通过 serde_json 反序列化
 #[allow(clippy::needless_pass_by_value)]
-pub fn deserialize_value<T: serde::de::DeserializeOwned>(value: surrealdb::sql::Value) -> Result<T> {
+pub fn deserialize_value<T: serde::de::DeserializeOwned>(
+    value: surrealdb::sql::Value,
+) -> Result<T> {
     let json_value = surreal_value_to_json(&value);
     serde_json::from_value(json_value).map_err(Into::into)
 }
@@ -68,9 +68,10 @@ impl<D: DatabaseClient> DocumentRepository<D> {
     pub async fn create(&self, doc: &Document) -> Result<Document> {
         let results = self.client.create("document", doc).await?;
 
-        let value = results.into_iter().next().ok_or_else(|| {
-            helpers::db_error("create document: empty result")
-        })?;
+        let value = results
+            .into_iter()
+            .next()
+            .ok_or_else(|| helpers::db_error("create document: empty result"))?;
 
         deserialize_value(value)
     }
@@ -107,15 +108,13 @@ impl<D: DatabaseClient> DocumentRepository<D> {
             )
             .await?;
 
-        results
-            .into_iter()
-            .map(deserialize_value)
-            .collect()
+        results.into_iter().map(deserialize_value).collect()
     }
 
     /// 更新文档
     pub async fn update(&self, id: &RecordIdType, doc: &Document) -> Result<Document> {
-        let value = self.client
+        let value = self
+            .client
             .update(id.clone(), doc.clone())
             .await?
             .ok_or_else(|| helpers::not_found("document", &id.to_string()))?;
@@ -159,9 +158,10 @@ impl<D: DatabaseClient> BlockRepository<D> {
     pub async fn create(&self, block: &Block) -> Result<Block> {
         let results = self.client.create("block", block).await?;
 
-        let value = results.into_iter().next().ok_or_else(|| {
-            helpers::db_error("create block: empty result")
-        })?;
+        let value = results
+            .into_iter()
+            .next()
+            .ok_or_else(|| helpers::db_error("create block: empty result"))?;
 
         deserialize_value(value)
     }
@@ -181,10 +181,7 @@ impl<D: DatabaseClient> BlockRepository<D> {
             )
             .await?;
 
-        results
-            .into_iter()
-            .map(deserialize_value)
-            .collect()
+        results.into_iter().map(deserialize_value).collect()
     }
 
     /// 更新块的向量嵌入
@@ -208,10 +205,13 @@ impl<D: DatabaseClient> BlockRepository<D> {
         let mut output = Vec::new();
         for value in results {
             let json_val = surreal_value_to_json(&value);
-            let score = json_val.get("score").and_then(serde_json::Value::as_f64).unwrap_or_else(|| {
-                tracing::warn!("vector_search: score 字段缺失或类型不匹配，默认为 0.0");
-                0.0
-            });
+            let score = json_val
+                .get("score")
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or_else(|| {
+                    tracing::warn!("vector_search: score 字段缺失或类型不匹配，默认为 0.0");
+                    0.0
+                });
             let block: Block = deserialize_value(value)?;
             output.push((block, score));
         }
@@ -220,8 +220,14 @@ impl<D: DatabaseClient> BlockRepository<D> {
             let score_cmp = b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal);
             let near_tie = (a.1 - b.1).abs() < 1e-10;
             if score_cmp == std::cmp::Ordering::Equal || near_tie {
-                let id_a = a.0.id.as_ref().map_or_else(String::new, std::string::ToString::to_string);
-                let id_b = b.0.id.as_ref().map_or_else(String::new, std::string::ToString::to_string);
+                let id_a =
+                    a.0.id
+                        .as_ref()
+                        .map_or_else(String::new, std::string::ToString::to_string);
+                let id_b =
+                    b.0.id
+                        .as_ref()
+                        .map_or_else(String::new, std::string::ToString::to_string);
                 id_a.cmp(&id_b)
             } else {
                 score_cmp
@@ -260,9 +266,10 @@ impl<D: DatabaseClient> TokenRepository<D> {
     pub async fn create(&self, token: &Token) -> Result<Token> {
         let results = self.client.create("token", token).await?;
 
-        let value = results.into_iter().next().ok_or_else(|| {
-            helpers::db_error("create token: empty result")
-        })?;
+        let value = results
+            .into_iter()
+            .next()
+            .ok_or_else(|| helpers::db_error("create token: empty result"))?;
 
         deserialize_value(value)
     }
@@ -301,10 +308,7 @@ impl<D: DatabaseClient> TokenRepository<D> {
             )
             .await?;
 
-        results
-            .into_iter()
-            .map(deserialize_value)
-            .collect()
+        results.into_iter().map(deserialize_value).collect()
     }
 
     /// 根据全局偏移量查找词元
@@ -353,9 +357,10 @@ impl<D: DatabaseClient> ReferenceRepository<D> {
     pub async fn create(&self, reference: &Reference) -> Result<Reference> {
         let results = self.client.create("reference", reference).await?;
 
-        let value = results.into_iter().next().ok_or_else(|| {
-            helpers::db_error("create reference: empty result")
-        })?;
+        let value = results
+            .into_iter()
+            .next()
+            .ok_or_else(|| helpers::db_error("create reference: empty result"))?;
 
         deserialize_value(value)
     }
@@ -394,10 +399,7 @@ impl<D: DatabaseClient> ReferenceRepository<D> {
             )
             .await?;
 
-        results
-            .into_iter()
-            .map(deserialize_value)
-            .collect()
+        results.into_iter().map(deserialize_value).collect()
     }
 
     /// 根据目标节点 ID 查找所有入边引用
@@ -410,14 +412,15 @@ impl<D: DatabaseClient> ReferenceRepository<D> {
             )
             .await?;
 
-        results
-            .into_iter()
-            .map(deserialize_value)
-            .collect()
+        results.into_iter().map(deserialize_value).collect()
     }
 
     /// 正向追踪：从指定节点出发，沿出边方向查找引用
-    pub async fn trace_forward(&self, id: &RecordIdType, ref_type: Option<RefType>) -> Result<Vec<Reference>> {
+    pub async fn trace_forward(
+        &self,
+        id: &RecordIdType,
+        ref_type: Option<RefType>,
+    ) -> Result<Vec<Reference>> {
         let sql = match ref_type {
             Some(_) => "SELECT * FROM reference WHERE source_id = $id AND ref_type = $ref_type",
             None => "SELECT * FROM reference WHERE source_id = $id",
@@ -436,7 +439,11 @@ impl<D: DatabaseClient> ReferenceRepository<D> {
     }
 
     /// 反向追踪：从指定节点出发，沿入边方向查找引用
-    pub async fn trace_backward(&self, id: &RecordIdType, ref_type: Option<RefType>) -> Result<Vec<Reference>> {
+    pub async fn trace_backward(
+        &self,
+        id: &RecordIdType,
+        ref_type: Option<RefType>,
+    ) -> Result<Vec<Reference>> {
         let sql = match ref_type {
             Some(_) => "SELECT * FROM reference WHERE target_id = $id AND ref_type = $ref_type",
             None => "SELECT * FROM reference WHERE target_id = $id",
@@ -494,10 +501,7 @@ impl<D: DatabaseClient> CommunityRepository<D> {
             )
             .await?;
 
-        results
-            .into_iter()
-            .map(deserialize_value)
-            .collect()
+        results.into_iter().map(deserialize_value).collect()
     }
 }
 
@@ -527,10 +531,7 @@ impl<D: DatabaseClient> ProcessRepository<D> {
             )
             .await?;
 
-        results
-            .into_iter()
-            .map(deserialize_value)
-            .collect()
+        results.into_iter().map(deserialize_value).collect()
     }
 }
 
@@ -583,7 +584,8 @@ impl<D: DatabaseClient> KnowledgeRepository<D> {
         }
 
         for (i, reference) in references.iter().enumerate() {
-            let ref_json = serde_json::to_value(reference).map_err(error_core::ErrorObject::from)?;
+            let ref_json =
+                serde_json::to_value(reference).map_err(error_core::ErrorObject::from)?;
             queries.push(format!("CREATE reference CONTENT $ref_{i}"));
             bindings.push(serde_json::json!({ format!("ref_{i}"): ref_json }));
         }
@@ -602,16 +604,14 @@ impl<D: DatabaseClient> KnowledgeRepository<D> {
             )
             .await?;
 
-        let record_id_str = results
-            .into_iter()
-            .next()
-            .and_then(|v| {
-                if let surrealdb::sql::Value::Object(obj) = v {
-                    obj.get("record_id").map(|rid| rid.to_string().trim_matches('"').to_string())
-                } else {
-                    None
-                }
-            });
+        let record_id_str = results.into_iter().next().and_then(|v| {
+            if let surrealdb::sql::Value::Object(obj) = v {
+                obj.get("record_id")
+                    .map(|rid| rid.to_string().trim_matches('"').to_string())
+            } else {
+                None
+            }
+        });
 
         record_id_str.map_or_else(|| Ok(None), |s| Ok(Some(rid("idempotency", &s))))
     }
@@ -657,15 +657,28 @@ mod tests {
     #[test]
     fn test_debug_surreal_value_serialization() {
         let mut obj = std::collections::BTreeMap::new();
-        obj.insert("id".to_string(), surrealdb::sql::Value::from("document:abc"));
+        obj.insert(
+            "id".to_string(),
+            surrealdb::sql::Value::from("document:abc"),
+        );
         obj.insert("path".to_string(), surrealdb::sql::Value::from("/test.md"));
         obj.insert("title".to_string(), surrealdb::sql::Value::from("Test"));
-        obj.insert("source_type".to_string(), surrealdb::sql::Value::from("Markdown"));
-        obj.insert("hash".to_string(), surrealdb::sql::Value::from("a".repeat(64)));
+        obj.insert(
+            "source_type".to_string(),
+            surrealdb::sql::Value::from("Markdown"),
+        );
+        obj.insert(
+            "hash".to_string(),
+            surrealdb::sql::Value::from("a".repeat(64)),
+        );
         let value = surrealdb::sql::Value::from(obj);
         let json = surreal_value_to_json(&value);
         let doc_result: Result<Document> = serde_json::from_value(json).map_err(Into::into);
-        assert!(doc_result.is_ok(), "deserialization failed: {:?}", doc_result.err());
+        assert!(
+            doc_result.is_ok(),
+            "deserialization failed: {:?}",
+            doc_result.err()
+        );
         let doc = doc_result.unwrap();
         assert_eq!(doc.path, "/test.md");
     }
@@ -868,10 +881,7 @@ mod tests {
 
         let repo = TokenRepository::new(mock);
         let block_id = test_rid("block", "x");
-        let tokens = vec![
-            test_token(block_id.clone()),
-            test_token(block_id),
-        ];
+        let tokens = vec![test_token(block_id.clone()), test_token(block_id)];
         let result = repo.insert_batch(&tokens).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap().len(), 2);

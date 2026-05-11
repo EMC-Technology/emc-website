@@ -39,13 +39,18 @@ cuda = ["candle-core?/cuda", "candle-nn?/cuda", "candle-transformers?/cuda"]
 # Apple Metal 加速（macOS M1/M2/M3）
 metal = ["candle-core?/metal", "candle-nn?/metal", "candle-transformers?/metal"]
 
+# 形式化验证特性
+formal = ["proptest", "kani"]
+proptest = ["dep:proptest"]
+kani = []
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
 error-core = { workspace = true, features = ["serde", "uuid", "chrono", "serde-json", "db"] }
 blake3 = { workspace = true }
 aes-gcm = { workspace = true, default-features = false, features = ["aes", "alloc", "getrandom"] }
-zeroize = { version = "1.8", default-features = false, features = ["derive"] }
+zeroize = { workspace = true }
 rand = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
@@ -96,6 +101,9 @@ candle-transformers = { version = "0.10", default-features = false, features = [
 tokenizers = { version = "0.22", default-features = false, features = ["http"], optional = true }
 hf-hub = { version = "0.4", default-features = false, features = ["tokio"], optional = true }
 
+# 形式化验证依赖
+proptest = { version = "1.4", default-features = false, features = ["std"], optional = true }
+
 [dev-dependencies]
 tokio = { workspace = true }
 tempfile = "3.10"
@@ -109,3 +117,6 @@ harness = false
 [[bench]]
 name = "database_bench"
 harness = false
+
+[lints]
+workspace = true

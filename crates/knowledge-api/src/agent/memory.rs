@@ -126,7 +126,6 @@ pub struct ForgetCriteria {
     pub memory_types: Option<Vec<MemoryType>>,
 }
 
-
 // ============================================================================
 // 短期工作记忆
 // ============================================================================
@@ -566,7 +565,7 @@ impl LongTermMemory {
         {
             let index = self.index.read().await;
             for (id, entry) in index.iter() {
-                let should_forget = 
+                let should_forget =
                     // 检查年龄
                     criteria.max_age_seconds.is_some_and(|max_age| {
                         let age = now.signed_duration_since(entry.created_at);
@@ -837,10 +836,10 @@ impl EpisodicMemory {
             total_duration += episode.duration_ms;
 
             for step in &episode.steps {
-                if let Some(ref action) = step.action {
-                    if action.action_type == ActionType::UseTool {
-                        *tool_usage.entry(action.tool_name.clone()).or_insert(0) += 1;
-                    }
+                if let Some(ref action) = step.action
+                    && action.action_type == ActionType::UseTool
+                {
+                    *tool_usage.entry(action.tool_name.clone()).or_insert(0) += 1;
                 }
             }
         }
@@ -886,7 +885,6 @@ pub struct MemorySystem {
     /// 事件记忆（可选）
     pub episodic: Option<EpisodicMemory>,
 }
-
 
 impl MemorySystem {
     /// 创建只包含短期记忆的系统
@@ -935,11 +933,7 @@ impl MemorySystem {
     /// # Errors
     ///
     /// 记忆添加失败时返回错误。
-    pub fn add_thought(
-        &mut self,
-        task_id: Uuid,
-        thought: impl Into<String>,
-    ) -> crate::Result<()> {
+    pub fn add_thought(&mut self, task_id: Uuid, thought: impl Into<String>) -> crate::Result<()> {
         let entry = MemoryEntry::new(MemoryType::Thought, thought)
             .with_importance(0.6)
             .with_metadata("task_id", serde_json::json!(task_id));
@@ -1166,8 +1160,7 @@ mod tests {
         let store = Arc::new(MockVectorStore);
         let long_term = LongTermMemory::new(store, "test_collection");
 
-        let entry = MemoryEntry::new(MemoryType::Fact, "Rust所有权规则详解")
-            .with_importance(0.9);
+        let entry = MemoryEntry::new(MemoryType::Fact, "Rust所有权规则详解").with_importance(0.9);
         long_term.store(&entry).await.unwrap();
 
         let mut system = MemorySystem {

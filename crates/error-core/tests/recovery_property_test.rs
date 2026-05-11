@@ -6,12 +6,18 @@
 //! - 断路器状态转换合法性
 //! - 随机配置不 panic
 
-#![allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
 
-use error_core::recovery::{RecoveryStateMachine, ExponentialBackoff, CircuitBreaker, RecoveryState, CircuitBreakerState};
 use error_core::propagation::RetryConfig;
-use std::time::Duration;
+use error_core::recovery::{
+    CircuitBreaker, CircuitBreakerState, ExponentialBackoff, RecoveryState, RecoveryStateMachine,
+};
 use proptest::prelude::*;
+use std::time::Duration;
 
 prop_compose! {
     fn any_retry_config()(
@@ -43,19 +49,21 @@ proptest! {
     #[test]
     fn proptest_recovery_state_machine_start_recovery(config in any_retry_config()) {
         let mut machine = RecoveryStateMachine::new(config.max_attempts(), config);
-        machine.start_recovery();
+        assert!(machine.start_recovery().is_ok());
         prop_assert_eq!(machine.state(), &RecoveryState::Recovering);
     }
 
     #[test]
-    fn proptest_recovery_state_machine_recover_success_resets_attempts(config in any_retry_config()) {
-        let mut machine = RecoveryStateMachine::new(config.max_attempts(), config);
-        machine.start_recovery();
-        machine.recover_failed();
-        machine.recover_failed();
+    fn proptest_recovery_state_machine_recover_success_resets_attempts(max_attempts in 3u32..=10) {
+        let config = RetryConfig::new(max_attempts, 1000, 10000, 2.0, false);
+        let mut machine = RecoveryStateMachine::new(max_attempts, config);
+        assert!(machine.start_recovery().is_ok());
+        assert!(machine.recover_failed().is_ok());
+        assert!(machine.recover_failed().is_ok());
         let attempts_before = machine.retry_attempts();
         prop_assert!(attempts_before > 0);
-        machine.recover_success();
+        prop_assert_eq!(machine.state(), &RecoveryState::Recovering);
+        assert!(machine.recover_success().is_ok());
         prop_assert_eq!(machine.state(), &RecoveryState::Recovered);
         prop_assert_eq!(machine.retry_attempts(), 0);
     }
@@ -66,9 +74,9 @@ proptest! {
     ) {
         let config = RetryConfig::new(max_attempts, 100, 10000, 2.0, false);
         let mut machine = RecoveryStateMachine::new(max_attempts, config);
-        machine.start_recovery();
+        assert!(machine.start_recovery().is_ok());
         for _ in 0..max_attempts {
-            machine.recover_failed();
+            assert!(machine.recover_failed().is_ok());
         }
         prop_assert_eq!(machine.state(), &RecoveryState::Failed);
         prop_assert_eq!(machine.retry_attempts(), max_attempts);

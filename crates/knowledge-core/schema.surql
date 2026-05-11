@@ -74,7 +74,7 @@ DEFINE FIELD end_line ON block TYPE int
     -- 约束：结束行号必须 ≥ 起始行号
 
 DEFINE FIELD embedding ON block TYPE option<array<float>>
-    -- 可选的向量嵌入（1536 维浮点数组）
+    -- 可选的向量嵌入（2560 维浮点数组，GEMMA4-E4B 输出维度）
     -- None 表示尚未生成嵌入
 
 DEFINE FIELD idempotency_key ON block TYPE option<string>
@@ -89,10 +89,10 @@ DEFINE INDEX block_pos_idx ON block FIELDS doc_id, start_line, end_line;
     -- 复合索引：按位置范围查询块
     -- 用于快速定位文档中的特定行范围
 
-DEFINE INDEX block_vec_idx ON block MTREE embedding DIMENSION 1536 DISTANCE COSINE TYPE VECTORFN;
+DEFINE INDEX block_vec_idx ON block MTREE embedding DIMENSION 2560 DISTANCE COSINE TYPE VECTORFN;
     -- 向量索引：支持语义相似度检索
     -- 使用余弦距离度量
-    -- 维度固定为 1536（OpenAI ada-002 输出维度）
+    -- 维度固定为 2560（GEMMA4-E4B 输出维度）
     -- 注意：此索引需要 SurrealDB 的向量扩展支持
 
 DEFINE INDEX block_idemp_idx ON block FIELDS idempotency_key UNIQUE;

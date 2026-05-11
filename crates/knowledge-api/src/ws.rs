@@ -28,12 +28,12 @@ use axum::{
     extract::ws::{Message, WebSocketUpgrade},
     response::IntoResponse,
 };
-use tokio::sync::{broadcast, mpsc};
-use tokio::time::{interval, Duration};
-use tracing::{info, warn, error as log_error};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tokio::sync::{broadcast, mpsc};
+use tokio::time::{Duration, interval};
+use tracing::{error as log_error, info, warn};
 use uuid::Uuid;
 
 /// WebSocket 消息类型枚举
@@ -108,13 +108,27 @@ pub enum WsMessage {
     },
 }
 
+/// 图谱节点类型
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum GraphNodeType {
+    /// 文档根节点
+    Document,
+    /// 块容器节点
+    Block,
+    /// 词元叶子节点
+    Token,
+    /// 语义实体
+    SemanticEntity,
+}
+
 /// 图谱节点更新数据
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct GraphNodeUpdate {
     /// 节点 ID
     pub id: String,
-    /// 节点类型（Document / Block / Token）
-    pub node_type: String,
+    /// 节点类型
+    pub node_type: GraphNodeType,
     /// 节点标签（可选）
     pub label: Option<String>,
     /// 节点属性
@@ -130,8 +144,8 @@ pub struct GraphEdgeUpdate {
     pub from_id: String,
     /// 终点节点 ID
     pub to_id: String,
-    /// 边类型（Usage / Definition / Link 等）
-    pub edge_type: String,
+    /// 边类型
+    pub edge_type: knowledge_core::model::RefType,
     /// 边属性
     pub properties: serde_json::Value,
 }
@@ -218,10 +232,7 @@ impl WsConnectionManager {
     ///
     /// WebSocket 连接必须在路由层通过 `auth_middleware` 认证后才能升级。
     /// 匿名用户的连接请求应在路由层被拒绝。
-    pub fn handle_ws_upgrade(
-        self: Arc<Self>,
-        ws: WebSocketUpgrade,
-    ) -> impl IntoResponse {
+    pub fn handle_ws_upgrade(self: Arc<Self>, ws: WebSocketUpgrade) -> impl IntoResponse {
         ws.max_frame_size(1024 * 1024)
             .max_message_size(4 * 1024 * 1024)
             .on_upgrade(move |socket| self.handle_connection(socket))
@@ -246,7 +257,9 @@ impl WsConnectionManager {
                             code: "E4299".to_string(),
                             message: "连接数已达上限".to_string(),
                         })
-                        .unwrap_or_else(|_| r#"{"type":"error","data":{"code":"E4299"}}"#.to_string()),
+                        .unwrap_or_else(|_| {
+                            r#"{"type":"error","data":{"code":"E4299"}}"#.to_string()
+                        }),
                     ))
                     .await;
                 let _ = socket.close().await;
@@ -272,11 +285,7 @@ impl WsConnectionManager {
 
         let pong_json = serde_json::to_string(&WsMessage::Pong)
             .unwrap_or_else(|_| r#"{"type":"pong"}"#.to_string());
-        if socket
-            .send(Message::Text(pong_json))
-            .await
-            .is_err()
-        {
+        if socket.send(Message::Text(pong_json)).await.is_err() {
             warn!(connection_id = %connection_id, "发送欢迎消息失败");
             self.cleanup_connection(&connection_id).await;
             return;
@@ -288,12 +297,14 @@ impl WsConnectionManager {
         let rooms_for_broadcast = self.rooms.clone();
         let conns_for_broadcast = self.connections.clone();
         tokio::spawn(async move {
-            let mut room_receivers: HashMap<String, broadcast::Receiver<WsMessage>> = HashMap::new();
+            let mut room_receivers: HashMap<String, broadcast::Receiver<WsMessage>> =
+                HashMap::new();
 
             loop {
                 let subscriptions = {
                     let conns = conns_for_broadcast.read().await;
-                    conns.get(&conn_id_for_broadcast)
+                    conns
+                        .get(&conn_id_for_broadcast)
                         .map(|s| s.subscriptions.clone())
                         .unwrap_or_default()
                 };
@@ -318,7 +329,10 @@ impl WsConnectionManager {
                 for rx in room_receivers.values_mut() {
                     match rx.try_recv() {
                         Ok(msg) => received.push(msg),
-                        Err(broadcast::error::TryRecvError::Empty | broadcast::error::TryRecvError::Closed) => {}
+                        Err(
+                            broadcast::error::TryRecvError::Empty
+                            | broadcast::error::TryRecvError::Closed,
+                        ) => {}
                         Err(broadcast::error::TryRecvError::Lagged(n)) => {
                             tracing::warn!(skipped = n, "广播消息积压，已跳过");
                         }
@@ -439,10 +453,10 @@ impl WsConnectionManager {
 
     async fn remove_room_if_empty(&self, document_id: &str) {
         let mut rooms = self.rooms.write().await;
-        if let Some(sender) = rooms.get(document_id) {
-            if sender.receiver_count() == 0 {
-                rooms.remove(document_id);
-            }
+        if let Some(sender) = rooms.get(document_id)
+            && sender.receiver_count() == 0
+        {
+            rooms.remove(document_id);
         }
     }
 
@@ -469,7 +483,14 @@ impl WsConnectionManager {
                     .await
                     .map_err(|e| error_core::helpers::ws_client_error(&e.to_string(), "send"))?;
             }
-            _ => {
+            WsMessage::NodeAdded(_)
+            | WsMessage::NodeRemoved { .. }
+            | WsMessage::EdgeAdded(_)
+            | WsMessage::EdgeRemoved { .. }
+            | WsMessage::Pong
+            | WsMessage::Subscribed { .. }
+            | WsMessage::Unsubscribed { .. }
+            | WsMessage::Error { .. } => {
                 socket
                     .send(Message::Text(serde_json::to_string(&WsMessage::Error {
                         code: "E4001".to_string(),
@@ -507,18 +528,20 @@ impl WsConnectionManager {
             let mut conns = self.connections.write().await;
             if let Some(state) = conns.get_mut(connection_id) {
                 if state.subscriptions.len() >= self.max_subscriptions_per_connection {
-                    return Err(error_core::helpers::ws_subscribe_limit_error(self.max_subscriptions_per_connection));
+                    return Err(error_core::helpers::ws_subscribe_limit_error(
+                        self.max_subscriptions_per_connection,
+                    ));
                 }
                 state.subscriptions.insert(document_id.to_string());
             }
         }
 
         socket
-            .send(Message::Text(
-                serde_json::to_string(&WsMessage::Subscribed {
+            .send(Message::Text(serde_json::to_string(
+                &WsMessage::Subscribed {
                     document_id: document_id.to_string(),
-                })?,
-            ))
+                },
+            )?))
             .await
             .map_err(|e| error_core::helpers::ws_client_error(&e.to_string(), "send"))?;
 
@@ -552,11 +575,11 @@ impl WsConnectionManager {
         self.remove_room_if_empty(document_id).await;
 
         socket
-            .send(Message::Text(
-                serde_json::to_string(&WsMessage::Unsubscribed {
+            .send(Message::Text(serde_json::to_string(
+                &WsMessage::Unsubscribed {
                     document_id: document_id.to_string(),
-                })?,
-            ))
+                },
+            )?))
             .await
             .map_err(|e| error_core::helpers::ws_client_error(&e.to_string(), "send"))?;
 
@@ -584,9 +607,13 @@ impl WsConnectionManager {
                     }
                     Ok(count)
                 }
-                Err(_) => Err(error_core::helpers::ws_send_failed_error("没有活跃的订阅者")),
+                Err(_) => Err(error_core::helpers::ws_send_failed_error(
+                    "没有活跃的订阅者",
+                )),
             },
-            None => Err(error_core::helpers::ws_receive_failed_error(&format!("文档 {document_id} 没有订阅者"))),
+            None => Err(error_core::helpers::ws_receive_failed_error(&format!(
+                "文档 {document_id} 没有订阅者"
+            ))),
         }
     }
 
@@ -630,7 +657,7 @@ mod tests {
     fn test_node_update_serialization() {
         let update = GraphNodeUpdate {
             id: "block:abc123".to_string(),
-            node_type: "Block".to_string(),
+            node_type: GraphNodeType::Block,
             label: Some("Introduction".to_string()),
             properties: serde_json::json!({"line": 10}),
         };
@@ -646,7 +673,7 @@ mod tests {
             id: "ref:xyz789".to_string(),
             from_id: "token:a".to_string(),
             to_id: "token:b".to_string(),
-            edge_type: "Usage".to_string(),
+            edge_type: knowledge_core::model::RefType::Usage,
             properties: serde_json::json!({}),
         };
 
@@ -742,7 +769,7 @@ mod tests {
                 "doc:test",
                 WsMessage::NodeAdded(GraphNodeUpdate {
                     id: "block:1".to_string(),
-                    node_type: "Paragraph".to_string(),
+                    node_type: GraphNodeType::Block,
                     label: Some("Test".to_string()),
                     properties: serde_json::json!({}),
                 }),

@@ -5,10 +5,10 @@
 //!
 //! 每个阶段调用对应的实际处理模块，而非空壳透传。
 
-use async_trait::async_trait;
-use knowledge_core::model::{Document, SourceType};
 use crate::dag::DagEngine;
 use crate::source_type_detector::SourceTypeDetector;
+use async_trait::async_trait;
+use knowledge_core::model::{Document, SourceType};
 
 /// 解析阶段的抽象 trait，支持 DAG 编排
 #[async_trait]
@@ -207,10 +207,19 @@ impl Pipeline {
         let mut engine = DagEngine::new();
 
         engine.register_stage(Box::new(FileIngestStage), vec![]);
-        engine.register_stage(Box::new(SourceDetectionStage::new()), vec!["file_ingest".to_string()]);
-        engine.register_stage(Box::new(ChunkingStage), vec!["source_detection".to_string()]);
+        engine.register_stage(
+            Box::new(SourceDetectionStage::new()),
+            vec!["file_ingest".to_string()],
+        );
+        engine.register_stage(
+            Box::new(ChunkingStage),
+            vec!["source_detection".to_string()],
+        );
         engine.register_stage(Box::new(SyntaxAnalysisStage), vec!["chunking".to_string()]);
-        engine.register_stage(Box::new(GraphBuildStage), vec!["syntax_analysis".to_string()]);
+        engine.register_stage(
+            Box::new(GraphBuildStage),
+            vec!["syntax_analysis".to_string()],
+        );
 
         Self { engine }
     }
@@ -305,7 +314,11 @@ mod tests {
         let mut doc = Document::new("/test.py", "A", SourceType::Plain, "a".repeat(64)).unwrap();
         doc.source_type = SourceType::Plain;
         let result = stage.execute(vec![doc]).await.unwrap();
-        assert_eq!(result[0].source_type, SourceType::Code, ".py 文件应被检测为 Code 类型");
+        assert_eq!(
+            result[0].source_type,
+            SourceType::Code,
+            ".py 文件应被检测为 Code 类型"
+        );
     }
 
     #[test]
@@ -320,5 +333,74 @@ mod tests {
     fn test_parse_stage_name() {
         let stage = FileIngestStage;
         assert_eq!(stage.name(), "file_ingest");
+    }
+
+    #[test]
+    fn test_source_detection_stage_default() {
+        let stage = SourceDetectionStage;
+        assert_eq!(stage.name(), "source_detection");
+    }
+
+    #[tokio::test]
+    async fn test_source_detection_stage_preserves_non_plain_type() {
+        let stage = SourceDetectionStage::new();
+        let doc = Document::new("/test.md", "Test", SourceType::Markdown, "a".repeat(64)).unwrap();
+        let result = stage.execute(vec![doc]).await.unwrap();
+        assert_eq!(
+            result[0].source_type,
+            SourceType::Markdown,
+            "非 Plain 类型应保持不变"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_source_detection_stage_handles_unsupported_extension() {
+        let stage = SourceDetectionStage::new();
+        let mut doc =
+            Document::new("/test.xyz", "Test", SourceType::Plain, "a".repeat(64)).unwrap();
+        doc.source_type = SourceType::Plain;
+        let result = stage.execute(vec![doc]).await.unwrap();
+        assert_eq!(
+            result[0].source_type,
+            SourceType::Plain,
+            "检测失败时应保留原类型"
+        );
+    }
+
+    #[test]
+    fn test_pipeline_default_creates_default_pipeline() {
+        let pipeline = Pipeline::default();
+        assert_eq!(
+            pipeline.engine().stages_count(),
+            5,
+            "Default Pipeline 应有 5 个阶段"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_chunking_stage_passes_through() {
+        let stage = ChunkingStage;
+        assert_eq!(stage.name(), "chunking");
+        let doc = Document::new("/test.md", "Test", SourceType::Markdown, "a".repeat(64)).unwrap();
+        let result = stage.execute(vec![doc]).await.unwrap();
+        assert_eq!(result.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_syntax_analysis_stage_passes_through() {
+        let stage = SyntaxAnalysisStage;
+        assert_eq!(stage.name(), "syntax_analysis");
+        let doc = Document::new("/test.rs", "Test", SourceType::Code, "a".repeat(64)).unwrap();
+        let result = stage.execute(vec![doc]).await.unwrap();
+        assert_eq!(result.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_graph_build_stage_passes_through() {
+        let stage = GraphBuildStage;
+        assert_eq!(stage.name(), "graph_build");
+        let doc = Document::new("/test.md", "Test", SourceType::Markdown, "a".repeat(64)).unwrap();
+        let result = stage.execute(vec![doc]).await.unwrap();
+        assert_eq!(result.len(), 1);
     }
 }

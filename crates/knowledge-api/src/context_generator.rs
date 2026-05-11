@@ -226,7 +226,10 @@ impl ContextGenerator {
 
     fn query_communities(&self) -> Vec<Community> {
         let sql = "SELECT * FROM community";
-        let Ok(response) = self.vm.execute_parameterized_query(sql, &serde_json::json!({})) else {
+        let Ok(response) = self
+            .vm
+            .execute_parameterized_query(sql, &serde_json::json!({}))
+        else {
             return vec![];
         };
 
@@ -238,7 +241,10 @@ impl ContextGenerator {
 
     fn query_all_references(&self) -> Vec<Reference> {
         let sql = "SELECT * FROM reference";
-        let Ok(response) = self.vm.execute_parameterized_query(sql, &serde_json::json!({})) else {
+        let Ok(response) = self
+            .vm
+            .execute_parameterized_query(sql, &serde_json::json!({}))
+        else {
             return vec![];
         };
 
@@ -296,7 +302,7 @@ impl ContextGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use knowledge_core::model::{Direction, RefType};
+    use knowledge_core::model::{Direction, RefType, ReferenceStatus};
 
     fn rid(s: &str) -> knowledge_core::model::RecordIdType {
         let parts: Vec<&str> = s.split(':').collect();
@@ -388,6 +394,7 @@ mod tests {
             scope: None,
             from_id: rid("token:a"),
             to_id: rid("token:b"),
+            status: ReferenceStatus::Created,
         }];
 
         let edges = ContextGenerator::compute_community_edges(&member_map, &references);
@@ -409,6 +416,7 @@ mod tests {
             scope: None,
             from_id: rid("token:a"),
             to_id: rid("token:b"),
+            status: ReferenceStatus::Created,
         }];
 
         let edges = ContextGenerator::compute_community_edges(&member_map, &references);
@@ -428,6 +436,7 @@ mod tests {
             scope: None,
             from_id: rid("token:a"),
             to_id: rid("token:unknown"),
+            status: ReferenceStatus::Created,
         }];
 
         let edges = ContextGenerator::compute_community_edges(&member_map, &references);
@@ -450,6 +459,7 @@ mod tests {
                 scope: None,
                 from_id: rid("token:a"),
                 to_id: rid("token:b"),
+                status: ReferenceStatus::Created,
             },
             Reference {
                 id: None,
@@ -458,6 +468,7 @@ mod tests {
                 scope: None,
                 from_id: rid("token:a"),
                 to_id: rid("token:c"),
+                status: ReferenceStatus::Created,
             },
         ];
 
@@ -484,6 +495,7 @@ mod tests {
                 scope: None,
                 from_id: rid("token:a"),
                 to_id: rid("token:b"),
+                status: ReferenceStatus::Created,
             },
             Reference {
                 id: None,
@@ -492,6 +504,7 @@ mod tests {
                 scope: None,
                 from_id: rid("token:c"),
                 to_id: rid("token:b"),
+                status: ReferenceStatus::Created,
             },
         ];
 
@@ -510,4 +523,3 @@ mod tests {
         assert!(edges.is_empty());
     }
 }
-

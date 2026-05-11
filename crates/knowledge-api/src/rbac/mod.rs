@@ -21,8 +21,8 @@
 //! 每个 Permission 可携带可选的条件表达式（Cedar CEL 兼容），
 //! 在运行时结合请求上下文动态求值，实现"最小权限原则"。
 
-pub mod role;
 pub mod manager;
+pub mod role;
 
-pub use role::*;
 pub use manager::RoleManager;
+pub use role::*;

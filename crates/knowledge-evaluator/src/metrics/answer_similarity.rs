@@ -3,6 +3,7 @@
 //! 详见文档: §3.5 | 用例: UC-039
 
 use async_trait::async_trait;
+use knowledge_core::math::cosine_similarity;
 
 use crate::dataset::sample::{MetricScore, RAGMetric};
 use crate::error::Result;
@@ -49,10 +50,8 @@ impl AnswerSimilarityMetric {
 
     /// 计算 BLEU 简化分数（基于词袋重叠率）
     fn compute_word_overlap_precision(answer: &str, ground_truth: &str) -> f64 {
-        let answer_tokens: std::collections::HashSet<&str> =
-            answer.split_whitespace().collect();
-        let gt_tokens: std::collections::HashSet<&str> =
-            ground_truth.split_whitespace().collect();
+        let answer_tokens: std::collections::HashSet<&str> = answer.split_whitespace().collect();
+        let gt_tokens: std::collections::HashSet<&str> = ground_truth.split_whitespace().collect();
         if gt_tokens.is_empty() {
             return 0.0;
         }
@@ -61,24 +60,6 @@ impl AnswerSimilarityMetric {
         #[allow(clippy::cast_precision_loss)]
         let gt_len = gt_tokens.len() as f64;
         intersection_count / gt_len
-    }
-
-    /// 计算余弦相似度
-    fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
-        if a.len() != b.len() || a.is_empty() {
-            return 0.0;
-        }
-        let dot: f64 = a
-            .iter()
-            .zip(b.iter())
-            .map(|(x, y)| f64::from(*x) * f64::from(*y))
-            .sum();
-        let norm_a: f64 = a.iter().map(|x| f64::from(*x).powi(2)).sum::<f64>().sqrt();
-        let norm_b: f64 = b.iter().map(|x| f64::from(*x).powi(2)).sum::<f64>().sqrt();
-        if norm_a == 0.0 || norm_b == 0.0 {
-            return 0.0;
-        }
-        dot / (norm_a * norm_b)
     }
 }
 
@@ -112,9 +93,7 @@ impl RAGMetric for AnswerSimilarityMetric {
                 let answer_emb = model.encode(answer).await;
                 let gt_emb = model.encode(ground_truth).await;
                 match (answer_emb, gt_emb) {
-                    (Ok(a), Ok(g)) if !a.is_empty() && !g.is_empty() => {
-                        Self::cosine_similarity(&a, &g)
-                    }
+                    (Ok(a), Ok(g)) if !a.is_empty() && !g.is_empty() => cosine_similarity(&a, &g),
                     _ => 0.0,
                 }
             }
@@ -130,9 +109,7 @@ impl RAGMetric for AnswerSimilarityMetric {
         Ok(MetricScore {
             metric_name: self.name().to_string(),
             score: score.clamp(0.0, 1.0),
-            explanation: format!(
-                "BLEU: {bleu_score:.3}, 嵌入相似度: {embedding_score:.3}"
-            ),
+            explanation: format!("BLEU: {bleu_score:.3}, 嵌入相似度: {embedding_score:.3}"),
             llm_judgment: None,
         })
     }
@@ -145,7 +122,8 @@ mod tests {
 
     #[test]
     fn test_compute_bleu_identical() {
-        let score = AnswerSimilarityMetric::compute_word_overlap_precision("hello world", "hello world");
+        let score =
+            AnswerSimilarityMetric::compute_word_overlap_precision("hello world", "hello world");
         assert!((score - 1.0).abs() < 1e-6);
     }
 
@@ -157,14 +135,15 @@ mod tests {
 
     #[test]
     fn test_compute_bleu_partial() {
-        let score = AnswerSimilarityMetric::compute_word_overlap_precision("hello world", "hello there");
+        let score =
+            AnswerSimilarityMetric::compute_word_overlap_precision("hello world", "hello there");
         assert!(score > 0.0 && score < 1.0);
     }
 
     #[test]
     fn test_cosine_similarity_identical() {
         let a = vec![1.0, 0.0, 0.0];
-        let sim = AnswerSimilarityMetric::cosine_similarity(&a, &a);
+        let sim = cosine_similarity(&a, &a);
         assert!((sim - 1.0).abs() < 1e-6);
     }
 
@@ -172,7 +151,7 @@ mod tests {
     fn test_cosine_similarity_orthogonal() {
         let a = vec![1.0, 0.0];
         let b = vec![0.0, 1.0];
-        let sim = AnswerSimilarityMetric::cosine_similarity(&a, &b);
+        let sim = cosine_similarity(&a, &b);
         assert!((sim - 0.0).abs() < 1e-6);
     }
 
@@ -191,5 +170,12 @@ mod tests {
             .await
             .unwrap();
         assert!((result.score - 1.0).abs() < 1e-6);
+    }
+
+    #[tokio::test]
+    async fn test_answer_similarity_whitespace_only_ground_truth() {
+        let metric = AnswerSimilarityMetric::new(None);
+        let result = metric.evaluate("q", &[], "hello", " ").await.unwrap();
+        assert_eq!(result.score, 0.0);
     }
 }

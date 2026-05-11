@@ -205,16 +205,16 @@ impl WorkflowDefinition {
         // 检查边引用的节点是否存在
         for edge in &self.edges {
             if !node_ids.contains(edge.from.as_str()) {
-                return Err(error_core::helpers::validation_error(&format!(
-                    "边引用了不存在的起始节点: {}",
-                    edge.from
-                ), "validate"));
+                return Err(error_core::helpers::validation_error(
+                    &format!("边引用了不存在的起始节点: {}", edge.from),
+                    "validate",
+                ));
             }
             if !node_ids.contains(edge.to.as_str()) {
-                return Err(error_core::helpers::validation_error(&format!(
-                    "边引用了不存在的目标节点: {}",
-                    edge.to
-                ), "validate"));
+                return Err(error_core::helpers::validation_error(
+                    &format!("边引用了不存在的目标节点: {}", edge.to),
+                    "validate",
+                ));
             }
         }
 
@@ -235,7 +235,10 @@ impl WorkflowDefinition {
 
         // 检测环
         if petgraph::algo::is_cyclic_directed(&graph) {
-            Err(error_core::helpers::validation_error("工作流包含循环依赖", "validate"))
+            Err(error_core::helpers::validation_error(
+                "工作流包含循环依赖",
+                "validate",
+            ))
         } else {
             Ok(())
         }
@@ -263,6 +266,37 @@ pub enum NodeStatus {
     TimedOut,
 }
 
+/// 节点执行错误类型枚举（Axiom-3: 可枚举的封闭集合）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[allow(missing_docs)]
+pub enum NodeErrorKind {
+    /// 节点依赖未满足
+    DependencyFailed { dependency_id: String },
+    /// 执行超时
+    Timeout { elapsed_secs: u64 },
+    /// 工具调用失败
+    ToolError { tool_name: String },
+    /// 内部逻辑错误
+    InternalError { reason: String },
+}
+
+impl std::fmt::Display for NodeErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::DependencyFailed { dependency_id } => {
+                write!(f, "依赖节点失败: {dependency_id}")
+            }
+            Self::Timeout { elapsed_secs } => {
+                write!(f, "节点执行超时: {elapsed_secs}s")
+            }
+            Self::ToolError { tool_name } => {
+                write!(f, "工具调用失败: {tool_name}")
+            }
+            Self::InternalError { reason } => write!(f, "{reason}"),
+        }
+    }
+}
+
 /// 单个节点的执行结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeResult {
@@ -272,8 +306,8 @@ pub struct NodeResult {
     pub status: NodeStatus,
     /// 任务结果（成功或部分成功时有值）
     pub result: Option<TaskResult>,
-    /// 错误信息（失败时有值）
-    pub error: Option<String>,
+    /// 结构化错误信息（Axiom-3: 可枚举的封闭集合）
+    pub error: Option<NodeErrorKind>,
     /// 开始时间
     pub started_at: chrono::DateTime<Utc>,
     /// 结束时间
@@ -299,6 +333,41 @@ pub enum WorkflowStatus {
     PartialFailure,
     /// 超时
     TimedOut,
+}
+
+impl WorkflowStatus {
+    /// 验证状态转换是否合法
+    ///
+    /// 合法转换路径：
+    /// - `Idle` → `Running`
+    /// - `Running` → `Paused` | `Succeeded` | `Failed` | `PartialFailure` | `TimedOut`
+    /// - `Paused` → `Running`
+    ///
+    /// 终态（`Succeeded`/`Failed`/`PartialFailure`/`TimedOut`）无出边。
+    #[must_use]
+    pub fn can_transition_to(&self, target: &Self) -> bool {
+        matches!(
+            (self, target),
+            (Self::Idle | Self::Paused, Self::Running)
+                | (
+                    Self::Running,
+                    Self::Paused
+                        | Self::Succeeded
+                        | Self::Failed
+                        | Self::PartialFailure
+                        | Self::TimedOut
+                )
+        )
+    }
+
+    /// 是否为终态
+    #[must_use]
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            Self::Succeeded | Self::Failed | Self::PartialFailure | Self::TimedOut
+        )
+    }
 }
 
 /// 工作流执行结果
@@ -480,10 +549,16 @@ impl TaskOrchestrator {
         // 添加所有边
         for edge in &definition.edges {
             let from_idx = node_map.get(&edge.from).ok_or_else(|| {
-                error_core::helpers::validation_error(&format!("找不到节点: {}", edge.from), "workflow_edge")
+                error_core::helpers::validation_error(
+                    &format!("找不到节点: {}", edge.from),
+                    "workflow_edge",
+                )
             })?;
             let to_idx = node_map.get(&edge.to).ok_or_else(|| {
-                error_core::helpers::validation_error(&format!("找不到节点: {}", edge.to), "workflow_edge")
+                error_core::helpers::validation_error(
+                    &format!("找不到节点: {}", edge.to),
+                    "workflow_edge",
+                )
             })?;
 
             graph.add_edge(*from_idx, *to_idx, edge.clone());
@@ -505,12 +580,17 @@ impl TaskOrchestrator {
             state.node_statuses.clear();
             state.node_results.clear();
 
-            // 初始化所有节点为 Pending
             for node in &definition.nodes {
                 state
                     .node_statuses
                     .insert(node.id.clone(), NodeStatus::Pending);
             }
+
+            tracing::info!(
+                workflow_id = %definition.id,
+                new_status = ?WorkflowStatus::Idle,
+                "Axiom-2: 工作流状态变更已记录"
+            );
         }
 
         info!(
@@ -553,17 +633,26 @@ impl TaskOrchestrator {
             match &state.workflow {
                 Some(wf) if wf.id == workflow_id => {}
                 Some(_) => {
-                    return Err(error_core::helpers::validation_error(&format!(
-                        "当前加载的工作流 ID 不匹配: {workflow_id}"
-                    ), "workflow_id_mismatch"));
+                    return Err(error_core::helpers::validation_error(
+                        &format!("当前加载的工作流 ID 不匹配: {workflow_id}"),
+                        "workflow_id_mismatch",
+                    ));
                 }
                 None => {
-                    return Err(error_core::helpers::validation_error("未加载任何工作流", "workflow_not_loaded"));
+                    return Err(error_core::helpers::validation_error(
+                        "未加载任何工作流",
+                        "workflow_not_loaded",
+                    ));
                 }
             }
 
             state.status = WorkflowStatus::Running;
             state.paused = false;
+            tracing::info!(
+                workflow_id = %workflow_id,
+                new_status = ?WorkflowStatus::Running,
+                "Axiom-2: 工作流状态变更已记录"
+            );
         }
 
         info!(workflow_id = %workflow_id, "开始执行工作流");
@@ -637,20 +726,22 @@ impl TaskOrchestrator {
                             state
                                 .node_results
                                 .insert(node_id.clone(), node_result.clone());
-                            state.node_statuses.insert(node_id.clone(), node_result.status);
+                            state
+                                .node_statuses
+                                .insert(node_id.clone(), node_result.status);
                         }
 
                         // 如果配置了 fail_fast 且有节点失败
                         if is_failure {
                             let state = self.shared_state.read().await;
-                            if let Some(wf) = &state.workflow {
-                                if wf.global_config.fail_fast {
-                                    warn!(
-                                        node = %node_id,
-                                        "节点失败，根据 fail_fast 配置停止工作流"
-                                    );
-                                    should_stop = true;
-                                }
+                            if let Some(wf) = &state.workflow
+                                && wf.global_config.fail_fast
+                            {
+                                warn!(
+                                    node = %node_id,
+                                    "节点失败，根据 fail_fast 配置停止工作流"
+                                );
+                                should_stop = true;
                             }
                         }
                     }
@@ -668,7 +759,9 @@ impl TaskOrchestrator {
                                 node_id: "unknown".to_string(),
                                 status: NodeStatus::Failed,
                                 result: None,
-                                error: Some(e.to_string()),
+                                error: Some(NodeErrorKind::InternalError {
+                                    reason: e.to_string(),
+                                }),
                                 started_at: Utc::now(),
                                 completed_at: Some(Utc::now()),
                                 retry_count: 0,
@@ -691,7 +784,13 @@ impl TaskOrchestrator {
 
         {
             let mut state = self.shared_state.write().await;
+            let old_status = state.status;
             state.status = final_status;
+            tracing::info!(
+                old_status = ?old_status,
+                new_status = ?final_status,
+                "Axiom-2: 工作流状态变更已记录"
+            );
         }
 
         let workflow_result = {
@@ -701,11 +800,7 @@ impl TaskOrchestrator {
                 .node_results
                 .values()
                 .filter(|nr| nr.status == NodeStatus::Succeeded)
-                .filter_map(|nr| {
-                    nr.result
-                        .as_ref()
-                        .map(|tr| (nr.started_at, &tr.artifacts))
-                })
+                .filter_map(|nr| nr.result.as_ref().map(|tr| (nr.started_at, &tr.artifacts)))
                 .collect();
 
             nodes_with_artifacts.sort_by_key(|(started_at, _)| *started_at);
@@ -777,10 +872,9 @@ impl TaskOrchestrator {
         node_id: &str,
     ) -> crate::Result<(TaskNode, Arc<Box<dyn AgentExecutor>>)> {
         let state = self.shared_state.read().await;
-        let workflow = state
-            .workflow
-            .as_ref()
-            .ok_or_else(|| error_core::helpers::validation_error("工作流未加载", "workflow_not_loaded"))?;
+        let workflow = state.workflow.as_ref().ok_or_else(|| {
+            error_core::helpers::validation_error("工作流未加载", "workflow_not_loaded")
+        })?;
 
         let node = workflow
             .nodes
@@ -791,15 +885,20 @@ impl TaskOrchestrator {
 
         let agent_name = format!("{}", node.agent_type);
         let agents = self.agents.lock().await;
-        let agent = agents.get(&agent_name).cloned().ok_or_else(|| {
-            error_core::helpers::not_found("agent", &agent_name)
-        })?;
+        let agent = agents
+            .get(&agent_name)
+            .cloned()
+            .ok_or_else(|| error_core::helpers::not_found("agent", &agent_name))?;
 
         Ok((node, agent))
     }
 
     /// 计算重试延迟（支持指数退避）
-    fn calculate_retry_delay(base_delay: Duration, retry_count: u32, exponential: bool) -> Duration {
+    fn calculate_retry_delay(
+        base_delay: Duration,
+        retry_count: u32,
+        exponential: bool,
+    ) -> Duration {
         if exponential {
             base_delay.saturating_mul(2u32.saturating_pow(retry_count.saturating_sub(1)))
         } else {
@@ -867,7 +966,9 @@ impl TaskOrchestrator {
                         node_id: node_id.to_string(),
                         status: NodeStatus::Failed,
                         result: None,
-                        error: Some(e.to_string()),
+                        error: Some(NodeErrorKind::InternalError {
+                            reason: e.to_string(),
+                        }),
                         started_at: Utc::now(),
                         completed_at: Some(Utc::now()),
                         retry_count,
@@ -897,7 +998,9 @@ impl TaskOrchestrator {
                         node_id: node_id.to_string(),
                         status: NodeStatus::TimedOut,
                         result: None,
-                        error: Some(format!("执行超时 ({:?})", node.timeout)),
+                        error: Some(NodeErrorKind::Timeout {
+                            elapsed_secs: timeout_ms / 1000,
+                        }),
                         started_at: Utc::now(),
                         completed_at: Some(Utc::now()),
                         retry_count,
@@ -1016,8 +1119,8 @@ impl TaskOrchestrator {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::types::ArtifactType;
+    use super::*;
 
     // Mock Agent Executor 用于测试
     struct MockAgentExecutor;
@@ -1282,13 +1385,11 @@ mod tests {
                     total_duration_ms: 100,
                     total_tokens_used: 10,
                     summary: String::new(),
-                    artifacts: vec![
-                        Artifact {
-                            artifact_type: ArtifactType::Document,
-                            content: serde_json::json!({"data": "doc1"}),
-                            name: "doc1".to_string(),
-                        },
-                    ],
+                    artifacts: vec![Artifact {
+                        artifact_type: ArtifactType::Document,
+                        content: serde_json::json!({"data": "doc1"}),
+                        name: "doc1".to_string(),
+                    }],
                 }),
                 error: None,
                 started_at: now,
@@ -1332,11 +1433,7 @@ mod tests {
         let mut nodes_with_artifacts: Vec<_> = node_results
             .values()
             .filter(|nr| nr.status == NodeStatus::Succeeded)
-            .filter_map(|nr| {
-                nr.result
-                    .as_ref()
-                    .map(|tr| (nr.started_at, &tr.artifacts))
-            })
+            .filter_map(|nr| nr.result.as_ref().map(|tr| (nr.started_at, &tr.artifacts)))
             .collect();
 
         nodes_with_artifacts.sort_by_key(|(started_at, _)| *started_at);
@@ -1388,7 +1485,9 @@ mod tests {
                 node_id: "node2".to_string(),
                 status: NodeStatus::Failed,
                 result: None,
-                error: Some("执行失败".to_string()),
+                error: Some(NodeErrorKind::InternalError {
+                    reason: "执行失败".to_string(),
+                }),
                 started_at: now + chrono::Duration::seconds(1),
                 completed_at: Some(now),
                 retry_count: 0,
@@ -1398,11 +1497,7 @@ mod tests {
         let mut nodes_with_artifacts: Vec<_> = node_results
             .values()
             .filter(|nr| nr.status == NodeStatus::Succeeded)
-            .filter_map(|nr| {
-                nr.result
-                    .as_ref()
-                    .map(|tr| (nr.started_at, &tr.artifacts))
-            })
+            .filter_map(|nr| nr.result.as_ref().map(|tr| (nr.started_at, &tr.artifacts)))
             .collect();
 
         nodes_with_artifacts.sort_by_key(|(started_at, _)| *started_at);
@@ -1446,11 +1541,7 @@ mod tests {
         let mut nodes_with_artifacts: Vec<_> = node_results
             .values()
             .filter(|nr| nr.status == NodeStatus::Succeeded)
-            .filter_map(|nr| {
-                nr.result
-                    .as_ref()
-                    .map(|tr| (nr.started_at, &tr.artifacts))
-            })
+            .filter_map(|nr| nr.result.as_ref().map(|tr| (nr.started_at, &tr.artifacts)))
             .collect();
 
         nodes_with_artifacts.sort_by_key(|(started_at, _)| *started_at);
@@ -1461,5 +1552,209 @@ mod tests {
             .collect();
 
         assert!(artifacts.is_empty());
+    }
+
+    #[test]
+    fn test_workflow_status_can_transition_valid() {
+        assert!(WorkflowStatus::Idle.can_transition_to(&WorkflowStatus::Running));
+        assert!(WorkflowStatus::Running.can_transition_to(&WorkflowStatus::Paused));
+        assert!(WorkflowStatus::Running.can_transition_to(&WorkflowStatus::Succeeded));
+        assert!(WorkflowStatus::Running.can_transition_to(&WorkflowStatus::Failed));
+        assert!(WorkflowStatus::Running.can_transition_to(&WorkflowStatus::PartialFailure));
+        assert!(WorkflowStatus::Running.can_transition_to(&WorkflowStatus::TimedOut));
+        assert!(WorkflowStatus::Paused.can_transition_to(&WorkflowStatus::Running));
+    }
+
+    #[test]
+    fn test_workflow_status_can_transition_invalid() {
+        assert!(!WorkflowStatus::Idle.can_transition_to(&WorkflowStatus::Idle));
+        assert!(!WorkflowStatus::Idle.can_transition_to(&WorkflowStatus::Succeeded));
+        assert!(!WorkflowStatus::Idle.can_transition_to(&WorkflowStatus::Paused));
+        assert!(!WorkflowStatus::Succeeded.can_transition_to(&WorkflowStatus::Running));
+        assert!(!WorkflowStatus::Failed.can_transition_to(&WorkflowStatus::Running));
+        assert!(!WorkflowStatus::TimedOut.can_transition_to(&WorkflowStatus::Running));
+        assert!(!WorkflowStatus::PartialFailure.can_transition_to(&WorkflowStatus::Idle));
+        assert!(!WorkflowStatus::Paused.can_transition_to(&WorkflowStatus::Succeeded));
+    }
+
+    #[test]
+    fn test_workflow_status_is_terminal() {
+        assert!(WorkflowStatus::Succeeded.is_terminal());
+        assert!(WorkflowStatus::Failed.is_terminal());
+        assert!(WorkflowStatus::PartialFailure.is_terminal());
+        assert!(WorkflowStatus::TimedOut.is_terminal());
+        assert!(!WorkflowStatus::Idle.is_terminal());
+        assert!(!WorkflowStatus::Running.is_terminal());
+        assert!(!WorkflowStatus::Paused.is_terminal());
+    }
+
+    #[test]
+    fn test_node_error_kind_display() {
+        let dep_err = NodeErrorKind::DependencyFailed {
+            dependency_id: "node_a".to_string(),
+        };
+        assert_eq!(format!("{dep_err}"), "依赖节点失败: node_a");
+
+        let timeout_err = NodeErrorKind::Timeout { elapsed_secs: 30 };
+        assert_eq!(format!("{timeout_err}"), "节点执行超时: 30s");
+
+        let tool_err = NodeErrorKind::ToolError {
+            tool_name: "search".to_string(),
+        };
+        assert_eq!(format!("{tool_err}"), "工具调用失败: search");
+
+        let internal_err = NodeErrorKind::InternalError {
+            reason: "未知错误".to_string(),
+        };
+        assert_eq!(format!("{internal_err}"), "未知错误");
+    }
+
+    #[test]
+    fn test_agent_type_display_all_variants() {
+        assert_eq!(format!("{}", AgentType::Researcher), "Researcher");
+        assert_eq!(format!("{}", AgentType::Analyst), "Analyst");
+        assert_eq!(format!("{}", AgentType::Writer), "Writer");
+        assert_eq!(format!("{}", AgentType::Reviewer), "Reviewer");
+        assert_eq!(format!("{}", AgentType::Coordinator), "Coordinator");
+        assert_eq!(
+            format!("{}", AgentType::Custom("Special".to_string())),
+            "Special"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_workflow_definition_validate_missing_from_node() {
+        let definition = WorkflowDefinition {
+            id: "test".to_string(),
+            name: "test".to_string(),
+            description: String::new(),
+            nodes: vec![TaskNode::new(
+                "a",
+                "A",
+                Task::new("", ""),
+                AgentType::Coordinator,
+            )],
+            edges: vec![Edge {
+                from: "nonexistent".to_string(),
+                to: "a".to_string(),
+                condition: None,
+            }],
+            global_config: GlobalConfig::default(),
+        };
+        assert!(definition.validate().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_workflow_definition_validate_missing_to_node() {
+        let definition = WorkflowDefinition {
+            id: "test".to_string(),
+            name: "test".to_string(),
+            description: String::new(),
+            nodes: vec![TaskNode::new(
+                "a",
+                "A",
+                Task::new("", ""),
+                AgentType::Coordinator,
+            )],
+            edges: vec![Edge {
+                from: "a".to_string(),
+                to: "nonexistent".to_string(),
+                condition: None,
+            }],
+            global_config: GlobalConfig::default(),
+        };
+        assert!(definition.validate().is_err());
+    }
+
+    #[test]
+    fn test_task_node_with_retry() {
+        let retry = RetryConfig {
+            max_retries: 5,
+            retry_delay_ms: 200,
+            exponential_backoff: false,
+        };
+        let node = TaskNode::new("id", "name", Task::new("task", "goal"), AgentType::Writer)
+            .with_retry(retry.clone());
+        assert_eq!(node.retry_config.max_retries, 5);
+        assert_eq!(node.retry_config.retry_delay_ms, 200);
+        assert!(!node.retry_config.exponential_backoff);
+    }
+
+    #[test]
+    fn test_node_status_all_variants_serialization() {
+        let statuses = [
+            NodeStatus::Pending,
+            NodeStatus::Running,
+            NodeStatus::Succeeded,
+            NodeStatus::Failed,
+            NodeStatus::Skipped,
+            NodeStatus::TimedOut,
+        ];
+        for s in &statuses {
+            let json = serde_json::to_string(s).unwrap();
+            let de: NodeStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(*s, de);
+        }
+    }
+
+    #[test]
+    fn test_workflow_status_all_variants_serialization() {
+        let statuses = [
+            WorkflowStatus::Idle,
+            WorkflowStatus::Running,
+            WorkflowStatus::Paused,
+            WorkflowStatus::Succeeded,
+            WorkflowStatus::Failed,
+            WorkflowStatus::PartialFailure,
+            WorkflowStatus::TimedOut,
+        ];
+        for s in &statuses {
+            let json = serde_json::to_string(s).unwrap();
+            let de: WorkflowStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(*s, de);
+        }
+    }
+
+    #[test]
+    fn test_node_error_kind_serialization() {
+        let errors = [
+            NodeErrorKind::DependencyFailed {
+                dependency_id: "n1".to_string(),
+            },
+            NodeErrorKind::Timeout { elapsed_secs: 10 },
+            NodeErrorKind::ToolError {
+                tool_name: "t1".to_string(),
+            },
+            NodeErrorKind::InternalError {
+                reason: "err".to_string(),
+            },
+        ];
+        for e in &errors {
+            let json = serde_json::to_string(e).unwrap();
+            let de: NodeErrorKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(*e, de);
+        }
+    }
+
+    #[test]
+    fn test_global_config_with_max_duration() {
+        let config = GlobalConfig {
+            max_duration: Some(Duration::from_secs(3600)),
+            fail_fast: false,
+            max_concurrency: 10,
+        };
+        assert_eq!(config.max_duration, Some(Duration::from_secs(3600)));
+        assert!(!config.fail_fast);
+        assert_eq!(config.max_concurrency, 10);
+    }
+
+    #[test]
+    fn test_edge_with_condition() {
+        let edge = Edge {
+            from: "a".to_string(),
+            to: "b".to_string(),
+            condition: Some("x > 0".to_string()),
+        };
+        assert_eq!(edge.condition, Some("x > 0".to_string()));
     }
 }

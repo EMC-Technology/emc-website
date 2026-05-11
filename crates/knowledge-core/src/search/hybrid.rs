@@ -5,15 +5,15 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[cfg(feature = "db")]
-use std::collections::HashMap;
-#[cfg(feature = "db")]
-use std::sync::Arc;
-#[cfg(feature = "db")]
 use crate::search::bm25::Bm25Index;
 #[cfg(feature = "db")]
 use crate::vector_store::{HybridQuery, SearchResult, VectorStore};
 #[cfg(feature = "db")]
 use error_core::Result;
+#[cfg(feature = "db")]
+use std::collections::HashMap;
+#[cfg(feature = "db")]
+use std::sync::Arc;
 #[cfg(feature = "db")]
 use tracing::info;
 
@@ -209,7 +209,7 @@ impl<V: VectorStore> HybridSearchEngine<V> {
 /// 当两个结果的融合分数差值小于浮点精度时，按 UUID 字典序作为确定性 tie-breaker，
 /// 符合项目 FATAL-LOG-01 修复要求。
 #[allow(clippy::cast_precision_loss)]
-    #[cfg(feature = "db")]
+#[cfg(feature = "db")]
 pub fn weighted_rrf(
     bm25_results: &[Bm25Result],
     vector_results: &[SearchResult],
@@ -311,11 +311,32 @@ pub fn reciprocal_rank_fusion(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "db")]
+    use crate::model::SourceType;
     #[cfg(feature = "hnswlib")]
     use crate::vector_store::hnswlib_adapter::HnswLibAdapter;
+    #[cfg(feature = "db")]
+    use crate::vector_store::types::ResultMetadata;
     #[cfg(feature = "hnswlib")]
     use crate::vector_store::{DistanceMetric, VectorPoint};
     use serde_json::json;
+
+    #[cfg(feature = "db")]
+    fn make_search_result(id: Uuid, score: f64, payload: serde_json::Value) -> SearchResult {
+        SearchResult {
+            id,
+            score,
+            payload,
+            vector: None,
+            metadata: ResultMetadata {
+                chunk_id: String::new(),
+                document_id: String::new(),
+                chunk_index: 0,
+                content_preview: String::new(),
+                source_type: SourceType::Markdown,
+            },
+        }
+    }
 
     #[cfg(feature = "hnswlib")]
     #[tokio::test]
@@ -355,5 +376,206 @@ mod tests {
     fn test_fused_result_creation() {
         let r = FusedSearchResult::new(Uuid::new_v4(), 0.95, Some(2.5), Some(0.88), json!({}));
         assert!((r.fused_score - 0.95).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_fused_result_new_rank_is_zero() {
+        let r = FusedSearchResult::new(Uuid::new_v4(), 0.5, None, None, json!({}));
+        assert_eq!(r.rank, 0);
+        assert!(r.bm25_score.is_none());
+        assert!(r.vector_score.is_none());
+    }
+
+    #[test]
+    fn test_hybrid_search_result_serialization() {
+        let r = HybridSearchResult {
+            id: "doc1".to_string(),
+            score: 0.5,
+            bm25_rank: Some(1),
+            semantic_rank: Some(2),
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let de: HybridSearchResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(r.id, de.id);
+        assert!((r.score - de.score).abs() < f64::EPSILON);
+        assert_eq!(r.bm25_rank, de.bm25_rank);
+        assert_eq!(r.semantic_rank, de.semantic_rank);
+    }
+
+    #[test]
+    fn test_fused_search_result_serialization() {
+        let r = FusedSearchResult::new(
+            Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap(),
+            0.75,
+            Some(1.2),
+            Some(0.9),
+            json!({"key": "value"}),
+        );
+        let json = serde_json::to_string(&r).unwrap();
+        let de: FusedSearchResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(r.id, de.id);
+        assert!((r.fused_score - de.fused_score).abs() < f64::EPSILON);
+    }
+
+    #[cfg(feature = "db")]
+    #[test]
+    fn test_reciprocal_rank_fusion_basic() {
+        let bm25: Vec<(String, f64)> = vec![("doc1".to_string(), 10.0), ("doc2".to_string(), 5.0)];
+        let semantic: Vec<(String, f64)> =
+            vec![("doc2".to_string(), 0.9), ("doc3".to_string(), 0.8)];
+        let results = reciprocal_rank_fusion(&bm25, &semantic, RRF_DEFAULT_K);
+        assert_eq!(results.len(), 3);
+        assert!(results[0].score > results[1].score);
+    }
+
+    #[cfg(feature = "db")]
+    #[test]
+    fn test_reciprocal_rank_fusion_empty_inputs() {
+        let results = reciprocal_rank_fusion(&[], &[], RRF_DEFAULT_K);
+        assert!(results.is_empty());
+
+        let bm25: Vec<(String, f64)> = vec![("doc1".to_string(), 1.0)];
+        let results = reciprocal_rank_fusion(&bm25, &[], RRF_DEFAULT_K);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "doc1");
+        assert!(results[0].bm25_rank.is_some());
+        assert!(results[0].semantic_rank.is_none());
+
+        let semantic: Vec<(String, f64)> = vec![("doc2".to_string(), 0.5)];
+        let results = reciprocal_rank_fusion(&[], &semantic, RRF_DEFAULT_K);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "doc2");
+        assert!(results[0].bm25_rank.is_none());
+        assert!(results[0].semantic_rank.is_some());
+    }
+
+    #[cfg(feature = "db")]
+    #[test]
+    fn test_reciprocal_rank_fusion_overlap() {
+        let bm25: Vec<(String, f64)> = vec![("doc1".to_string(), 10.0), ("doc2".to_string(), 5.0)];
+        let semantic: Vec<(String, f64)> =
+            vec![("doc1".to_string(), 0.95), ("doc3".to_string(), 0.7)];
+        let results = reciprocal_rank_fusion(&bm25, &semantic, RRF_DEFAULT_K);
+        let doc1 = results.iter().find(|r| r.id == "doc1").unwrap();
+        assert!(doc1.bm25_rank.is_some());
+        assert!(doc1.semantic_rank.is_some());
+        assert!(doc1.score > 0.0);
+    }
+
+    #[cfg(feature = "db")]
+    #[test]
+    fn test_reciprocal_rank_fusion_deterministic_tie_breaking() {
+        let bm25: Vec<(String, f64)> = vec![("aaa".to_string(), 1.0), ("bbb".to_string(), 1.0)];
+        let semantic: Vec<(String, f64)> = vec![];
+        let results = reciprocal_rank_fusion(&bm25, &semantic, RRF_DEFAULT_K);
+        assert_eq!(results[0].id, "aaa");
+        assert_eq!(results[1].id, "bbb");
+    }
+
+    #[cfg(feature = "db")]
+    #[test]
+    fn test_weighted_rrf_basic() {
+        let bm25: Vec<Bm25Result> = vec![("doc1".to_string(), 10.0), ("doc2".to_string(), 5.0)];
+        let vector: Vec<SearchResult> = vec![
+            make_search_result(
+                Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap(),
+                0.9,
+                json!({}),
+            ),
+            make_search_result(
+                Uuid::parse_str("00000000-0000-0000-0000-000000000003").unwrap(),
+                0.8,
+                json!({}),
+            ),
+        ];
+        let results = weighted_rrf(&bm25, &vector, 60.0, 0.7, 0.3);
+        assert_eq!(results.len(), 4);
+        assert!(results[0].fused_score > 0.0);
+    }
+
+    #[cfg(feature = "db")]
+    #[test]
+    fn test_weighted_rrf_empty_inputs() {
+        let results = weighted_rrf(&[], &[], 60.0, 0.7, 0.3);
+        assert!(results.is_empty());
+
+        let bm25: Vec<Bm25Result> = vec![("doc1".to_string(), 5.0)];
+        let results = weighted_rrf(&bm25, &[], 60.0, 0.7, 0.3);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].bm25_score.is_some());
+        assert!(results[0].vector_score.is_none());
+
+        let vector: Vec<SearchResult> = vec![make_search_result(Uuid::new_v4(), 0.9, json!({}))];
+        let results = weighted_rrf(&[], &vector, 60.0, 0.7, 0.3);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].bm25_score.is_none());
+        assert!(results[0].vector_score.is_some());
+    }
+
+    #[cfg(feature = "db")]
+    #[test]
+    fn test_weighted_rrf_normalization() {
+        let bm25: Vec<Bm25Result> = vec![("doc1".to_string(), 10.0)];
+        let vector: Vec<SearchResult> = vec![make_search_result(
+            Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap(),
+            0.95,
+            json!({}),
+        )];
+        let results = weighted_rrf(&bm25, &vector, 60.0, 0.7, 0.3);
+        assert_eq!(results.len(), 2);
+        for r in &results {
+            assert!(r.fused_score <= 1.0 + f64::EPSILON);
+            assert!(r.fused_score >= 0.0 - f64::EPSILON);
+        }
+    }
+
+    #[cfg(feature = "db")]
+    #[test]
+    fn test_weighted_rrf_invalid_uuid_fallback() {
+        let bm25: Vec<Bm25Result> = vec![("not-a-uuid".to_string(), 5.0)];
+        let results = weighted_rrf(&bm25, &[], 60.0, 0.7, 0.3);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, Uuid::nil());
+    }
+
+    #[cfg(feature = "db")]
+    #[test]
+    fn test_weighted_rrf_deterministic_tie_breaking() {
+        let bm25: Vec<Bm25Result> = vec![];
+        let vector: Vec<SearchResult> = vec![
+            make_search_result(
+                Uuid::parse_str("ffffffff-ffff-ffff-ffff-ffffffffffff").unwrap(),
+                0.5,
+                json!({}),
+            ),
+            make_search_result(
+                Uuid::parse_str("00000000-0000-0000-0000-000000000000").unwrap(),
+                0.5,
+                json!({}),
+            ),
+        ];
+        let results = weighted_rrf(&bm25, &vector, 60.0, 0.7, 0.3);
+        assert_eq!(results.len(), 2);
+        assert_eq!(
+            results[0].id,
+            Uuid::parse_str("ffffffff-ffff-ffff-ffff-ffffffffffff").unwrap()
+        );
+        assert_eq!(
+            results[1].id,
+            Uuid::parse_str("00000000-0000-0000-0000-000000000000").unwrap()
+        );
+    }
+
+    #[cfg(feature = "db")]
+    #[test]
+    fn test_weighted_rrf_overlap_preserves_scores() {
+        let id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+        let bm25: Vec<Bm25Result> = vec![(id.to_string(), 8.0)];
+        let vector: Vec<SearchResult> = vec![make_search_result(id, 0.92, json!({"meta": "data"}))];
+        let results = weighted_rrf(&bm25, &vector, 60.0, 0.7, 0.3);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].bm25_score.is_some());
+        assert!(results[0].vector_score.is_some());
+        assert_eq!(results[0].payload["meta"], "data");
     }
 }

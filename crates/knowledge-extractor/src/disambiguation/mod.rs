@@ -2,6 +2,7 @@
 //!
 //! 详见文档: §3 | 用例: UC-010~UC-014
 
+use knowledge_core::math::cosine_similarity;
 use knowledge_core::model::semantic::SemanticEntity;
 
 use crate::config::{DisambiguationStrategy, ExtractorConfig};
@@ -30,7 +31,10 @@ impl Disambiguator {
     /// 以在模糊区间内调用 LLM 做最终裁决。
     #[must_use]
     pub fn with_llm(config: ExtractorConfig, llm: std::sync::Arc<dyn LanguageModel>) -> Self {
-        Self { config, llm: Some(llm) }
+        Self {
+            config,
+            llm: Some(llm),
+        }
     }
 
     /// 精确匹配消歧
@@ -160,7 +164,12 @@ impl Disambiguator {
             Ok(response) => {
                 let normalized = response.trim().to_lowercase();
                 let trimmed = normalized.trim().to_lowercase();
-            if trimmed == "same" || trimmed == "yes" || trimmed == "同一" || trimmed.starts_with("same,") || trimmed.starts_with("yes,") {
+                if trimmed == "same"
+                    || trimmed == "yes"
+                    || trimmed == "同一"
+                    || trimmed.starts_with("same,")
+                    || trimmed.starts_with("yes,")
+                {
                     Some(best_match.0)
                 } else {
                     None
@@ -174,15 +183,17 @@ impl Disambiguator {
     }
 
     /// 构建 LLM 消歧判断提示词
-    fn build_disambiguation_prompt(candidate: &SemanticEntity, existing: &SemanticEntity) -> String {
+    fn build_disambiguation_prompt(
+        candidate: &SemanticEntity,
+        existing: &SemanticEntity,
+    ) -> String {
         format!(
             r#"判断以下两个实体是否为同一实体：
 
 实体A：名称="{}", 类型={}, 描述="{}"
 实体B：名称="{}", 类型={}, 描述="{}"
 
-请仅回答 "same" 或 "different"。"#
-            ,
+请仅回答 "same" 或 "different"。"#,
             candidate.name,
             candidate.entity_type,
             candidate.description.as_deref().unwrap_or(""),
@@ -210,17 +221,21 @@ impl Disambiguator {
     ) -> Option<&'a SemanticEntity> {
         match self.config.disambiguation_strategy {
             DisambiguationStrategy::ExactMatch => self.exact_match(candidate, existing),
-            DisambiguationStrategy::EditDistance => {
-                self.edit_distance_match(candidate, existing).map(|(e, _)| e)
-            }
-            DisambiguationStrategy::EmbeddingSimilarity | DisambiguationStrategy::LlmJudged => {
-                self.embedding_similarity_match(candidate, existing).map(|(e, _)| e)
-            }
+            DisambiguationStrategy::EditDistance => self
+                .edit_distance_match(candidate, existing)
+                .map(|(e, _)| e),
+            DisambiguationStrategy::EmbeddingSimilarity | DisambiguationStrategy::LlmJudged => self
+                .embedding_similarity_match(candidate, existing)
+                .map(|(e, _)| e),
             DisambiguationStrategy::Hybrid => self
                 .exact_match(candidate, existing)
-                .or_else(|| self.edit_distance_match(candidate, existing).map(|(e, _)| e))
                 .or_else(|| {
-                    self.embedding_similarity_match(candidate, existing).map(|(e, _)| e)
+                    self.edit_distance_match(candidate, existing)
+                        .map(|(e, _)| e)
+                })
+                .or_else(|| {
+                    self.embedding_similarity_match(candidate, existing)
+                        .map(|(e, _)| e)
                 }),
         }
     }
@@ -236,15 +251,13 @@ impl Disambiguator {
     ) -> Option<&'a SemanticEntity> {
         match self.config.disambiguation_strategy {
             DisambiguationStrategy::ExactMatch => self.exact_match(candidate, existing),
-            DisambiguationStrategy::EditDistance => {
-                self.edit_distance_match(candidate, existing).map(|(e, _)| e)
-            }
-            DisambiguationStrategy::EmbeddingSimilarity => {
-                self.embedding_similarity_match(candidate, existing).map(|(e, _)| e)
-            }
-            DisambiguationStrategy::LlmJudged => {
-                self.llm_judged_match(candidate, existing).await
-            }
+            DisambiguationStrategy::EditDistance => self
+                .edit_distance_match(candidate, existing)
+                .map(|(e, _)| e),
+            DisambiguationStrategy::EmbeddingSimilarity => self
+                .embedding_similarity_match(candidate, existing)
+                .map(|(e, _)| e),
+            DisambiguationStrategy::LlmJudged => self.llm_judged_match(candidate, existing).await,
             DisambiguationStrategy::Hybrid => {
                 if let Some(e) = self.exact_match(candidate, existing) {
                     return Some(e);
@@ -306,38 +319,22 @@ impl Disambiguator {
     }
 }
 
-/// 计算余弦相似度
-///
-/// 两个向量的点积除以各自模长的乘积。
-/// 当任一向量为零向量时返回 0.0。
-#[must_use]
-pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
-    if a.len() != b.len() || a.is_empty() {
-        return 0.0;
-    }
-
-    let dot: f64 = a.iter().zip(b.iter()).map(|(x, y)| f64::from(*x) * f64::from(*y)).sum();
-    let norm_a: f64 = a.iter().map(|x| f64::from(*x) * f64::from(*x)).sum::<f64>().sqrt();
-    let norm_b: f64 = b.iter().map(|x| f64::from(*x) * f64::from(*x)).sum::<f64>().sqrt();
-
-    if norm_a == 0.0 || norm_b == 0.0 {
-        return 0.0;
-    }
-
-    dot / (norm_a * norm_b)
-}
-
 #[cfg(test)]
 #[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
     use knowledge_core::model::semantic::EntityType;
+    use std::sync::Arc;
 
     fn make_entity(name: &str, entity_type: EntityType) -> SemanticEntity {
         SemanticEntity::new(name.to_string(), entity_type)
     }
 
-    fn make_entity_with_embedding(name: &str, entity_type: EntityType, emb: Vec<f32>) -> SemanticEntity {
+    fn make_entity_with_embedding(
+        name: &str,
+        entity_type: EntityType,
+        emb: Vec<f32>,
+    ) -> SemanticEntity {
         let mut entity = SemanticEntity::new(name.to_string(), entity_type);
         entity.embedding = Some(emb);
         entity
@@ -345,6 +342,36 @@ mod tests {
 
     fn test_config() -> ExtractorConfig {
         ExtractorConfig::default()
+    }
+
+    struct MockLlm {
+        response: String,
+        should_fail: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl LanguageModel for MockLlm {
+        async fn generate(&self, _prompt: &str) -> std::result::Result<String, String> {
+            if self.should_fail {
+                Err("mock llm error".into())
+            } else {
+                Ok(self.response.clone())
+            }
+        }
+    }
+
+    fn mock_llm(response: &str) -> Arc<dyn LanguageModel> {
+        Arc::new(MockLlm {
+            response: response.to_string(),
+            should_fail: false,
+        })
+    }
+
+    fn mock_llm_failing() -> Arc<dyn LanguageModel> {
+        Arc::new(MockLlm {
+            response: String::new(),
+            should_fail: true,
+        })
     }
 
     #[test]
@@ -407,13 +434,52 @@ mod tests {
     }
 
     #[test]
+    fn test_edit_distance_match_empty_strings() {
+        let mut config = test_config();
+        config.entity_similarity_threshold = 0.5;
+        let disambiguator = Disambiguator::new(config);
+
+        let candidate = make_entity("", EntityType::Technology);
+        let existing = vec![make_entity("", EntityType::Technology)];
+
+        let result = disambiguator.edit_distance_match(&candidate, &existing);
+        assert!(result.is_some());
+        let (_, similarity) = result.unwrap();
+        assert!((similarity - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_edit_distance_match_picks_highest_similarity() {
+        let mut config = test_config();
+        config.entity_similarity_threshold = 0.3;
+        let disambiguator = Disambiguator::new(config);
+
+        let candidate = make_entity("Rust", EntityType::Technology);
+        let existing = vec![
+            make_entity("Rust!", EntityType::Technology),
+            make_entity("Rust", EntityType::Technology),
+        ];
+
+        let result = disambiguator.edit_distance_match(&candidate, &existing);
+        assert!(result.is_some());
+        let (matched, similarity) = result.unwrap();
+        assert_eq!(matched.name, "Rust");
+        assert!((similarity - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
     fn test_embedding_similarity_match_finds_similar() {
         let mut config = test_config();
         config.entity_similarity_threshold = 0.9;
         let disambiguator = Disambiguator::new(config);
 
-        let candidate = make_entity_with_embedding("Rust", EntityType::Technology, vec![1.0, 0.0, 0.0]);
-        let existing = vec![make_entity_with_embedding("Rust-lang", EntityType::Technology, vec![0.99, 0.1, 0.0])];
+        let candidate =
+            make_entity_with_embedding("Rust", EntityType::Technology, vec![1.0, 0.0, 0.0]);
+        let existing = vec![make_entity_with_embedding(
+            "Rust-lang",
+            EntityType::Technology,
+            vec![0.99, 0.1, 0.0],
+        )];
 
         let result = disambiguator.embedding_similarity_match(&candidate, &existing);
         assert!(result.is_some());
@@ -427,6 +493,262 @@ mod tests {
         let existing = vec![make_entity("Rust", EntityType::Technology)];
 
         let result = disambiguator.embedding_similarity_match(&candidate, &existing);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_embedding_similarity_match_existing_no_embedding() {
+        let mut config = test_config();
+        config.entity_similarity_threshold = 0.5;
+        let disambiguator = Disambiguator::new(config);
+
+        let candidate =
+            make_entity_with_embedding("Rust", EntityType::Technology, vec![1.0, 0.0, 0.0]);
+        let existing = vec![make_entity("Rust", EntityType::Technology)];
+
+        let result = disambiguator.embedding_similarity_match(&candidate, &existing);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_embedding_similarity_match_picks_highest() {
+        let mut config = test_config();
+        config.entity_similarity_threshold = 0.5;
+        let disambiguator = Disambiguator::new(config);
+
+        let candidate =
+            make_entity_with_embedding("Rust", EntityType::Technology, vec![1.0, 0.0, 0.0]);
+        let existing = vec![
+            make_entity_with_embedding("A", EntityType::Technology, vec![0.5, 0.5, 0.0]),
+            make_entity_with_embedding("B", EntityType::Technology, vec![0.99, 0.1, 0.0]),
+        ];
+
+        let result = disambiguator.embedding_similarity_match(&candidate, &existing);
+        assert!(result.is_some());
+        let (matched, _) = result.unwrap();
+        assert_eq!(matched.name, "B");
+    }
+
+    #[tokio::test]
+    async fn test_llm_judged_match_picks_highest_similarity_with_tiebreaker() {
+        let mut config = test_config();
+        config.disambiguation_llm_lower_bound = 0.5;
+        config.disambiguation_llm_upper_bound = 0.99;
+        config.entity_similarity_threshold = 0.5;
+        let llm = mock_llm("same");
+        let disambiguator = Disambiguator::with_llm(config, llm);
+
+        let candidate =
+            make_entity_with_embedding("Rust", EntityType::Technology, vec![1.0, 0.0, 0.0]);
+        let existing = vec![
+            make_entity_with_embedding("Aaa", EntityType::Technology, vec![0.8, 0.6, 0.0]),
+            make_entity_with_embedding("Bbb", EntityType::Technology, vec![0.8, 0.6, 0.0]),
+        ];
+
+        let result = disambiguator.llm_judged_match(&candidate, &existing).await;
+        assert!(result.is_some());
+        assert_eq!(
+            result.unwrap().name,
+            "Bbb",
+            "Should pick alphabetically last when similarity ties via max_by"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_llm_judged_match_similarity_above_upper_bound() {
+        let mut config = test_config();
+        config.disambiguation_llm_lower_bound = 0.75;
+        config.disambiguation_llm_upper_bound = 0.95;
+        let llm = mock_llm("different");
+        let disambiguator = Disambiguator::with_llm(config, llm);
+
+        let candidate =
+            make_entity_with_embedding("Rust", EntityType::Technology, vec![1.0, 0.0, 0.0]);
+        let existing = vec![make_entity_with_embedding(
+            "Rust",
+            EntityType::Technology,
+            vec![1.0, 0.0, 0.0],
+        )];
+
+        let result = disambiguator.llm_judged_match(&candidate, &existing).await;
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().name, "Rust");
+    }
+
+    #[tokio::test]
+    async fn test_llm_judged_match_llm_says_same() {
+        let mut config = test_config();
+        config.disambiguation_llm_lower_bound = 0.5;
+        config.disambiguation_llm_upper_bound = 0.99;
+        config.entity_similarity_threshold = 0.5;
+        let llm = mock_llm("same");
+        let disambiguator = Disambiguator::with_llm(config, llm);
+
+        let candidate =
+            make_entity_with_embedding("Rust", EntityType::Technology, vec![1.0, 0.0, 0.0]);
+        let existing = vec![make_entity_with_embedding(
+            "Rust-lang",
+            EntityType::Technology,
+            vec![0.8, 0.6, 0.0],
+        )];
+
+        let result = disambiguator.llm_judged_match(&candidate, &existing).await;
+        assert!(result.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_llm_judged_match_llm_says_yes() {
+        let mut config = test_config();
+        config.disambiguation_llm_lower_bound = 0.5;
+        config.disambiguation_llm_upper_bound = 0.99;
+        config.entity_similarity_threshold = 0.5;
+        let llm = mock_llm("yes");
+        let disambiguator = Disambiguator::with_llm(config, llm);
+
+        let candidate =
+            make_entity_with_embedding("Rust", EntityType::Technology, vec![1.0, 0.0, 0.0]);
+        let existing = vec![make_entity_with_embedding(
+            "Rust-lang",
+            EntityType::Technology,
+            vec![0.8, 0.6, 0.0],
+        )];
+
+        let result = disambiguator.llm_judged_match(&candidate, &existing).await;
+        assert!(result.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_llm_judged_match_llm_says_same_with_comma() {
+        let mut config = test_config();
+        config.disambiguation_llm_lower_bound = 0.5;
+        config.disambiguation_llm_upper_bound = 0.99;
+        config.entity_similarity_threshold = 0.5;
+        let llm = mock_llm("same, with explanation");
+        let disambiguator = Disambiguator::with_llm(config, llm);
+
+        let candidate =
+            make_entity_with_embedding("Rust", EntityType::Technology, vec![1.0, 0.0, 0.0]);
+        let existing = vec![make_entity_with_embedding(
+            "Rust-lang",
+            EntityType::Technology,
+            vec![0.8, 0.6, 0.0],
+        )];
+
+        let result = disambiguator.llm_judged_match(&candidate, &existing).await;
+        assert!(result.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_llm_judged_match_llm_says_yes_with_comma() {
+        let mut config = test_config();
+        config.disambiguation_llm_lower_bound = 0.5;
+        config.disambiguation_llm_upper_bound = 0.99;
+        config.entity_similarity_threshold = 0.5;
+        let llm = mock_llm("yes, confirmed");
+        let disambiguator = Disambiguator::with_llm(config, llm);
+
+        let candidate =
+            make_entity_with_embedding("Rust", EntityType::Technology, vec![1.0, 0.0, 0.0]);
+        let existing = vec![make_entity_with_embedding(
+            "Rust-lang",
+            EntityType::Technology,
+            vec![0.8, 0.6, 0.0],
+        )];
+
+        let result = disambiguator.llm_judged_match(&candidate, &existing).await;
+        assert!(result.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_llm_judged_match_llm_says_different() {
+        let mut config = test_config();
+        config.disambiguation_llm_lower_bound = 0.5;
+        config.disambiguation_llm_upper_bound = 0.99;
+        config.entity_similarity_threshold = 0.5;
+        let llm = mock_llm("different");
+        let disambiguator = Disambiguator::with_llm(config, llm);
+
+        let candidate =
+            make_entity_with_embedding("Rust", EntityType::Technology, vec![1.0, 0.0, 0.0]);
+        let existing = vec![make_entity_with_embedding(
+            "Rust-lang",
+            EntityType::Technology,
+            vec![0.8, 0.6, 0.0],
+        )];
+
+        let result = disambiguator.llm_judged_match(&candidate, &existing).await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_llm_judged_match_llm_error() {
+        let mut config = test_config();
+        config.disambiguation_llm_lower_bound = 0.5;
+        config.disambiguation_llm_upper_bound = 0.99;
+        config.entity_similarity_threshold = 0.5;
+        let llm = mock_llm_failing();
+        let disambiguator = Disambiguator::with_llm(config, llm);
+
+        let candidate =
+            make_entity_with_embedding("Rust", EntityType::Technology, vec![1.0, 0.0, 0.0]);
+        let existing = vec![make_entity_with_embedding(
+            "Rust-lang",
+            EntityType::Technology,
+            vec![0.8, 0.6, 0.0],
+        )];
+
+        let result = disambiguator.llm_judged_match(&candidate, &existing).await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_llm_judged_match_no_embedding() {
+        let config = test_config();
+        let llm = mock_llm("same");
+        let disambiguator = Disambiguator::with_llm(config, llm);
+
+        let candidate = make_entity("Rust", EntityType::Technology);
+        let existing = vec![make_entity("Rust", EntityType::Technology)];
+
+        let result = disambiguator.llm_judged_match(&candidate, &existing).await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_llm_judged_match_no_llm() {
+        let config = test_config();
+        let disambiguator = Disambiguator::new(config);
+
+        let candidate =
+            make_entity_with_embedding("Rust", EntityType::Technology, vec![1.0, 0.0, 0.0]);
+        let existing = vec![make_entity_with_embedding(
+            "Rust",
+            EntityType::Technology,
+            vec![1.0, 0.0, 0.0],
+        )];
+
+        let result = disambiguator.llm_judged_match(&candidate, &existing).await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_llm_judged_match_similarity_below_lower_bound() {
+        let mut config = test_config();
+        config.disambiguation_llm_lower_bound = 0.9;
+        config.disambiguation_llm_upper_bound = 0.99;
+        config.entity_similarity_threshold = 0.5;
+        let llm = mock_llm("same");
+        let disambiguator = Disambiguator::with_llm(config, llm);
+
+        let candidate =
+            make_entity_with_embedding("Rust", EntityType::Technology, vec![1.0, 0.0, 0.0]);
+        let existing = vec![make_entity_with_embedding(
+            "Different",
+            EntityType::Technology,
+            vec![0.0, 1.0, 0.0],
+        )];
+
+        let result = disambiguator.llm_judged_match(&candidate, &existing).await;
         assert!(result.is_none());
     }
 
@@ -456,6 +778,241 @@ mod tests {
     }
 
     #[test]
+    fn test_disambiguate_exact_match_strategy() {
+        let mut config = test_config();
+        config.disambiguation_strategy = DisambiguationStrategy::ExactMatch;
+        let disambiguator = Disambiguator::new(config);
+
+        let candidate = make_entity("Rust", EntityType::Technology);
+        let existing = vec![make_entity("Rust", EntityType::Technology)];
+
+        let result = disambiguator.disambiguate(&candidate, &existing);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().name, "Rust");
+    }
+
+    #[test]
+    fn test_disambiguate_exact_match_strategy_no_match() {
+        let mut config = test_config();
+        config.disambiguation_strategy = DisambiguationStrategy::ExactMatch;
+        let disambiguator = Disambiguator::new(config);
+
+        let candidate = make_entity("Rust", EntityType::Technology);
+        let existing = vec![make_entity("Python", EntityType::Technology)];
+
+        let result = disambiguator.disambiguate(&candidate, &existing);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_disambiguate_edit_distance_strategy() {
+        let mut config = test_config();
+        config.disambiguation_strategy = DisambiguationStrategy::EditDistance;
+        config.entity_similarity_threshold = 0.5;
+        let disambiguator = Disambiguator::new(config);
+
+        let candidate = make_entity("Rust", EntityType::Technology);
+        let existing = vec![make_entity("Rust!", EntityType::Technology)];
+
+        let result = disambiguator.disambiguate(&candidate, &existing);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_disambiguate_embedding_similarity_strategy() {
+        let mut config = test_config();
+        config.disambiguation_strategy = DisambiguationStrategy::EmbeddingSimilarity;
+        config.entity_similarity_threshold = 0.9;
+        let disambiguator = Disambiguator::new(config);
+
+        let candidate =
+            make_entity_with_embedding("Rust", EntityType::Technology, vec![1.0, 0.0, 0.0]);
+        let existing = vec![make_entity_with_embedding(
+            "Rust-lang",
+            EntityType::Technology,
+            vec![0.99, 0.1, 0.0],
+        )];
+
+        let result = disambiguator.disambiguate(&candidate, &existing);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_disambiguate_llm_judged_strategy_sync() {
+        let mut config = test_config();
+        config.disambiguation_strategy = DisambiguationStrategy::LlmJudged;
+        config.entity_similarity_threshold = 0.9;
+        let disambiguator = Disambiguator::new(config);
+
+        let candidate =
+            make_entity_with_embedding("Rust", EntityType::Technology, vec![1.0, 0.0, 0.0]);
+        let existing = vec![make_entity_with_embedding(
+            "Rust-lang",
+            EntityType::Technology,
+            vec![0.99, 0.1, 0.0],
+        )];
+
+        let result = disambiguator.disambiguate(&candidate, &existing);
+        assert!(result.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_disambiguate_async_exact_match() {
+        let mut config = test_config();
+        config.disambiguation_strategy = DisambiguationStrategy::ExactMatch;
+        let disambiguator = Disambiguator::new(config);
+
+        let candidate = make_entity("Rust", EntityType::Technology);
+        let existing = vec![make_entity("Rust", EntityType::Technology)];
+
+        let result = disambiguator
+            .disambiguate_async(&candidate, &existing)
+            .await;
+        assert!(result.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_disambiguate_async_edit_distance() {
+        let mut config = test_config();
+        config.disambiguation_strategy = DisambiguationStrategy::EditDistance;
+        config.entity_similarity_threshold = 0.5;
+        let disambiguator = Disambiguator::new(config);
+
+        let candidate = make_entity("Rust", EntityType::Technology);
+        let existing = vec![make_entity("Rust!", EntityType::Technology)];
+
+        let result = disambiguator
+            .disambiguate_async(&candidate, &existing)
+            .await;
+        assert!(result.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_disambiguate_async_embedding_similarity() {
+        let mut config = test_config();
+        config.disambiguation_strategy = DisambiguationStrategy::EmbeddingSimilarity;
+        config.entity_similarity_threshold = 0.9;
+        let disambiguator = Disambiguator::new(config);
+
+        let candidate =
+            make_entity_with_embedding("Rust", EntityType::Technology, vec![1.0, 0.0, 0.0]);
+        let existing = vec![make_entity_with_embedding(
+            "Rust-lang",
+            EntityType::Technology,
+            vec![0.99, 0.1, 0.0],
+        )];
+
+        let result = disambiguator
+            .disambiguate_async(&candidate, &existing)
+            .await;
+        assert!(result.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_disambiguate_async_llm_judged() {
+        let mut config = test_config();
+        config.disambiguation_strategy = DisambiguationStrategy::LlmJudged;
+        config.disambiguation_llm_lower_bound = 0.5;
+        config.disambiguation_llm_upper_bound = 0.99;
+        config.entity_similarity_threshold = 0.5;
+        let llm = mock_llm("same");
+        let disambiguator = Disambiguator::with_llm(config, llm);
+
+        let candidate =
+            make_entity_with_embedding("Rust", EntityType::Technology, vec![1.0, 0.0, 0.0]);
+        let existing = vec![make_entity_with_embedding(
+            "Rust-lang",
+            EntityType::Technology,
+            vec![0.8, 0.6, 0.0],
+        )];
+
+        let result = disambiguator
+            .disambiguate_async(&candidate, &existing)
+            .await;
+        assert!(result.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_disambiguate_async_hybrid_with_llm_fallback() {
+        let mut config = test_config();
+        config.disambiguation_strategy = DisambiguationStrategy::Hybrid;
+        config.disambiguation_llm_lower_bound = 0.5;
+        config.disambiguation_llm_upper_bound = 0.99;
+        config.entity_similarity_threshold = 0.99;
+        let llm = mock_llm("same");
+        let disambiguator = Disambiguator::with_llm(config, llm);
+
+        let candidate =
+            make_entity_with_embedding("Rust", EntityType::Technology, vec![1.0, 0.0, 0.0]);
+        let existing = vec![make_entity_with_embedding(
+            "Rust-lang",
+            EntityType::Technology,
+            vec![0.8, 0.6, 0.0],
+        )];
+
+        let result = disambiguator
+            .disambiguate_async(&candidate, &existing)
+            .await;
+        assert!(result.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_disambiguate_async_hybrid_exact_match_hit() {
+        let mut config = test_config();
+        config.disambiguation_strategy = DisambiguationStrategy::Hybrid;
+        let llm = mock_llm("same");
+        let disambiguator = Disambiguator::with_llm(config, llm);
+
+        let candidate = make_entity("Rust", EntityType::Technology);
+        let existing = vec![make_entity("Rust", EntityType::Technology)];
+
+        let result = disambiguator
+            .disambiguate_async(&candidate, &existing)
+            .await;
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().name, "Rust");
+    }
+
+    #[tokio::test]
+    async fn test_disambiguate_async_hybrid_edit_distance_hit() {
+        let mut config = test_config();
+        config.disambiguation_strategy = DisambiguationStrategy::Hybrid;
+        config.entity_similarity_threshold = 0.5;
+        let llm = mock_llm("same");
+        let disambiguator = Disambiguator::with_llm(config, llm);
+
+        let candidate = make_entity("Rust", EntityType::Technology);
+        let existing = vec![make_entity("Rust!", EntityType::Technology)];
+
+        let result = disambiguator
+            .disambiguate_async(&candidate, &existing)
+            .await;
+        assert!(result.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_disambiguate_async_hybrid_embedding_hit() {
+        let mut config = test_config();
+        config.disambiguation_strategy = DisambiguationStrategy::Hybrid;
+        config.entity_similarity_threshold = 0.9;
+        let llm = mock_llm("same");
+        let disambiguator = Disambiguator::with_llm(config, llm);
+
+        let candidate =
+            make_entity_with_embedding("Rust", EntityType::Technology, vec![1.0, 0.0, 0.0]);
+        let existing = vec![make_entity_with_embedding(
+            "Rust-lang",
+            EntityType::Technology,
+            vec![0.99, 0.1, 0.0],
+        )];
+
+        let result = disambiguator
+            .disambiguate_async(&candidate, &existing)
+            .await;
+        assert!(result.is_some());
+    }
+
+    #[test]
     fn test_resolve_entities_reuses_existing() {
         let disambiguator = Disambiguator::new(test_config());
 
@@ -475,6 +1032,34 @@ mod tests {
         let existing = vec![make_entity("Rust", EntityType::Technology)];
 
         let resolved = disambiguator.resolve_entities(&candidates, &existing);
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].name, "Tokio");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_entities_async_with_match() {
+        let disambiguator = Disambiguator::new(test_config());
+
+        let candidates = vec![make_entity("Rust", EntityType::Technology)];
+        let existing = vec![make_entity("Rust", EntityType::Technology)];
+
+        let resolved = disambiguator
+            .resolve_entities_async(&candidates, &existing)
+            .await;
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].name, "Rust");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_entities_async_no_match() {
+        let disambiguator = Disambiguator::new(test_config());
+
+        let candidates = vec![make_entity("Tokio", EntityType::Technology)];
+        let existing = vec![make_entity("Rust", EntityType::Technology)];
+
+        let resolved = disambiguator
+            .resolve_entities_async(&candidates, &existing)
+            .await;
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].name, "Tokio");
     }

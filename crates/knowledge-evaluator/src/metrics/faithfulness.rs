@@ -48,9 +48,7 @@ impl RAGMetric for FaithfulnessMetric {
             });
         }
 
-        let claims_prompt = format!(
-            "请从以下答案中提取所有事实声明（每个声明一行）：\n\n{answer}"
-        );
+        let claims_prompt = format!("请从以下答案中提取所有事实声明（每个声明一行）：\n\n{answer}");
         let claims_response = self.judge.judge(&claims_prompt, "提取事实声明").await?;
         let claims: Vec<String> = claims_response
             .content
@@ -76,7 +74,12 @@ impl RAGMetric for FaithfulnessMetric {
                 "请判断以下声明是否被上下文支持：\n\n上下文：{context_text}\n\n声明：{claim}\n\n如果声明被上下文明确支持或暗示，请输出 'yes'，否则输出 'no'。"
             );
             let verification = self.judge.judge(&prompt, "验证声明").await?;
-            if verification.content.trim().to_lowercase().starts_with("yes") {
+            if verification
+                .content
+                .trim()
+                .to_lowercase()
+                .starts_with("yes")
+            {
                 supported_count += 1;
             }
         }

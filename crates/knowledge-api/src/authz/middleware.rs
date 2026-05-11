@@ -30,6 +30,35 @@ pub struct AuthzResult {
     pub decision: AuthorizationDecision,
 }
 
+/// 主体实体类型枚举
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum PrincipalEntityType {
+    /// 用户
+    User,
+    /// 服务账户
+    ServiceAccount,
+    /// API 密钥
+    ApiKey,
+}
+
+impl PrincipalEntityType {
+    /// 转换为 Cedar 策略中的实体类型字符串
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::User => "User",
+            Self::ServiceAccount => "ServiceAccount",
+            Self::ApiKey => "ApiKey",
+        }
+    }
+}
+
+impl std::fmt::Display for PrincipalEntityType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// 已认证主体信息（由上游 `auth_middleware` 注入）
 ///
 /// 从 JWT Claims 或 `mTLS` 证书中提取的身份信息。
@@ -38,7 +67,7 @@ pub struct AuthenticatedPrincipal {
     /// 用户/服务 ID
     pub id: String,
     /// 实体类型
-    pub entity_type: String,
+    pub entity_type: PrincipalEntityType,
     /// 角色列表
     pub roles: Vec<String>,
     /// 额外属性
@@ -153,9 +182,7 @@ pub async fn authorization_middleware(
 /// 从 HTTP 请求中提取 Action 和 Resource 信息
 ///
 /// 基于请求方法、路径和查询参数推断动作类别和目标资源。
-fn build_action_and_resource_from_request(
-    req: &Request<axum::body::Body>,
-) -> (Action, Resource) {
+fn build_action_and_resource_from_request(req: &Request<axum::body::Body>) -> (Action, Resource) {
     let method = req.method();
     let path = req.uri().path();
 
@@ -163,14 +190,18 @@ fn build_action_and_resource_from_request(
         "GET" | "HEAD" | "OPTIONS" => ActionCategory::Read,
         "POST" | "PUT" | "PATCH" => ActionCategory::Write,
         "DELETE" => ActionCategory::Delete,
-        _ => ActionCategory::Admin,
+        "TRACE" | "CONNECT" => ActionCategory::Admin,
+        other => {
+            tracing::warn!(method = other, "未知 HTTP 方法，默认归类为 Admin");
+            ActionCategory::Admin
+        }
     };
 
     // 从路径推断资源类型和 ID
     let (resource_type, resource_id) = parse_resource_from_path(path);
     let action_id = format!(
         "{}::{}",
-        to_lowercase_first(&resource_type),
+        to_lowercase_first(resource_type.as_str()),
         action_category.as_str()
     );
 
@@ -194,15 +225,17 @@ fn build_action_and_resource_from_request(
 /// 简单的路径解析器 —— 从 URL 路径推断资源类型和资源 ID
 ///
 /// 支持格式：`/api/v1/{resource_type}/{resource_id}`
-fn parse_resource_from_path(path: &str) -> (String, Option<String>) {
+fn parse_resource_from_path(path: &str) -> (crate::authz::policy::ResourceType, Option<String>) {
     let segments: Vec<&str> = path.trim_matches('/').split('/').collect();
 
     if segments.len() >= 4 && segments[0] == "api" {
-        let resource_type = segments[2].to_string();
+        let resource_type = segments[2]
+            .parse()
+            .unwrap_or(crate::authz::policy::ResourceType::System);
         let resource_id = segments.get(3).map(ToString::to_string);
         (resource_type, resource_id)
     } else {
-        ("Unknown".to_string(), None)
+        (crate::authz::policy::ResourceType::System, None)
     }
 }
 
@@ -334,8 +367,6 @@ impl IntoResponse for ForbiddenResponse {
             .into_response()
     }
 }
-
-
 
 struct InternalErrorResponse {
     message: String,

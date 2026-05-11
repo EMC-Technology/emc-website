@@ -83,6 +83,11 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
+      - name: Publish ullm
+        run: cargo publish -p ullm
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
   docker:
     name: Docker Image
     runs-on: ubuntu-latest

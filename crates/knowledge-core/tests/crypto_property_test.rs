@@ -1,5 +1,5 @@
+use knowledge_core::{Decryptor, Encryptor, KeyManager, hash, hash_str};
 use proptest::prelude::*;
-use knowledge_core::{hash, hash_str, Encryptor, Decryptor, KeyManager};
 
 proptest! {
     #[test]

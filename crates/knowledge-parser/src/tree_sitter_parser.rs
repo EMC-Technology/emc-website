@@ -175,7 +175,10 @@ impl TreeSitterParser {
 
         let nodes = self.extract_nodes(&root, source_bytes);
 
-        Ok(TreeSitterAst { nodes: nodes?, is_valid })
+        Ok(TreeSitterAst {
+            nodes: nodes?,
+            is_valid,
+        })
     }
 
     /// 遍历 AST 提取所有节点（递归深度优先遍历）
@@ -197,7 +200,8 @@ impl TreeSitterParser {
     /// 当源文本不是有效 UTF-8 时返回解析错误
     pub fn extract_nodes(&self, root: &tree_sitter::Node, source: &[u8]) -> Result<Vec<AstNode>> {
         let mut nodes = Vec::new();
-        let source_str = std::str::from_utf8(source).map_err(|e| error_core::helpers::parse_error(&format!("源码非有效 UTF-8: {e}")))?;
+        let source_str = std::str::from_utf8(source)
+            .map_err(|e| error_core::helpers::parse_error(&format!("源码非有效 UTF-8: {e}")))?;
         Self::extract_nodes_recursive(root, source_str, &mut nodes);
         Ok(nodes)
     }
@@ -389,6 +393,228 @@ def greet(name: str) -> str:
                 eprintln!("Rust grammar 未安装（可选依赖），跳过测试: {}", e.message());
             }
             Err(e) => panic!("意外的错误类型: {e}"),
+        }
+    }
+
+    #[test]
+    fn test_tree_sitter_parser_default() {
+        let _parser = TreeSitterParser::default();
+    }
+
+    #[test]
+    fn test_ast_node_byte_length() {
+        let node = AstNode {
+            kind: "identifier".to_string(),
+            start_byte: 10,
+            end_byte: 14,
+            start_char: 10,
+            start_row: 0,
+            start_column: 10,
+            is_named: true,
+            text: "test".to_string(),
+        };
+        assert_eq!(node.byte_length(), 4);
+    }
+
+    #[test]
+    fn test_parse_javascript() {
+        let mut parser = TreeSitterParser::new();
+        match parser.parse("function hello() { return 42; }", "javascript") {
+            Ok(ast) => {
+                assert!(!ast.nodes.is_empty());
+            }
+            Err(e) if e.code().contains("PARSE") && e.source() == ErrorSource::USR => {
+                eprintln!("JavaScript grammar 未安装，跳过: {}", e.message());
+            }
+            Err(e) => panic!("意外的错误: {e}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_go() {
+        let mut parser = TreeSitterParser::new();
+        match parser.parse("func main() { fmt.Println(\"hello\") }", "go") {
+            Ok(ast) => {
+                assert!(!ast.nodes.is_empty());
+            }
+            Err(e) if e.code().contains("PARSE") && e.source() == ErrorSource::USR => {
+                eprintln!("Go grammar 未安装，跳过: {}", e.message());
+            }
+            Err(e) => panic!("意外的错误: {e}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_json() {
+        let mut parser = TreeSitterParser::new();
+        match parser.parse("{\"key\": \"value\"}", "json") {
+            Ok(ast) => {
+                assert!(!ast.nodes.is_empty());
+            }
+            Err(e) if e.code().contains("PARSE") && e.source() == ErrorSource::USR => {
+                eprintln!("JSON grammar 未安装，跳过: {}", e.message());
+            }
+            Err(e) => panic!("意外的错误: {e}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_toml() {
+        let mut parser = TreeSitterParser::new();
+        match parser.parse("[package]\nname = \"test\"", "toml") {
+            Ok(ast) => {
+                assert!(!ast.nodes.is_empty());
+            }
+            Err(e) if e.code().contains("PARSE") && e.source() == ErrorSource::USR => {
+                eprintln!("TOML grammar 未安装，跳过: {}", e.message());
+            }
+            Err(e) => panic!("意外的错误: {e}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_yaml() {
+        let mut parser = TreeSitterParser::new();
+        match parser.parse("key: value\nlist:\n  - item", "yaml") {
+            Ok(ast) => {
+                assert!(!ast.nodes.is_empty());
+            }
+            Err(e) if e.code().contains("PARSE") && e.source() == ErrorSource::USR => {
+                eprintln!("YAML grammar 未安装，跳过: {}", e.message());
+            }
+            Err(e) => panic!("意外的错误: {e}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_typescript() {
+        let mut parser = TreeSitterParser::new();
+        match parser.parse("const x: number = 42;", "typescript") {
+            Ok(ast) => {
+                assert!(!ast.nodes.is_empty());
+            }
+            Err(e) if e.code().contains("PARSE") && e.source() == ErrorSource::USR => {
+                eprintln!("TypeScript grammar 未安装，跳过: {}", e.message());
+            }
+            Err(e) => panic!("意外的错误: {e}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_c() {
+        let mut parser = TreeSitterParser::new();
+        match parser.parse("int main() { return 0; }", "c") {
+            Ok(ast) => {
+                assert!(!ast.nodes.is_empty());
+            }
+            Err(e) if e.code().contains("PARSE") && e.source() == ErrorSource::USR => {
+                eprintln!("C grammar 未安装，跳过: {}", e.message());
+            }
+            Err(e) => panic!("意外的错误: {e}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_cpp() {
+        let mut parser = TreeSitterParser::new();
+        match parser.parse("int main() { std::cout << \"hi\"; return 0; }", "cpp") {
+            Ok(ast) => {
+                assert!(!ast.nodes.is_empty());
+            }
+            Err(e) if e.code().contains("PARSE") && e.source() == ErrorSource::USR => {
+                eprintln!("C++ grammar 未安装，跳过: {}", e.message());
+            }
+            Err(e) => panic!("意外的错误: {e}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_java() {
+        let mut parser = TreeSitterParser::new();
+        match parser.parse(
+            "public class Main { public static void main(String[] args) {} }",
+            "java",
+        ) {
+            Ok(ast) => {
+                assert!(!ast.nodes.is_empty());
+            }
+            Err(e) if e.code().contains("PARSE") && e.source() == ErrorSource::USR => {
+                eprintln!("Java grammar 未安装，跳过: {}", e.message());
+            }
+            Err(e) => panic!("意外的错误: {e}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_ruby() {
+        let mut parser = TreeSitterParser::new();
+        match parser.parse("def hello; puts 'hi'; end", "ruby") {
+            Ok(ast) => {
+                assert!(!ast.nodes.is_empty());
+            }
+            Err(e) if e.code().contains("PARSE") && e.source() == ErrorSource::USR => {
+                eprintln!("Ruby grammar 未安装，跳过: {}", e.message());
+            }
+            Err(e) => panic!("意外的错误: {e}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_kotlin() {
+        let mut parser = TreeSitterParser::new();
+        match parser.parse("fun main() { println(\"hello\") }", "kotlin") {
+            Ok(ast) => {
+                assert!(!ast.nodes.is_empty());
+            }
+            Err(e) if e.code().contains("PARSE") && e.source() == ErrorSource::USR => {
+                eprintln!("Kotlin grammar 未安装，跳过: {}", e.message());
+            }
+            Err(e) => panic!("意外的错误: {e}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_swift() {
+        let mut parser = TreeSitterParser::new();
+        match parser.parse("func hello() { print(\"hi\") }", "swift") {
+            Ok(ast) => {
+                assert!(!ast.nodes.is_empty());
+            }
+            Err(e) if e.code().contains("PARSE") && e.source() == ErrorSource::USR => {
+                eprintln!("Swift grammar 未安装，跳过: {}", e.message());
+            }
+            Err(e) => panic!("意外的错误: {e}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_zig() {
+        let mut parser = TreeSitterParser::new();
+        match parser.parse("pub fn main() void { }", "zig") {
+            Ok(ast) => {
+                assert!(!ast.nodes.is_empty());
+            }
+            Err(e) if e.code().contains("PARSE") && e.source() == ErrorSource::USR => {
+                eprintln!("Zig grammar 未安装，跳过: {}", e.message());
+            }
+            Err(e) => panic!("意外的错误: {e}"),
+        }
+    }
+
+    #[test]
+    fn test_extract_nodes_standalone() {
+        let mut parser = TreeSitterParser::new();
+        match parser.parse("fn main() {}", "rust") {
+            Ok(ast) => {
+                assert!(!ast.nodes.is_empty());
+                for node in &ast.nodes {
+                    assert!(!node.kind.is_empty());
+                }
+            }
+            Err(e) if e.code().contains("PARSE") && e.source() == ErrorSource::USR => {
+                eprintln!("Rust grammar 未安装，跳过: {}", e.message());
+            }
+            Err(e) => panic!("意外的错误: {e}"),
         }
     }
 }

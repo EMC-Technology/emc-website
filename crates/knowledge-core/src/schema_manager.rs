@@ -2,12 +2,11 @@
 ///
 /// 负责数据库 Schema 的初始化、版本记录和迁移执行。
 /// 所有 DDL 语句按顺序执行，慢操作（>5s）会记录审计日志。
-
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::database::DatabaseClient;
 use crate::Result;
+use crate::database::DatabaseClient;
 use crate::error::helpers;
 
 /// 当前数据库 Schema 版本
@@ -26,10 +25,14 @@ impl<D: DatabaseClient> SchemaManager<D> {
     /// # 参数
     ///
     /// * `client` - 数据库客户端的 `Arc` 引用
-    pub const fn new(client: Arc<D>) -> Self { Self { client } }
+    pub const fn new(client: Arc<D>) -> Self {
+        Self { client }
+    }
 
     /// 执行数据库迁移
-    pub async fn migrate(&self) -> Result<()> { self.initialize().await }
+    pub async fn migrate(&self) -> Result<()> {
+        self.initialize().await
+    }
 
     /// 初始化数据库 Schema
     pub async fn initialize(&self) -> Result<()> {
@@ -37,7 +40,10 @@ impl<D: DatabaseClient> SchemaManager<D> {
         let statements = parse_statements(&ddl);
         for stmt in &statements {
             let start = Instant::now();
-            self.client.query(stmt, serde_json::json!({})).await.map_err(|e| helpers::db_error(&format!("Schema 操作失败: {e}")))?;
+            self.client
+                .query(stmt, serde_json::json!({}))
+                .await
+                .map_err(|e| helpers::db_error(&format!("Schema 操作失败: {e}")))?;
             #[allow(clippy::cast_possible_truncation)]
             log_slow_op(stmt, start.elapsed().as_millis() as u64);
         }
@@ -47,16 +53,36 @@ impl<D: DatabaseClient> SchemaManager<D> {
 
     /// 获取当前数据库 Schema 版本
     pub async fn get_version(&self) -> Result<String> {
-        let results = self.client.query("SELECT version FROM schema_version ORDER BY applied_at DESC LIMIT 1", serde_json::json!({})).await.map_err(|e| helpers::db_error(&format!("Schema 操作失败: {e}")))?;
-        if results.is_empty() { return Err(helpers::not_found("schema_version", "latest")); }
-        if let Some(surrealdb::sql::Value::Object(obj)) = results.first() {
-            if let Some(v) = obj.get("version") { return Ok(v.to_string().trim_matches(|c| c == '"' || c == '\'').to_string()); }
+        let results = self
+            .client
+            .query(
+                "SELECT version FROM schema_version ORDER BY applied_at DESC LIMIT 1",
+                serde_json::json!({}),
+            )
+            .await
+            .map_err(|e| helpers::db_error(&format!("Schema 操作失败: {e}")))?;
+        if results.is_empty() {
+            return Err(helpers::not_found("schema_version", "latest"));
+        }
+        if let Some(surrealdb::sql::Value::Object(obj)) = results.first()
+            && let Some(v) = obj.get("version")
+        {
+            return Ok(v
+                .to_string()
+                .trim_matches(|c| c == '"' || c == '\'')
+                .to_string());
         }
         Err(helpers::parse_error("无法解析 schema_version 记录"))
     }
 
     async fn record_version(&self) -> Result<()> {
-        self.client.create("schema_version", serde_json::json!({"version": SCHEMA_VERSION})).await.map_err(|e| helpers::db_error(&format!("Schema 操作失败: {e}")))?;
+        self.client
+            .create(
+                "schema_version",
+                serde_json::json!({"version": SCHEMA_VERSION}),
+            )
+            .await
+            .map_err(|e| helpers::db_error(&format!("Schema 操作失败: {e}")))?;
         Ok(())
     }
 }
@@ -107,7 +133,8 @@ pub fn schema_ddl() -> String {
         "DEFINE INDEX idx_reference_source ON reference COLUMNS source_id;",
         "DEFINE INDEX idx_reference_target ON reference COLUMNS target_id;",
         "DEFINE INDEX idx_idempotency_key ON idempotency COLUMNS key UNIQUE;",
-    ].join("\n")
+    ]
+    .join("\n")
 }
 
 /// 将 DDL 文本解析为独立的 SQL 语句列表
@@ -115,14 +142,32 @@ pub fn schema_ddl() -> String {
 /// 过滤空行和注释，按分号分割为可独立执行的语句。
 #[must_use]
 pub fn parse_statements(ddl: &str) -> Vec<String> {
-    ddl.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with("--")).collect::<Vec<_>>().join("\n").split(';').map(str::trim).filter(|s| !s.is_empty()).map(|s| format!("{s};")).collect()
+    ddl.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with("--"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .split(';')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| format!("{s};"))
+        .collect()
 }
 
 fn log_slow_op(statement: &str, elapsed_ms: u64) {
     if elapsed_ms > SLOW_OPERATION_THRESHOLD_MS {
-        tracing::warn!(elapsed_ms, threshold_ms = SLOW_OPERATION_THRESHOLD_MS, stmt = &statement[..statement.len().min(80)], "Slow Schema operation [AUDIT-030]");
+        tracing::warn!(
+            elapsed_ms,
+            threshold_ms = SLOW_OPERATION_THRESHOLD_MS,
+            stmt = &statement[..statement.len().min(80)],
+            "Slow Schema operation [AUDIT-030]"
+        );
     } else {
-        tracing::debug!(elapsed_ms, stmt = &statement[..statement.len().min(80)], "Schema op done");
+        tracing::debug!(
+            elapsed_ms,
+            stmt = &statement[..statement.len().min(80)],
+            "Schema op done"
+        );
     }
 }
 
@@ -132,21 +177,41 @@ mod tests {
     use crate::database::MockDbClient;
     use serde_json::json;
 
-    #[test] fn test_new_creates_instance() { let _m = SchemaManager::new(Arc::new(MockDbClient::new())); }
-    #[test] fn test_schema_ddl_not_empty() { let d = schema_ddl(); assert!(!d.is_empty()); assert!(d.contains("DEFINE TABLE")); }
-    #[test] fn test_parse_splits() { assert_eq!(parse_statements("A; B; C;").len(), 3); }
+    #[test]
+    fn test_new_creates_instance() {
+        let _m = SchemaManager::new(Arc::new(MockDbClient::new()));
+    }
+    #[test]
+    fn test_schema_ddl_not_empty() {
+        let d = schema_ddl();
+        assert!(!d.is_empty());
+        assert!(d.contains("DEFINE TABLE"));
+    }
+    #[test]
+    fn test_parse_splits() {
+        assert_eq!(parse_statements("A; B; C;").len(), 3);
+    }
 
     #[tokio::test]
     async fn test_get_version_ok() {
         let m = MockDbClient::new();
-        m.register_response("SELECT version FROM schema_version ORDER BY applied_at DESC LIMIT 1", json!([{"version": SCHEMA_VERSION}]));
-        assert_eq!(SchemaManager::new(Arc::new(m)).get_version().await.unwrap(), SCHEMA_VERSION);
+        m.register_response(
+            "SELECT version FROM schema_version ORDER BY applied_at DESC LIMIT 1",
+            json!([{"version": SCHEMA_VERSION}]),
+        );
+        assert_eq!(
+            SchemaManager::new(Arc::new(m)).get_version().await.unwrap(),
+            SCHEMA_VERSION
+        );
     }
 
     #[tokio::test]
     async fn test_get_version_empty_err() {
         let m = MockDbClient::new();
-        m.register_response("SELECT version FROM schema_version ORDER BY applied_at DESC LIMIT 1", json!([]));
+        m.register_response(
+            "SELECT version FROM schema_version ORDER BY applied_at DESC LIMIT 1",
+            json!([]),
+        );
         assert!(SchemaManager::new(Arc::new(m)).get_version().await.is_err());
     }
 }

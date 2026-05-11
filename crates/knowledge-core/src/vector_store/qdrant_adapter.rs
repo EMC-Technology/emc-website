@@ -20,8 +20,7 @@ use qdrant_client::Qdrant;
 use qdrant_client::qdrant::{
     Condition as QdrantCondition, CreateCollectionBuilder, DeletePointsBuilder, Distance,
     Filter as QdrantFilter, GetPointsBuilder, PointStruct, SearchPointsBuilder,
-    UpsertPointsBuilder, VectorParamsBuilder,
-    point_id::PointIdOptions,
+    UpsertPointsBuilder, VectorParamsBuilder, point_id::PointIdOptions,
 };
 use tracing::{info, instrument};
 use uuid::Uuid;
@@ -245,9 +244,9 @@ impl VectorStore for QdrantAdapter {
                 #[allow(deprecated)]
                 let vector = point.vectors.and_then(|v| {
                     v.vectors_options.and_then(|opts| match opts {
-                        qdrant_client::qdrant::vectors_output::VectorsOptions::Vector(vec_output) => {
-                            Some(vec_output.data)
-                        }
+                        qdrant_client::qdrant::vectors_output::VectorsOptions::Vector(
+                            vec_output,
+                        ) => Some(vec_output.data),
                         _ => None,
                     })
                 });
@@ -291,10 +290,7 @@ impl VectorStore for QdrantAdapter {
 
         let response = self
             .client
-            .get_points(
-                GetPointsBuilder::new(collection, point_ids)
-                    .with_payload(true),
-            )
+            .get_points(GetPointsBuilder::new(collection, point_ids).with_payload(true))
             .await
             .map_err(|e| helpers::db_error(&format!("按 ID 获取失败: {e}")))?;
 
@@ -370,14 +366,12 @@ impl VectorStore for QdrantAdapter {
             .ok_or_else(|| helpers::db_error("Qdrant 响应缺少参数信息"))?;
 
         let (vectors_count, dimension) = match params.vectors_config {
-            Some(vc) => {
-                match vc.config {
-                    Some(qdrant_client::qdrant::vectors_config::Config::Params(p)) => {
-                        (result.points_count, p.size as usize)
-                    }
-                    _ => (result.points_count, 0),
+            Some(vc) => match vc.config {
+                Some(qdrant_client::qdrant::vectors_config::Config::Params(p)) => {
+                    (result.points_count, p.size as usize)
                 }
-            }
+                _ => (result.points_count, 0),
+            },
             None => (Some(0u64), 0),
         };
 
