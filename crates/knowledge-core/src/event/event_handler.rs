@@ -657,7 +657,8 @@ where
 
     /// 优雅停机
     pub fn shutdown(&self) {
-        self.running.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.running
+            .store(false, std::sync::atomic::Ordering::SeqCst);
     }
 }
 

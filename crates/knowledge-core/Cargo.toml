@@ -15,7 +15,7 @@ categories = ["database", "text-processing"]
 
 [features]
 default = ["db", "kms-local", "pii", "cache"]
-db = ["dep:surrealdb", "error-core/db"]
+db = ["dep:surrealdb", "error-core/db", "cache"]
 cache = ["dep:moka", "dep:redis", "dep:bincode"]
 event-driven = []
 
@@ -117,6 +117,10 @@ tokio = { workspace = true }
 tempfile = "3.10"
 proptest = { version = "1.4", default-features = false, features = ["std"] }
 criterion = { version = "0.8", default-features = false }
+
+[[test]]
+name = "cache_integration_test"
+required-features = ["db"]
 
 [[bench]]
 name = "crypto_bench"

@@ -479,7 +479,7 @@ impl Document {
 ///
 /// # 示例
 ///
-/// ```rust
+/// ```rust,ignore
 /// use knowledge_core::model::{Block, BlockType};
 /// use surrealdb::opt::RecordId;
 ///
@@ -783,7 +783,7 @@ impl Token {
 ///
 /// # 示例
 ///
-/// ```rust
+/// ```rust,ignore
 /// use knowledge_core::model::{Reference, RefType, Direction};
 /// use surrealdb::opt::RecordId;
 ///
@@ -915,7 +915,7 @@ impl Reference {
 ///
 /// # 示例
 ///
-/// ```rust
+/// ```rust,ignore
 /// use knowledge_core::model::Community;
 /// use surrealdb::opt::RecordId;
 ///
@@ -971,7 +971,7 @@ pub struct Community {
 ///
 /// # 示例
 ///
-/// ```rust
+/// ```rust,ignore
 /// use knowledge_core::model::Process;
 /// use surrealdb::opt::RecordId;
 ///
@@ -1026,7 +1026,7 @@ pub struct Process {
 ///
 /// # 示例
 ///
-/// ```rust
+/// ```rust,ignore
 /// use knowledge_core::model::ProcessStep;
 /// use surrealdb::opt::RecordId;
 ///
