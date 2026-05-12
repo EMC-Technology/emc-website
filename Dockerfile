@@ -5,11 +5,14 @@
 # -----------------------------------------------------------------------------
 FROM rust:1.91-slim AS builder
 
+RUN rustup component add rustfmt
+
 # 安装构建依赖
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
     libclang-dev \
+    g++ \
     protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
