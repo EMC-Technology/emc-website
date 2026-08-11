@@ -99,7 +99,7 @@ candle-core = { version = "0.10", default-features = false, features = [], optio
 candle-nn = { version = "0.10", default-features = false, features = [], optional = true }
 candle-transformers = { version = "0.10", default-features = false, features = [], optional = true }
 tokenizers = { version = "0.22", default-features = false, features = ["http"], optional = true }
-hf-hub = { version = "0.4", default-features = false, features = ["tokio"], optional = true }
+hf-hub = { version = "0.5", default-features = false, features = ["tokio"], optional = true }
 
 # 形式化验证依赖
 proptest = { version = "1.4", default-features = false, features = ["std"], optional = true }
